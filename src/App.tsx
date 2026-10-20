@@ -11,6 +11,7 @@ import { CommitPanel } from "./components/CommitPanel";
 import { BranchesPopup, openBranchesPopup, openPushDialog, PushDialog, updateProject } from "./components/GitDialogs";
 import { GitPanel } from "./components/GitPanel";
 import { RebaseDialog } from "./components/RebaseDialog";
+import { openSettings, SettingsDialog } from "./components/SettingsDialog";
 import { refreshRepo } from "./store/git";
 import { RunBar, runConfig, runConfigs } from "./components/RunBar";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -101,6 +102,7 @@ function useGlobalShortcuts(project: Project | null) {
       const k = e.key.toLowerCase();
       let handled = true;
       if (mod && e.shiftKey && k === "n") openSearchEverywhere("files");
+      else if (mod && e.altKey && k === "s") openSettings();
       // Monaco does not always receive Shift+F6 (WebKitGTK); route it to Rename ourselves.
       else if (e.shiftKey && !mod && !e.altKey && e.key === "F6" && triggerEditorAction("haze.rename")) {
         /* handled */
@@ -296,6 +298,7 @@ export default function App() {
       <BranchesPopup project={active} />
       <PushDialog project={active} />
       <RebaseDialog project={active} />
+      <SettingsDialog />
       <ContextMenu />
       <Dialogs />
       <Toasts />

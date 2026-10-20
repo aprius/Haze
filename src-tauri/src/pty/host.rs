@@ -223,6 +223,21 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
             }
             Ok(())
         }
+        Request::Agent { id, status } => with_session(host, &id, |s| {
+            s.info.agent = status.clone();
+            Ok(())
+        })
+        .map(|()| {
+            // Every client gets it: a tab not attached right now still shows the state.
+            for tx in host.clients.lock().values() {
+                let _ = tx.send(ServerMsg::Event {
+                    body: Event::Agent {
+                        id: id.clone(),
+                        status: status.clone(),
+                    },
+                });
+            }
+        }),
     };
     match result {
         Ok(()) => Reply::Ok,
@@ -304,6 +319,7 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
         created_at: now_ms(),
         running: true,
         exit_code: None,
+        agent: None,
     };
     let mut reader = pair.master.try_clone_reader()?;
     let session = Arc::new(Mutex::new(Session {

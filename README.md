@@ -73,7 +73,14 @@ Trạng thái: **giai đoạn 4** (Git kiểu Rider/Rebased). Lộ trình đầy
 - Nhiều tab, tìm trong output (Ctrl+F), Ctrl+C copy khi có vùng chọn.
 - **Ctrl+click vào đường dẫn** để mở file đúng dòng/cột: hiểu định dạng lỗi MSBuild/`dotnet build` (`Program.cs(12,5): error CS1002`) lẫn `file:line:col`.
 - Alt+F12 bật/tắt terminal như Rider, Alt+1 bật/tắt Project view.
-- Biến môi trường `HAZE_TERMINAL_ID` có sẵn trong mỗi terminal (dùng cho hook AI agent ở giai đoạn 5).
+- Biến môi trường `HAZE_TERMINAL_ID` có sẵn trong mỗi terminal (hook AI agent dùng nó để biết đang chạy ở tab nào).
+
+**AI agent**
+- **Settings (Ctrl+Alt+S, nút bánh răng ở thanh bên trái)** → cài hook cho **Claude Code** (`~/.claude/settings.json`, giữ nguyên cài đặt và hook khác của bạn) hoặc **Codex** (`notify` trong `~/.codex/config.toml`; không ghi đè nếu bạn đã có `notify`). Gỡ được bất cứ lúc nào; lần ghi đầu có bản sao `.haze-backup`.
+- Tab terminal có agent hiện huy hiệu **CC/CX**: xanh nhấp nháy = đang làm, vàng = chờ bạn (xin quyền, hỏi lại), xanh lá = xong, đỏ = lỗi. Dự án ở thanh bên trái có chấm màu tương ứng.
+- **Thông báo desktop** khi agent cần bạn hoặc làm xong mà bạn không nhìn vào terminal đó (tắt được trong Settings).
+- Trạng thái nằm trong PTY host nên vẫn còn sau khi khởi động lại Haze. Không lưu prompt hay transcript.
+- **Worktree**: Branches popup → *New Worktree…* (hoặc chuột phải một nhánh) tạo thư mục `<repo>-<nhánh>` với nhánh mới và mở nó thành một dự án riêng — mỗi agent một worktree, không giẫm chân nhau. Nhóm **Worktrees** trong cửa sổ Git: mở, tạo tiếp, xóa.
 
 ## Chạy và build
 
@@ -124,7 +131,8 @@ src-tauri/src/
   lsp.rs                chạy language server, chuyển tin nhắn LSP
   dotnet.rs             tìm solution/project/launch profile, chạy dotnet build và tách lỗi MSBuild
   git_log.rs            git log + tính lane cho đồ thị nhánh
-  git_ops.rs            thay đổi cục bộ, commit theo file, rollback, branch, stash, blame
+  git_ops.rs            thay đổi cục bộ, commit theo file, rollback, branch, stash, blame, rebase, checkpoint
+  agent_hooks.rs        cài/gỡ hook Claude Code, Codex; chế độ `haze --agent-hook` báo trạng thái cho PTY host
   pty/                  PTY host (host.rs), client (client.rs), giao thức (protocol.rs)
 ```
 

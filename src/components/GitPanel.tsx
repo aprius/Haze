@@ -1,13 +1,13 @@
 // Git tool window (Alt+9): branches, log with commit graph, commit details,
 // and a console of the git commands Haze ran.
-import { ChevronDown, Copy, GitBranch, RefreshCw, Tag, X } from "lucide-react";
+import { ChevronDown, Copy, FolderGit2, GitBranch, RefreshCw, Tag, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, type Branch, type Commit, type CommitDetails, type GraphRow, type LogQuery } from "../lib/ipc";
 import { basename, dirname } from "../lib/path";
 import { repo, runGit, useGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openDiff } from "./DiffView";
-import { branchMenu, checkout, newBranch, onLogFilter } from "./GitDialogs";
+import { branchMenu, checkout, listWorktrees, newBranch, newWorktree, onLogFilter, openWorktree, type Worktree } from "./GitDialogs";
 import { choose, confirmAction, openMenu, prompt, toast } from "./Overlays";
 import { openRebaseDialog } from "./RebaseDialog";
 import { ToolTabs } from "./TerminalPanel";
@@ -135,6 +135,11 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
 function BranchList({ project, branches, refs, onSelect }: { project: Project; branches: Branch[]; refs: string[]; onSelect: (refs: string[]) => void }) {
   const current = useGit((s) => s.repos[project.id]?.branches?.current ?? null);
   const [q, setQ] = useState("");
+  const revision = useGit((s) => s.repos[project.id]?.revision ?? 0);
+  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+  useEffect(() => {
+    void listWorktrees(project.id).then(setWorktrees);
+  }, [project.id, revision]);
   const groups: [string, Branch[]][] = [
     ["Local", branches.filter((b) => b.kind === "local")],
     ["Remote", branches.filter((b) => b.kind === "remote")],
@@ -182,6 +187,42 @@ function BranchList({ project, branches, refs, onSelect }: { project: Project; b
             </div>
           );
         })}
+        {worktrees.length > 1 && (
+          <div>
+            <div className="se-group">Worktrees</div>
+            {worktrees.map((w) => (
+              <div
+                key={w.path}
+                className="log-branch"
+                title={w.path}
+                onClick={() => w.branch && onSelect([`refs/heads/${w.branch}`])}
+                onDoubleClick={() => openWorktree(w)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openMenu(e, [
+                    { label: "Open as Project", action: () => openWorktree(w) },
+                    { label: "New Worktree…", action: () => void newWorktree(project, w.branch) },
+                    ...(w.main
+                      ? []
+                      : [
+                          {
+                            label: "Remove Worktree…",
+                            action: async () => {
+                              if (await confirmAction("Remove Worktree", `Remove the worktree folder ${w.path}? Its branch is kept.`, "Remove", true))
+                                await runGit(project.id, ["worktree", "remove", w.path], { label: "Remove worktree" });
+                            },
+                          },
+                        ]),
+                  ]);
+                }}
+              >
+                <FolderGit2 size={12} className="ico" />
+                <span className="tree-name">{w.branch ?? w.head.slice(0, 8)}</span>
+                <span className="tree-hint">{w.main ? "main" : basename(w.path)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -8,7 +8,7 @@ import { ChevronDown, ChevronUp, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/ipc";
 import { findPathCandidates } from "../lib/termLinks";
-import { closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
+import { agentName, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { useWorkspace, type Project } from "../store/workspace";
 import { confirmAction, openMenu } from "./Overlays";
 
@@ -262,6 +262,7 @@ export function TerminalPanel({ project }: { project: Project }) {
   const ui = useWorkspace((s) => s.ui[project.id]);
   const updateUi = useWorkspace((s) => s.updateUi);
   const sessions = useTerminals((s) => s.sessions);
+  const attention = useTerminals((s) => s.attention);
   const error = useTerminals((s) => s.error);
   const connected = useTerminals((s) => s.connected);
   const [searching, setSearching] = useState(false);
@@ -317,7 +318,16 @@ export function TerminalPanel({ project }: { project: Project }) {
                 }}
                 title={s ? `${s.title} — ${s.cwd}` : id}
               >
-                <span className={"dot" + (s?.running ? " running" : "")} />
+                {s?.agent ? (
+                  <span
+                    className={"agent-state " + s.agent.state + (attention[id] ? " attention" : "")}
+                    title={`${agentName(s.agent.agent)}: ${s.agent.state}${s.agent.message ? ` — ${s.agent.message}` : ""}`}
+                  >
+                    {s.agent.agent === "codex" ? "CX" : "CC"}
+                  </span>
+                ) : (
+                  <span className={"dot" + (s?.running ? " running" : "")} />
+                )}
                 <span className="term-tab-title">{s?.title ?? "Terminal"}</span>
                 <button
                   className="tab-close"

@@ -4,6 +4,9 @@ import { GitBranch, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { api, type Branch } from "../lib/ipc";
+import { parseWorktrees, type Worktree } from "../lib/worktrees";
+
+export type { Worktree };
 import { saveAll } from "./EditorArea";
 import { repo, runGit, useGit } from "../store/git";
 import { popupClosed } from "../store/ui";
@@ -37,6 +40,37 @@ export async function checkout(project: Project, target: string, opts: { remote?
   if (out?.ok) toast(`Checked out ${local ?? target}`);
 }
 
+// ------------------------------------------------------------------ worktrees
+
+export async function listWorktrees(projectId: string): Promise<Worktree[]> {
+  const root = repo(projectId).root;
+  if (!root) return [];
+  const out = await api.gitRun(root, ["worktree", "list", "--porcelain"]).catch(() => null);
+  return out?.ok ? parseWorktrees(out.stdout) : [];
+}
+
+/** Opens a worktree as its own project (own terminals, tabs and drafts). */
+export function openWorktree(w: Worktree): void {
+  const ws = useWorkspace.getState();
+  const id = ws.addProject(w.path);
+  const base = w.path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? w.path;
+  useWorkspace.setState((s) => ({
+    projects: s.projects.map((p) => (p.id === id ? { ...p, name: w.branch ? `${base} [${w.branch}]` : base } : p)),
+  }));
+}
+
+/** Creates a worktree with a new branch next to the repository and opens it — one per agent task. */
+export async function newWorktree(project: Project, from: string | null = null): Promise<void> {
+  const root = repo(project.id).root;
+  if (!root) return;
+  const name = await prompt(from ? `New Worktree from ${from}` : "New Worktree (new branch)", "", { validate: validBranch, okLabel: "Create" });
+  if (!name) return;
+  const branch = name.trim();
+  const dir = `${root.replace(/[\\/]+$/, "")}-${branch.replace(/[^\w.-]+/g, "-")}`;
+  const out = await runGit(project.id, ["worktree", "add", "-b", branch, dir, ...(from ? [from] : [])], { label: `Create worktree ${branch}` });
+  if (out?.ok) openWorktree({ path: dir, branch, head: "", main: false });
+}
+
 export async function newBranch(project: Project, from: string | null): Promise<void> {
   const name = await prompt(from ? `New Branch from ${from}` : "New Branch", "", { validate: validBranch, okLabel: "Create" });
   if (!name) return;
@@ -49,6 +83,7 @@ function branchMenu(project: Project, b: Branch, current: string | null): MenuIt
   const items: MenuItem[] = [];
   if (b.kind !== "tag") items.push({ label: "Checkout", disabled: isCurrent, action: () => void checkout(project, b.name, { remote: b.kind === "remote" }) });
   items.push({ label: `New Branch from '${b.name}'…`, action: () => void newBranch(project, b.name) });
+  items.push({ label: `New Worktree from '${b.name}'…`, action: () => void newWorktree(project, b.name) });
   if (current && !isCurrent) {
     items.push(
       { separator: true },
@@ -196,6 +231,7 @@ export function BranchesPopup({ project }: { project: Project | null }) {
     { label: "Commit…", key: "Ctrl+K", run: () => useWorkspace.getState().updateUi(project.id, { sidebarVisible: true, sidebarTab: "commit" }) },
     { label: "Push…", key: "Ctrl+Shift+K", run: () => openPushDialog(project) },
     { label: "New Branch…", run: () => void newBranch(project, null) },
+    { label: "New Worktree… (separate folder for a parallel task)", run: () => void newWorktree(project) },
     { label: "Fetch", run: () => void runGit(project.id, ["fetch", "--all", "--prune"], { label: "Fetch" }) },
   ].filter((a) => !q || a.label.toLowerCase().includes(q.toLowerCase()));
   const total = actions.length + rows.length;

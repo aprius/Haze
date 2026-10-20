@@ -2,6 +2,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some(haze_lib::agent_hooks::HOOK_FLAG) {
+        haze_lib::agent_hooks::run_hook(&args[2..]);
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some(haze_lib::pty::HOST_FLAG) {
         if let Err(e) = haze_lib::pty::host::run() {
             eprintln!("haze pty host: {e:#}");

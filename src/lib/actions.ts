@@ -1,5 +1,6 @@
 // Commands shown in Search Everywhere's "Actions" tab (Ctrl+Shift+A).
 import { closeTabsWithPrompt, copyContext, revealInTree, saveAll } from "../components/EditorArea";
+import { openSettings } from "../components/SettingsDialog";
 import { openFolder } from "../components/Shell";
 import { newTerminal } from "../store/terminals";
 import { useTree } from "../store/tree";
@@ -35,6 +36,7 @@ export const actions: Action[] = [
   },
   { id: "saveAll", label: "Save All", shortcut: "Ctrl+S", run: () => void saveAll() },
   { id: "openFolder", label: "Open Folder…", run: () => void openFolder() },
+  { id: "settings", label: "Settings (AI agent hooks, notifications)", shortcut: "Ctrl+Alt+S", run: () => openSettings() },
   {
     id: "closeTab",
     label: "Close Tab",

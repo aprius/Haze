@@ -70,6 +70,8 @@ interface WorkspaceState {
   ui: Record<string, ProjectUi>;
   reveal: Reveal | null;
   nestFiles: boolean;
+  /** Desktop notifications when an agent needs you or finishes. */
+  notifyAgents: boolean;
 
   addProject(path: string): string;
   activateProject(id: string | null): void;
@@ -95,6 +97,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   ui: {},
   reveal: null,
   nestFiles: true,
+  notifyAgents: true,
 
   addProject(path) {
     const existing = get().projects.find((p) => p.path === path);

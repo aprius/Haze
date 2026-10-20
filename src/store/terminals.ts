@@ -1,16 +1,72 @@
 // Terminal sessions live in the PTY host; this mirrors their list and routes
 // host events to the xterm views.
 import { create } from "zustand";
-import { api, errorMessage, onPtyEvent, type PtyEvent, type SessionInfo } from "../lib/ipc";
+import { api, errorMessage, onPtyEvent, type AgentStatus, type PtyEvent, type SessionInfo } from "../lib/ipc";
 import { useWorkspace } from "./workspace";
 
 interface TerminalsState {
   sessions: Record<string, SessionInfo>;
+  /** Terminals whose agent needs a look (waiting, finished, failed) and that you have not opened since. */
+  attention: Record<string, boolean>;
   connected: boolean;
   error: string | null;
 }
 
-export const useTerminals = create<TerminalsState>(() => ({ sessions: {}, connected: false, error: null }));
+export const useTerminals = create<TerminalsState>(() => ({ sessions: {}, attention: {}, connected: false, error: null }));
+
+const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex" };
+export const agentName = (agent: string) => AGENT_NAMES[agent] ?? agent;
+
+/** True when the user is looking at this terminal right now. */
+function isWatching(id: string): boolean {
+  if (!document.hasFocus()) return false;
+  const ws = useWorkspace.getState();
+  const project = ws.projects.find((p) => p.id === ws.activeProjectId);
+  const ui = project ? ws.ui[project.id] : undefined;
+  return !!ui && ui.terminalVisible && ui.bottomTab === "terminal" && ui.activeTerminal === id;
+}
+
+export function acknowledge(id: string): void {
+  if (useTerminals.getState().attention[id]) {
+    useTerminals.setState((s) => {
+      const attention = { ...s.attention };
+      delete attention[id];
+      return { attention };
+    });
+  }
+}
+
+async function notify(title: string, body: string) {
+  if (!useWorkspace.getState().notifyAgents) return;
+  try {
+    const n = await import("@tauri-apps/plugin-notification");
+    let granted = await n.isPermissionGranted();
+    if (!granted) granted = (await n.requestPermission()) === "granted";
+    if (granted) n.sendNotification({ title, body });
+  } catch (e) {
+    console.warn("notification failed", e);
+  }
+}
+
+function onAgent(id: string, status: AgentStatus | null) {
+  const prev = useTerminals.getState().sessions[id];
+  if (!prev) return;
+  useTerminals.setState((s) => ({ sessions: { ...s.sessions, [id]: { ...prev, agent: status } } }));
+  if (!status || prev.agent?.state === status.state) return;
+  const needsLook = status.state === "waiting" || status.state === "done" || status.state === "error";
+  if (!needsLook || isWatching(id)) return;
+  useTerminals.setState((s) => ({ attention: { ...s.attention, [id]: true } }));
+  const project = useWorkspace.getState().projects.find((p) => p.id === prev.projectId);
+  const what = status.state === "waiting" ? "needs your input" : status.state === "done" ? "finished" : "stopped with an error";
+  void notify(`${agentName(status.agent)} ${what}`, [project?.name, prev.title, status.message].filter(Boolean).join(" · "));
+}
+
+// Looking at a terminal acknowledges it.
+if (typeof window !== "undefined") {
+  window.addEventListener("focus", () => {
+    for (const id of Object.keys(useTerminals.getState().attention)) if (isWatching(id)) acknowledge(id);
+  });
+}
 
 type Handler = (e: PtyEvent) => void;
 const handlers = new Map<string, Handler>();
@@ -36,6 +92,10 @@ export async function startTerminals(): Promise<void> {
       handlers.forEach((h) => h(e));
       return;
     }
+    if (e.t === "agent") {
+      onAgent(e.id, e.status);
+      return;
+    }
     if (e.t === "exit") {
       useTerminals.setState((s) => {
         const cur = s.sessions[e.id];
@@ -45,6 +105,10 @@ export async function startTerminals(): Promise<void> {
     handlers.get(e.id)?.(e);
   });
   markListening();
+  // Switching to a terminal (or showing the panel) acknowledges its agent.
+  useWorkspace.subscribe(() => {
+    for (const id of Object.keys(useTerminals.getState().attention)) if (isWatching(id)) acknowledge(id);
+  });
   await syncSessions();
 }
 
