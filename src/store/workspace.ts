@@ -30,6 +30,8 @@ export interface ProjectUi {
   terminalHeight: number;
   terminalOrder: string[];
   activeTerminal: string | null;
+  /** Most recently opened files, newest first (Ctrl+E). */
+  recentFiles: string[];
 }
 
 export interface Reveal {
@@ -49,6 +51,7 @@ export const defaultUi = (): ProjectUi => ({
   terminalHeight: 280,
   terminalOrder: [],
   activeTerminal: null,
+  recentFiles: [],
 });
 
 interface WorkspaceState {
@@ -176,7 +179,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           tabs = [...tabs.slice(0, at), tab, ...tabs.slice(at)];
         }
       }
-      return { tabs, activeTab: path };
+      const recentFiles = [path, ...ui.recentFiles.filter((p) => p !== path)].slice(0, 50);
+      return { tabs, activeTab: path, recentFiles };
     });
     if (opts.line) {
       set({ reveal: { path, line: opts.line, column: opts.column ?? 1, nonce: Date.now() } });
@@ -219,6 +223,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           tabs: u.tabs.map((t) => ({ ...t, path: map(t.path) })),
           activeTab: u.activeTab ? map(u.activeTab) : null,
           expanded: u.expanded.map(map),
+          recentFiles: u.recentFiles.map(map),
         };
       }
       return { ui };

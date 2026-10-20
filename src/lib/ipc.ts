@@ -71,6 +71,80 @@ export type PtyEvent =
   | { t: "exit"; id: string; code: number | null }
   | { t: "disconnected" };
 
+export type SearchContext =
+  | "anywhere"
+  | "inComments"
+  | "inStrings"
+  | "exceptComments"
+  | "exceptStrings"
+  | "exceptCommentsAndStrings";
+
+export interface SearchQuery {
+  query: string;
+  isRegex: boolean;
+  matchCase: boolean;
+  wholeWord: boolean;
+  context: SearchContext;
+  replacement: string | null;
+  preserveCase: boolean;
+}
+
+export interface SearchScope {
+  dirs: string[];
+  files: string[];
+  fileMask: string | null;
+  includeIgnored: boolean;
+  overrides: Record<string, string>;
+}
+
+export interface SearchMatch {
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  lineText: string;
+  previewStart: number;
+  previewEnd: number;
+  replacement: string | null;
+}
+
+export interface FileMatches {
+  path: string;
+  mtime: number;
+  hash: string;
+  fromBuffer: boolean;
+  matches: SearchMatch[];
+}
+
+export interface SearchResults {
+  files: FileMatches[];
+  totalMatches: number;
+  filesSearched: number;
+  truncated: boolean;
+  cancelled: boolean;
+}
+
+export interface ReplaceTarget {
+  path: string;
+  hash: string;
+  starts: number[];
+}
+
+export interface ReplaceOutcome {
+  replaced: { path: string; count: number }[];
+  skipped: { path: string; reason: string }[];
+  undoId: number | null;
+}
+
+export interface FileHit {
+  path: string;
+  rel: string;
+  score: number;
+  nameIndices: number[];
+}
+
 export const api = {
   loadState: () => invoke<unknown>("load_state"),
   saveState: (value: unknown) => invoke<void>("save_state", { value }),
@@ -87,6 +161,15 @@ export const api = {
   movePaths: (sources: string[], destDir: string) => invoke<string[]>("move_paths", { sources, destDir }),
   resolvePaths: (cwd: string, candidates: string[]) =>
     invoke<(string | null)[]>("resolve_paths", { cwd, candidates }),
+
+  searchText: (id: number, query: SearchQuery, scope: SearchScope, maxMatches?: number) =>
+    invoke<SearchResults>("search_text", { id, query, scope, maxMatches: maxMatches ?? null }),
+  replaceInFiles: (query: SearchQuery, targets: ReplaceTarget[]) =>
+    invoke<ReplaceOutcome>("replace_in_files", { query, targets }),
+  undoReplace: (id: number) => invoke<{ path: string; reason: string }[]>("undo_replace", { id }),
+  findFiles: (root: string, query: string, limit?: number) =>
+    invoke<FileHit[]>("find_files", { root, query, limit: limit ?? null }),
+  readImage: (path: string) => invoke<{ mime: string; base64: string }>("read_image", { path }),
 
   gitStatus: (dir: string) => invoke<GitStatus>("git_status", { dir }),
   watchProject: (root: string) => invoke<void>("watch_project", { root }),

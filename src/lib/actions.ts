@@ -1,0 +1,112 @@
+// Commands shown in Search Everywhere's "Actions" tab (Ctrl+Shift+A).
+import { closeTabsWithPrompt, copyContext, revealInTree, saveAll } from "../components/EditorArea";
+import { openFolder } from "../components/Shell";
+import { newTerminal } from "../store/terminals";
+import { useTree } from "../store/tree";
+import { openFindInFiles, openSearchEverywhere } from "../store/ui";
+import { activeProject, useWorkspace } from "../store/workspace";
+
+export interface Action {
+  id: string;
+  label: string;
+  shortcut?: string;
+  /** Only offered when a project is open. */
+  needsProject?: boolean;
+  run(): void;
+}
+
+function withProject(f: (projectId: string, path: string) => void) {
+  return () => {
+    const p = activeProject();
+    if (p) f(p.id, p.path);
+  };
+}
+
+export const actions: Action[] = [
+  { id: "searchEverywhere", label: "Search Everywhere", shortcut: "Double Shift", run: () => openSearchEverywhere("all") },
+  { id: "gotoFile", label: "Go to File…", shortcut: "Ctrl+Shift+N", run: () => openSearchEverywhere("files") },
+  { id: "findInFiles", label: "Find in Files…", shortcut: "Ctrl+Shift+F", needsProject: true, run: () => openFindInFiles() },
+  {
+    id: "replaceInFiles",
+    label: "Replace in Files…",
+    shortcut: "Ctrl+Shift+R",
+    needsProject: true,
+    run: () => openFindInFiles({ replace: true }),
+  },
+  { id: "saveAll", label: "Save All", shortcut: "Ctrl+S", run: () => void saveAll() },
+  { id: "openFolder", label: "Open Folder…", run: () => void openFolder() },
+  {
+    id: "closeTab",
+    label: "Close Tab",
+    shortcut: "Ctrl+F4",
+    needsProject: true,
+    run: withProject((id) => {
+      const tab = useWorkspace.getState().ui[id]?.activeTab;
+      if (tab) void closeTabsWithPrompt(id, [tab]);
+    }),
+  },
+  {
+    id: "closeAllTabs",
+    label: "Close All Tabs",
+    needsProject: true,
+    run: withProject((id) => {
+      const tabs = useWorkspace.getState().ui[id]?.tabs ?? [];
+      void closeTabsWithPrompt(id, tabs.map((t) => t.path));
+    }),
+  },
+  { id: "copyContext", label: "Copy Context (code with path and lines)", shortcut: "Ctrl+Shift+C", needsProject: true, run: () => copyContext() },
+  {
+    id: "selectInProject",
+    label: "Select Opened File in Project View",
+    shortcut: "Alt+F1",
+    needsProject: true,
+    run: () => {
+      const p = activeProject();
+      const tab = p && useWorkspace.getState().ui[p.id]?.activeTab;
+      if (p && tab) revealInTree(p, tab);
+    },
+  },
+  {
+    id: "toggleTerminal",
+    label: "Terminal",
+    shortcut: "Alt+F12",
+    needsProject: true,
+    run: withProject((id) => useWorkspace.getState().updateUi(id, (u) => ({ terminalVisible: !u.terminalVisible }))),
+  },
+  { id: "newTerminal", label: "New Terminal", needsProject: true, run: withProject((id, path) => void newTerminal(id, path)) },
+  {
+    id: "toggleProjectView",
+    label: "Project View",
+    shortcut: "Alt+1",
+    needsProject: true,
+    run: withProject((id) => useWorkspace.getState().updateUi(id, (u) => ({ sidebarVisible: !u.sidebarVisible }))),
+  },
+  {
+    id: "toggleNesting",
+    label: "File Nesting (toggle)",
+    run: () => {
+      useWorkspace.setState((s) => ({ nestFiles: !s.nestFiles }));
+      useTree.setState({ dirs: {} });
+    },
+  },
+];
+
+/** Subsequence match score for action labels; higher is better, null = no match. */
+export function scoreLabel(label: string, query: string): number | null {
+  const l = label.toLowerCase();
+  const q = query.toLowerCase().trim();
+  if (!q) return 0;
+  if (l.startsWith(q)) return 1000 - l.length;
+  const idx = l.indexOf(q);
+  if (idx >= 0) return 800 - idx;
+  let i = 0;
+  let gaps = 0;
+  for (const ch of q) {
+    if (ch === " ") continue;
+    const j = l.indexOf(ch, i);
+    if (j < 0) return null;
+    gaps += j - i;
+    i = j + 1;
+  }
+  return 500 - gaps;
+}

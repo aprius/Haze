@@ -207,12 +207,23 @@ export function Dialogs() {
 
 // ------------------------------------------------------------------ toasts
 
-const useToasts = create<{ items: { id: number; text: string; kind: "error" | "info" }[] }>(() => ({ items: [] }));
+interface ToastAction {
+  label: string;
+  run: () => void;
+}
 
-export function toast(text: string, kind: "error" | "info" = "info"): void {
+const useToasts = create<{ items: { id: number; text: string; kind: "error" | "info"; action?: ToastAction }[] }>(() => ({
+  items: [],
+}));
+
+function dismiss(id: number) {
+  useToasts.setState((s) => ({ items: s.items.filter((t) => t.id !== id) }));
+}
+
+export function toast(text: string, kind: "error" | "info" = "info", action?: ToastAction): void {
   const id = Date.now() + Math.random();
-  useToasts.setState((s) => ({ items: [...s.items, { id, text, kind }] }));
-  setTimeout(() => useToasts.setState((s) => ({ items: s.items.filter((t) => t.id !== id) })), kind === "error" ? 8000 : 3500);
+  useToasts.setState((s) => ({ items: [...s.items, { id, text, kind, action }] }));
+  setTimeout(() => dismiss(id), action ? 15000 : kind === "error" ? 8000 : 3500);
 }
 
 export function Toasts() {
@@ -221,7 +232,18 @@ export function Toasts() {
     <div className="toasts">
       {items.map((t) => (
         <div key={t.id} className={"toast " + t.kind}>
-          {t.text}
+          <span>{t.text}</span>
+          {t.action && (
+            <button
+              className="btn small"
+              onClick={() => {
+                dismiss(t.id);
+                t.action!.run();
+              }}
+            >
+              {t.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>

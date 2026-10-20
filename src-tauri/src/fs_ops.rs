@@ -187,7 +187,11 @@ pub fn write_file(
     })
 }
 
-fn atomic_write(path: &Path, bytes: &[u8], existing: Option<&fs::Metadata>) -> Result<()> {
+pub(crate) fn atomic_write(
+    path: &Path,
+    bytes: &[u8],
+    existing: Option<&fs::Metadata>,
+) -> Result<()> {
     let dir = path.parent().context("file has no parent directory")?;
     let file_name = path
         .file_name()

@@ -1,7 +1,9 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
-import { closeTabsWithPrompt, EditorArea, saveAll } from "./components/EditorArea";
+import { closeTabsWithPrompt, EditorArea, revealInTree, saveAll, selectedText } from "./components/EditorArea";
 import { FileTree } from "./components/FileTree";
+import { FindInFiles } from "./components/FindInFiles";
+import { SearchEverywhere } from "./components/SearchEverywhere";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, Welcome } from "./components/Shell";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -11,6 +13,7 @@ import { basename } from "./lib/path";
 import { restore } from "./store/persist";
 import { startTerminals } from "./store/terminals";
 import { handleFsChange, refreshGit, useTree } from "./store/tree";
+import { openFindInFiles, openSearchEverywhere, useUi } from "./store/ui";
 import { useWorkspace, type Project } from "./store/workspace";
 
 function ProjectView({ project }: { project: Project }) {
@@ -51,7 +54,66 @@ function ProjectView({ project }: { project: Project }) {
   );
 }
 
+/** Directory of the item selected in the Project view, for "Find in Directory". */
+function selectedTreeDir(project: Project): string | null {
+  const sel = useTree.getState().selection[project.id]?.[0];
+  if (!sel || document.activeElement?.closest(".file-tree") == null) return null;
+  const st = useTree.getState().dirs[sel];
+  return st ? sel : null;
+}
+
 function useGlobalShortcuts(project: Project | null) {
+  // App-wide shortcuts run in the capture phase so Monaco and xterm cannot swallow them.
+  useEffect(() => {
+    let lastShift = 0;
+    let otherKey = false;
+    const popupOpen = () => {
+      const ui = useUi.getState();
+      return ui.searchEverywhere.open || ui.findInFiles.open;
+    };
+    const onCapture = (e: KeyboardEvent) => {
+      if (e.key !== "Shift") otherKey = true;
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      let handled = true;
+      if (mod && e.shiftKey && k === "n") openSearchEverywhere("files");
+      else if (mod && e.shiftKey && k === "a") openSearchEverywhere("actions");
+      else if (mod && !e.shiftKey && !e.altKey && k === "e" && project) openSearchEverywhere("files", "");
+      else if (mod && e.shiftKey && (k === "f" || k === "r") && project) {
+        openFindInFiles({ replace: k === "r", query: selectedText(), directory: selectedTreeDir(project) });
+      } else if (e.altKey && e.key === "F1" && project) {
+        const tab = useWorkspace.getState().ui[project.id]?.activeTab;
+        if (tab) revealInTree(project, tab);
+      } else handled = false;
+      if (handled) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    const onDown = (e: KeyboardEvent) => {
+      if (e.key === "Shift" && !e.repeat) otherKey = false;
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key !== "Shift" || otherKey) return;
+      const now = Date.now();
+      // Double Shift: two lone Shift presses within 350 ms.
+      if (now - lastShift < 350 && !popupOpen()) {
+        lastShift = 0;
+        openSearchEverywhere("all");
+      } else {
+        lastShift = now;
+      }
+    };
+    window.addEventListener("keydown", onDown, true);
+    window.addEventListener("keydown", onCapture, true);
+    window.addEventListener("keyup", onUp, true);
+    return () => {
+      window.removeEventListener("keydown", onDown, true);
+      window.removeEventListener("keydown", onCapture, true);
+      window.removeEventListener("keyup", onUp, true);
+    };
+  }, [project]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
@@ -156,6 +218,8 @@ export default function App() {
         </div>
       </div>
       <StatusBar project={active} />
+      <SearchEverywhere project={active} />
+      <FindInFiles project={active} />
       <ContextMenu />
       <Dialogs />
       <Toasts />

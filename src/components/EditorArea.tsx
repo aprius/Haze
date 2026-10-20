@@ -1,11 +1,13 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import DOMPurify from "dompurify";
+import { marked } from "marked";
+import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, saveBuffer, useBuffers, type BufferMeta } from "../lib/buffers";
-import { errorMessage } from "../lib/ipc";
-import { monaco } from "../lib/monaco";
-import { basename, dirname, relative } from "../lib/path";
+import { api, errorMessage } from "../lib/ipc";
+import { languageFor, monaco } from "../lib/monaco";
+import { basename, dirname, extname, relative } from "../lib/path";
 import { recoveredDrafts } from "../store/persist";
 import { setSelection } from "../store/tree";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -18,6 +20,111 @@ export const useCursor = create<{ line: number; column: number; selected: number
 }));
 
 const viewStates = new Map<string, monaco.editor.ICodeEditorViewState | null>();
+
+// The editor of the visible project, for commands run from outside (actions, shortcuts).
+let currentEditor: monaco.editor.IStandaloneCodeEditor | null = null;
+let currentPath: string | null = null;
+
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"];
+export const isImagePath = (path: string) => IMAGE_EXTS.includes(extname(path));
+
+/** Text selected in the editor (single line only), to seed searches. */
+export function selectedText(): string | null {
+  const ed = currentEditor;
+  const model = ed?.getModel();
+  const sel = ed?.getSelection();
+  if (!ed || !model || !sel || sel.isEmpty() || sel.startLineNumber !== sel.endLineNumber) return null;
+  return model.getValueInRange(sel);
+}
+
+/**
+ * Copies the selection with its path and line numbers, ready to paste into an
+ * AI chat (Ctrl+Shift+C). Without a selection, copies `path:line`.
+ */
+export function copyContext(): void {
+  const ed = currentEditor;
+  const model = ed?.getModel();
+  const path = currentPath;
+  const project = path ? useWorkspace.getState().projects.find((p) => path.startsWith(p.path)) : null;
+  if (!ed || !model || !path) return;
+  const rel = project ? relative(project.path, path) : path;
+  const sel = ed.getSelection();
+  let text: string;
+  if (!sel || sel.isEmpty()) {
+    text = `${rel}:${ed.getPosition()?.lineNumber ?? 1}`;
+  } else {
+    const endLine = sel.endColumn === 1 && sel.endLineNumber > sel.startLineNumber ? sel.endLineNumber - 1 : sel.endLineNumber;
+    const range = new monaco.Range(sel.startLineNumber, 1, endLine, model.getLineMaxColumn(endLine));
+    const lines = sel.startLineNumber === endLine ? `${sel.startLineNumber}` : `${sel.startLineNumber}-${endLine}`;
+    const lang = languageFor(path);
+    text = `${rel}:${lines}\n\`\`\`${lang === "plaintext" ? "" : lang}\n${model.getValueInRange(range, monaco.editor.EndOfLinePreference.LF)}\n\`\`\``;
+  }
+  void navigator.clipboard.writeText(text).then(() => toast("Copied with path and line numbers"));
+}
+
+let keymapInstalled = false;
+
+/** A few IntelliJ/Rider keys that differ from Monaco's VS Code defaults. */
+function installRiderKeymap() {
+  if (keymapInstalled) return;
+  keymapInstalled = true;
+  const { KeyMod: M, KeyCode: K } = monaco;
+  monaco.editor.addKeybindingRules([
+    { keybinding: M.CtrlCmd | K.KeyD, command: "-editor.action.addSelectionToNextFindMatch" },
+    { keybinding: M.CtrlCmd | K.KeyD, command: "editor.action.copyLinesDownAction", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.Alt | K.KeyJ, command: "editor.action.addSelectionToNextFindMatch", when: "editorFocus" },
+    { keybinding: M.CtrlCmd | K.KeyY, command: "editor.action.deleteLines", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.CtrlCmd | K.KeyR, command: "editor.action.startFindReplaceAction", when: "editorFocus" },
+    { keybinding: M.CtrlCmd | K.KeyW, command: "editor.action.smartSelect.expand", when: "editorTextFocus" },
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyW, command: "editor.action.smartSelect.shrink", when: "editorTextFocus" },
+    { keybinding: M.Alt | M.Shift | K.UpArrow, command: "editor.action.moveLinesUpAction", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.Alt | M.Shift | K.DownArrow, command: "editor.action.moveLinesDownAction", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.CtrlCmd | M.Shift | K.Slash, command: "editor.action.blockComment", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyU, command: "editor.action.transformToUppercase", when: "editorTextFocus && !editorReadonly" },
+  ]);
+}
+
+function ImageView({ path }: { path: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    setSrc(null);
+    setError(null);
+    api
+      .readImage(path)
+      .then((img) => !stale && setSrc(`data:${img.mime};base64,${img.base64}`))
+      .catch((e) => !stale && setError(errorMessage(e)));
+    return () => {
+      stale = true;
+    };
+  }, [path]);
+  return (
+    <div className="editor-empty image-view">
+      {error ? <span className="error">{error}</span> : src ? <img src={src} alt={basename(path)} /> : "Loading…"}
+    </div>
+  );
+}
+
+function MarkdownPreview({ path }: { path: string }) {
+  const [html, setHtml] = useState("");
+  useEffect(() => {
+    const model = getModel(path);
+    if (!model) return;
+    const render = () => setHtml(DOMPurify.sanitize(marked.parse(model.getValue(), { async: false }) as string));
+    render();
+    let t: ReturnType<typeof setTimeout>;
+    const sub = model.onDidChangeContent(() => {
+      clearTimeout(t);
+      t = setTimeout(render, 150);
+    });
+    return () => {
+      clearTimeout(t);
+      sub.dispose();
+    };
+  }, [path]);
+  return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />;
+}
 
 function isDirty(meta: BufferMeta | undefined): boolean {
   return meta?.status === "text" && meta.dirty;
@@ -197,6 +304,7 @@ export function EditorArea({ project }: { project: Project }) {
   // One editor instance per project view; models are swapped on tab change.
   useEffect(() => {
     if (!host.current) return;
+    installRiderKeymap();
     const dark = window.matchMedia("(prefers-color-scheme: dark)");
     const editor = monaco.editor.create(host.current, {
       model: null,
@@ -229,18 +337,30 @@ export function EditorArea({ project }: { project: Project }) {
       const ws = useWorkspace.getState();
       if (path && ws.ui[project.id]?.tabs.find((t) => t.path === path)?.preview) ws.pinTab(project.id, path);
     });
+    editor.addAction({
+      id: "haze.copyContext",
+      label: "Copy Context (path + lines)",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyC],
+      contextMenuGroupId: "9_cutcopypaste",
+      run: () => copyContext(),
+    });
     editorRef.current = editor;
+    currentEditor = editor;
     return () => {
       if (shownPath.current) viewStates.set(shownPath.current, editor.saveViewState());
       dark.removeEventListener("change", onTheme);
       editor.dispose();
       editorRef.current = null;
+      if (currentEditor === editor) {
+        currentEditor = null;
+        currentPath = null;
+      }
     };
   }, [project.id]);
 
   // Load the active file (applying any recovered draft once).
   useEffect(() => {
-    if (!active) return;
+    if (!active || isImagePath(active)) return;
     const draft = recoveredDrafts.get(active);
     recoveredDrafts.delete(active);
     void ensureBuffer(active, draft);
@@ -257,6 +377,7 @@ export function EditorArea({ project }: { project: Project }) {
     if (editor.getModel() !== model) {
       editor.setModel(model);
       shownPath.current = model ? active : null;
+      currentPath = shownPath.current;
       const vs = active ? viewStates.get(active) : null;
       if (model && vs) editor.restoreViewState(vs);
     }
@@ -274,13 +395,34 @@ export function EditorArea({ project }: { project: Project }) {
     useWorkspace.setState({ reveal: null });
   }, [reveal, active, ready]);
 
+  const isMarkdown = !!active && extname(active) === "md";
+  const [mdPreview, setMdPreview] = useState<Record<string, boolean>>({});
+  const showMd = isMarkdown && ready && !!mdPreview[active!];
+  const image = !!active && isImagePath(active);
+
   return (
     <div className="editor-area">
       <TabBar project={project} />
-      {active && <Breadcrumb project={project} path={active} />}
+      {active && (
+        <div className="editor-toolbar">
+          <Breadcrumb project={project} path={active} />
+          {isMarkdown && (
+            <div className="seg small">
+              <button className={"seg-btn" + (!showMd ? " on" : "")} onClick={() => setMdPreview((m) => ({ ...m, [active]: false }))}>
+                Source
+              </button>
+              <button className={"seg-btn" + (showMd ? " on" : "")} onClick={() => setMdPreview((m) => ({ ...m, [active]: true }))}>
+                Preview
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       {active && meta?.status === "text" && meta.diskChanged && <DiskBanner path={active} />}
       <div className="editor-stack">
-        <div ref={host} className="monaco-host" style={{ visibility: ready ? "visible" : "hidden" }} />
+        <div ref={host} className="monaco-host" style={{ visibility: ready && !image ? "visible" : "hidden" }} />
+        {showMd && <MarkdownPreview path={active!} />}
+        {image && <ImageView path={active!} />}
         {!active && (
           <div className="editor-empty">
             <div className="hint-grid">
@@ -295,7 +437,7 @@ export function EditorArea({ project }: { project: Project }) {
             </div>
           </div>
         )}
-        {active && meta && meta.status !== "text" && (
+        {active && !image && meta && meta.status !== "text" && (
           <div className="editor-empty">
             {meta.status === "loading" && "Loading…"}
             {meta.status === "error" && <span className="error">{meta.message}</span>}

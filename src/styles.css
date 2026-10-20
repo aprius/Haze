@@ -929,3 +929,455 @@ kbd {
 .toast.error {
   border-left-color: var(--danger);
 }
+
+/* ------------------------------------------------------------ search everywhere */
+
+.se-backdrop,
+.find-backdrop {
+  padding-top: 10vh;
+}
+
+.se-popup,
+.find-popup {
+  outline: none;
+}
+
+.se-popup {
+  width: min(720px, calc(100% - 32px));
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.se-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 0;
+}
+
+.se-tab {
+  border: 0;
+  background: transparent;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.se-tab.active {
+  background: var(--selected);
+  color: var(--fg);
+}
+
+.se-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.se-input {
+  margin: 8px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 14px;
+  background: var(--editor-bg);
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  outline: none;
+  user-select: text;
+}
+
+.se-list {
+  overflow: auto;
+  padding: 0 4px 6px;
+}
+
+.se-group {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 8px 2px;
+}
+
+.se-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.se-item.selected {
+  background: var(--selected);
+}
+
+.se-name b,
+.se-line b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.se-line {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.se-detail {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.se-shortcut {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.se-empty {
+  padding: 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ find in files */
+
+.find-popup {
+  width: min(1100px, calc(100% - 32px));
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.find-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 4px;
+}
+
+.find-title {
+  font-weight: 600;
+}
+
+.find-status {
+  color: var(--muted);
+  font-size: 12px;
+  margin-right: auto;
+}
+
+.find-row {
+  display: flex;
+  gap: 4px;
+  padding: 3px 10px;
+}
+
+.find-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--editor-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  padding: 5px 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+}
+
+.find-input:focus {
+  border-color: var(--accent);
+}
+
+.find-input.invalid {
+  border-color: var(--danger);
+}
+
+.find-input.small {
+  flex: 0 1 220px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.find-input.dir {
+  flex: 1 1 200px;
+}
+
+.find-error {
+  color: var(--danger);
+  font-size: 12px;
+  padding: 2px 12px;
+  user-select: text;
+}
+
+.toggle {
+  min-width: 30px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.toggle:hover {
+  background: var(--hover);
+}
+
+.toggle.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--selected);
+}
+
+.find-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  flex: none;
+}
+
+.seg-btn {
+  border: 0;
+  background: transparent;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.seg-btn.on {
+  background: var(--selected);
+  color: var(--fg);
+}
+
+.seg.small .seg-btn {
+  padding: 1px 8px;
+}
+
+.find-select {
+  background: var(--editor-bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+.find-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.find-list {
+  flex: 1 1 50%;
+  min-height: 80px;
+  overflow: auto;
+  outline: none;
+  position: relative;
+}
+
+.find-file,
+.find-match {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.find-file {
+  font-weight: 600;
+}
+
+.find-file-dir {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.find-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 11px;
+}
+
+.find-match {
+  padding-left: 28px;
+  cursor: default;
+}
+
+.find-match:hover {
+  background: var(--hover);
+}
+
+.find-match.selected {
+  background: var(--selected);
+}
+
+.find-match.off .find-text {
+  opacity: 0.45;
+}
+
+.find-lineno {
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 32px;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.find-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.find-hl {
+  background: rgba(255, 196, 0, 0.35);
+  border-radius: 2px;
+}
+
+.find-old {
+  background: rgba(219, 59, 75, 0.25);
+  text-decoration: line-through;
+}
+
+.find-new {
+  background: rgba(103, 189, 112, 0.3);
+}
+
+.find-preview {
+  flex: 1 1 40%;
+  min-height: 120px;
+  border-top: 1px solid var(--border);
+}
+
+.find-hit {
+  background: rgba(255, 196, 0, 0.4);
+}
+
+.find-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* ------------------------------------------------------------ editor extras */
+
+.editor-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+}
+
+.editor-toolbar .breadcrumb {
+  flex: 1;
+  min-width: 0;
+}
+
+.image-view img {
+  max-width: 90%;
+  max-height: 90%;
+  object-fit: contain;
+  background: repeating-conic-gradient(#8882 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+}
+
+.markdown-body {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 24px 40px;
+  background: var(--editor-bg);
+  line-height: 1.6;
+  user-select: text;
+}
+
+.markdown-body code,
+.markdown-body pre {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--panel);
+  border-radius: 4px;
+}
+
+.markdown-body code {
+  padding: 1px 4px;
+}
+
+.markdown-body pre {
+  padding: 10px 12px;
+  overflow: auto;
+}
+
+.markdown-body pre code {
+  padding: 0;
+}
+
+.markdown-body a {
+  color: var(--accent);
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

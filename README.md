@@ -6,9 +6,9 @@ Không gian làm việc nhẹ dành cho việc lập trình cùng AI agent (Clau
 
 ![Haze](docs/screenshot.png)
 
-Trạng thái: **giai đoạn 1** (khung app). Lộ trình đầy đủ: [docs/ROADMAP.md](docs/ROADMAP.md).
+Trạng thái: **giai đoạn 2** (editor và tìm kiếm). Lộ trình đầy đủ: [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Đã có (giai đoạn 1)
+## Đã có
 
 **Project**
 - Thanh project bên trái: mở nhiều project, yêu thích, sắp xếp, đóng/mở lại; màn hình Welcome liệt kê project gần đây.
@@ -28,9 +28,26 @@ Trạng thái: **giai đoạn 1** (khung app). Lộ trình đầy đủ: [docs/R
 - Bản nháp chưa lưu được giữ qua lần tắt/mở app.
 - Ctrl+S lưu tất cả, Ctrl+F4 đóng tab, Ctrl+Tab chuyển tab.
 
+**Tìm kiếm (giai đoạn 2)**
+- **Double Shift — Search Everywhere** với các tab All / Files / Actions / Text. Tìm mờ tên file như Rider (`ordcon` → `OrdersController.cs`), ưu tiên trùng tên file, gõ `Tên.cs:12` để nhảy tới dòng. Ctrl+Shift+N: Go to File, Ctrl+Shift+A: Find Action, Ctrl+E: file mở gần đây.
+- **Find in Files (Ctrl+Shift+F) / Replace in Files (Ctrl+Shift+R)**:
+  - Regex đầy đủ (lookahead/lookbehind, backreference), thay thế bằng `$1`, `${name}`; Match case, Words, Preserve case.
+  - Phạm vi: In Project / Directory / Open Files; file mask `*.cs, !*.Designer.cs`; mặc định bỏ `bin/`, `obj/`, `node_modules/` và file trong `.gitignore` (có ô "Include ignored").
+  - Lọc ngữ cảnh cho C# (phân tích bằng tree-sitter): Anywhere / In comments / In string literals / Except….
+  - Đọc đúng file UTF-16 và UTF-8 BOM; khi ghi giữ nguyên encoding, BOM, CRLF.
+  - File đang mở được tìm trên nội dung chưa lưu và thay ngay trong editor (Ctrl+Z được); file không mở thì ghi trên đĩa.
+  - Trước khi ghi, chạy lại tìm kiếm trên nội dung hiện tại: file đổi kể từ lúc tìm (ví dụ AI vừa sửa) thì bỏ qua và báo lại, không ghi đè.
+  - Xem trước từng chỗ thay (cũ gạch đỏ, mới xanh), tick/bỏ tick từng chỗ hoặc cả file, khung xem code xung quanh; nút **Undo** hoàn tác cả lượt.
+- Mở rộng tìm kiếm từ thư mục đang chọn trong Project view, hoặc lấy sẵn chữ đang bôi đen trong editor.
+
+**Editor (giai đoạn 2)**
+- **Copy Context (Ctrl+Shift+C)**: copy đoạn code kèm `đường/dẫn.cs:7-9` và khối code Markdown, để dán cho AI.
+- Phím kiểu Rider: Ctrl+D nhân đôi dòng, Ctrl+Y xóa dòng, Ctrl+R thay thế trong file, Ctrl+W/Ctrl+Shift+W mở rộng/thu hẹp vùng chọn, Alt+J chọn chỗ trùng tiếp theo, Alt+Shift+↑/↓ di chuyển dòng, Alt+F1 tìm file đang mở trong Project view.
+- Xem trước Markdown (Source/Preview), xem ảnh (png, jpg, gif, webp, svg…).
+
 **Terminal**
 - Shell chạy trong một tiến trình nền riêng (PTY host): **đóng hay cập nhật Haze không giết shell hay AI agent đang chạy**; mở lại là nối lại đúng phiên, phát lại output gần nhất (4 MB/phiên).
-- Nhiều tab, tìm trong output (Ctrl+Shift+F), Ctrl+C copy khi có vùng chọn.
+- Nhiều tab, tìm trong output (Ctrl+F), Ctrl+C copy khi có vùng chọn.
 - **Ctrl+click vào đường dẫn** để mở file đúng dòng/cột: hiểu định dạng lỗi MSBuild/`dotnet build` (`Program.cs(12,5): error CS1002`) lẫn `file:line:col`.
 - Alt+F12 bật/tắt terminal như Rider, Alt+1 bật/tắt Project view.
 - Biến môi trường `HAZE_TERMINAL_ID` có sẵn trong mỗi terminal (dùng cho hook AI agent ở giai đoạn 5).
@@ -62,10 +79,11 @@ cd src-tauri && cargo test && cargo clippy      # Rust
 | Terminal | xterm.js + `portable-pty`, PTY host riêng nói chuyện qua local socket (`interprocess`) |
 | Theo dõi file | `notify` |
 | Git | git CLI của hệ thống |
+| Tìm kiếm | `ignore` (bộ duyệt file của ripgrep), `fancy-regex`, `globset`, `nucleo-matcher`, `tree-sitter-c-sharp` |
 
 ```
 src/                    giao diện (React)
-  components/           FileTree, EditorArea, TerminalPanel, Shell, Overlays
+  components/           FileTree, EditorArea, TerminalPanel, SearchEverywhere, FindInFiles, Shell, Overlays
   lib/                  ipc (gọi Rust), buffers (file đang mở), monaco, path, termLinks
   store/                workspace (project, tab), tree, terminals, persist
 src-tauri/src/
@@ -73,6 +91,9 @@ src-tauri/src/
   nesting.rs            luật lồng file kiểu Rider
   git.rs                git status cho cây file
   watcher.rs            theo dõi thay đổi trên đĩa
+  search.rs             Find/Replace in Files, hoàn tác
+  syntax.rs             vùng comment/string của C# (tree-sitter)
+  file_index.rs         danh sách file + tìm mờ cho Double Shift
   pty/                  PTY host (host.rs), client (client.rs), giao thức (protocol.rs)
 ```
 

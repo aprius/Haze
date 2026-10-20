@@ -85,6 +85,10 @@ function createView(id: string, project: Project): View {
       void navigator.clipboard.writeText(term.getSelection());
       return false;
     }
+    if (mod && !e.shiftKey && e.key.toLowerCase() === "f") {
+      window.dispatchEvent(new CustomEvent("haze:terminal-find"));
+      return false;
+    }
     // Leave app shortcuts (Alt+F12, Alt+1, Ctrl+Tab...) to the window handler.
     if ((e.altKey && (e.key === "F12" || e.key === "1")) || (e.ctrlKey && e.key === "Tab")) return false;
     return true;
@@ -251,6 +255,12 @@ export function TerminalPanel({ project }: { project: Project }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ui?.terminalVisible, order.length === 0, connected]);
 
+  useEffect(() => {
+    const onFind = () => setSearching(true);
+    window.addEventListener("haze:terminal-find", onFind);
+    return () => window.removeEventListener("haze:terminal-find", onFind);
+  }, []);
+
   const close = async (id: string) => {
     const s = sessions[id];
     if (s?.running && !(await confirmAction("Close terminal", `"${s.title}" is still running. Terminate it?`, "Terminate", true)))
@@ -260,15 +270,7 @@ export function TerminalPanel({ project }: { project: Project }) {
   };
 
   return (
-    <div
-      className="terminal-panel"
-      onKeyDownCapture={(e) => {
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") {
-          e.preventDefault();
-          setSearching(true);
-        }
-      }}
-    >
+    <div className="terminal-panel">
       <div className="panel-header">
         <span className="panel-title">Terminal</span>
         <div className="term-tabs">
@@ -315,7 +317,7 @@ export function TerminalPanel({ project }: { project: Project }) {
           </button>
         </div>
         <div className="panel-actions">
-          <button className="icon-btn" title="Find (Ctrl+Shift+F)" onClick={() => setSearching((v) => !v)}>
+          <button className="icon-btn" title="Find (Ctrl+F)" onClick={() => setSearching((v) => !v)}>
             <Search size={14} />
           </button>
           <button className="icon-btn" title="Hide (Alt+F12)" onClick={() => updateUi(project.id, { terminalVisible: false })}>

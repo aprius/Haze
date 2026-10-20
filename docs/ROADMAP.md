@@ -6,19 +6,13 @@ Mục tiêu: thay Rider trong quy trình "để AI viết code", giữ lại nh�
 
 Thanh project, cây file (git status, lồng file, thao tác đầy đủ, kéo thả), editor Monaco (tab xem trước, giữ encoding/EOL, không ghi đè âm thầm, bản nháp), terminal sống qua lần tắt app, Ctrl+click đường dẫn, khôi phục trạng thái.
 
-## 2. Editor và tìm kiếm
+## 2. Editor và tìm kiếm — xong
 
-- **Double Shift (Search Everywhere)**: tìm mờ tên file bằng `nucleo`, sau đó thêm symbol (giai đoạn 3) và lệnh.
-- **Find in Files / Replace in Files** (Ctrl+Shift+F / Ctrl+Shift+R) dùng thư viện của ripgrep (`grep`, `ignore`) trong Rust:
-  - regex đầy đủ qua PCRE2 (lookaround, backreference), thay thế `$1` / `${name}`;
-  - phạm vi Project / Directory / Solution / file đang mở, file mask, mặc định bỏ `bin/` và `obj/`;
-  - lọc ngữ cảnh "In comments / In string literals / Except…" bằng tree-sitter-c-sharp;
-  - Preserve case;
-  - giữ encoding, BOM, CRLF khi ghi;
-  - file đang mở thì sửa trong buffer, chạy lại regex lúc bấm Replace và báo nếu file đã đổi;
-  - xem trước, bỏ chọn từng chỗ trúng, hoàn tác cả lượt.
-- Copy Context (Ctrl+Shift+C trong editor): đoạn code kèm đường dẫn và số dòng để dán cho AI.
-- Xem Markdown, xem ảnh.
+- Double Shift (Search Everywhere: All / Files / Actions / Text), Go to File, Find Action, Recent Files; tab Symbols sẽ thêm ở giai đoạn 3.
+- Find in Files / Replace in Files đủ 8 điểm đã bàn: regex có lookaround/backreference (`fancy-regex`), phạm vi + file mask + bỏ `bin/obj`, lọc ngữ cảnh C# bằng tree-sitter, Preserve case, giữ encoding/BOM/CRLF, thay trong buffer với file đang mở, kiểm tra lại nội dung trước khi ghi, xem trước + tick từng chỗ + Undo cả lượt.
+- Copy Context, phím tắt kiểu Rider, xem Markdown và ảnh.
+
+Còn để sau: Structural Search & Replace (ast-grep), phạm vi "Solution" (cần đọc `.sln`, làm cùng giai đoạn 3), lọc ngữ cảnh cho ngôn ngữ khác C#.
 
 ## 3. C#
 

@@ -1,12 +1,16 @@
+mod file_index;
 mod fs_ops;
 mod git;
 mod nesting;
 pub mod pty;
+mod search;
 mod state;
+mod syntax;
 mod text;
 mod watcher;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -121,9 +125,14 @@ async fn git_status(dir: String) -> CmdResult<git::GitStatus> {
 fn watch_project(
     app: AppHandle,
     watchers: State<'_, watcher::Watchers>,
+    index: State<'_, Arc<file_index::FileIndex>>,
     root: String,
 ) -> CmdResult<()> {
-    let sink: watcher::ChangeSink = Arc::new(move |change| {
+    let index = index.inner().clone();
+    let sink: watcher::ChangeSink = Arc::new(move |change: watcher::FsChange| {
+        if change.overflow || !change.dirs.is_empty() {
+            index.invalidate(&change.root);
+        }
         let _ = app.emit("fs://changed", change);
     });
     watchers.watch(&root, sink).map_err(err)
@@ -132,6 +141,92 @@ fn watch_project(
 #[tauri::command]
 fn unwatch_project(watchers: State<'_, watcher::Watchers>, root: String) {
     watchers.unwatch(&root);
+}
+
+// ---------------------------------------------------------------- search
+
+/// Id of the newest text search; older ones stop as soon as they notice.
+#[derive(Default)]
+struct SearchGeneration(Arc<AtomicU64>);
+
+#[tauri::command]
+async fn search_text(
+    generation: State<'_, SearchGeneration>,
+    id: u64,
+    query: search::SearchQuery,
+    scope: search::SearchScope,
+    max_matches: Option<usize>,
+) -> CmdResult<search::SearchResults> {
+    let current = generation.0.clone();
+    current.store(id, Ordering::Relaxed);
+    blocking(move || search::search(&query, &scope, id, &current, max_matches.unwrap_or(5000)))
+        .await
+}
+
+#[tauri::command]
+async fn replace_in_files(
+    history: State<'_, Arc<search::ReplaceHistory>>,
+    query: search::SearchQuery,
+    targets: Vec<search::ReplaceTarget>,
+) -> CmdResult<search::ReplaceOutcome> {
+    let history = history.inner().clone();
+    blocking(move || search::replace_in_files(&query, &targets, &history)).await
+}
+
+#[tauri::command]
+async fn undo_replace(
+    history: State<'_, Arc<search::ReplaceHistory>>,
+    id: u64,
+) -> CmdResult<Vec<search::Skipped>> {
+    let history = history.inner().clone();
+    blocking(move || search::undo_replace(&history, id)).await
+}
+
+#[tauri::command]
+async fn find_files(
+    index: State<'_, Arc<file_index::FileIndex>>,
+    root: String,
+    query: String,
+    limit: Option<usize>,
+) -> CmdResult<Vec<file_index::FileHit>> {
+    let index = index.inner().clone();
+    blocking(move || Ok(index.find(&root, &query, limit.unwrap_or(50)))).await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImageData {
+    mime: &'static str,
+    base64: String,
+}
+
+#[tauri::command]
+async fn read_image(path: String) -> CmdResult<ImageData> {
+    blocking(move || {
+        use base64::Engine;
+        let meta = std::fs::metadata(&path)?;
+        anyhow::ensure!(
+            meta.len() <= 20 * 1024 * 1024,
+            "image is too large to preview"
+        );
+        let ext = std::path::Path::new(&path)
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let mime = match ext.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "bmp" => "image/bmp",
+            "ico" => "image/x-icon",
+            "svg" => "image/svg+xml",
+            _ => "application/octet-stream",
+        };
+        let base64 = base64::engine::general_purpose::STANDARD.encode(std::fs::read(&path)?);
+        Ok(ImageData { mime, base64 })
+    })
+    .await
 }
 
 // ---------------------------------------------------------------- terminals
@@ -213,6 +308,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(watcher::Watchers::default())
+        .manage(Arc::new(file_index::FileIndex::default()))
+        .manage(Arc::new(search::ReplaceHistory::default()))
+        .manage(SearchGeneration::default())
         .setup(|app| {
             let handle = app.handle().clone();
             let client = PtyClient::new(Arc::new(move |ev| forward_pty_event(&handle, ev)));
@@ -235,6 +333,11 @@ pub fn run() {
             git_status,
             watch_project,
             unwatch_project,
+            search_text,
+            replace_in_files,
+            undo_replace,
+            find_files,
+            read_image,
             pty_list,
             pty_create,
             pty_attach,
