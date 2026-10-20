@@ -49,8 +49,14 @@ impl Watchers {
         let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
         let mut watcher = notify::recommended_watcher(tx)?;
         watcher.watch(Path::new(root), RecursiveMode::Recursive)?;
+        // A linked worktree (or a project inside a repository) keeps its git
+        // metadata outside the root; commits made in a terminal show up there.
+        let git_dir = outside_git_dir(Path::new(root));
+        if let Some(dir) = &git_dir {
+            let _ = watcher.watch(dir, RecursiveMode::Recursive);
+        }
         let root_owned = root.to_string();
-        thread::spawn(move || debounce_loop(root_owned, rx, sink));
+        thread::spawn(move || debounce_loop(root_owned, git_dir, rx, sink));
         active.insert(root.to_string(), watcher);
         Ok(())
     }
@@ -61,8 +67,25 @@ impl Watchers {
     }
 }
 
+/// The repository's git dir when it is not `<root>/.git`.
+fn outside_git_dir(root: &Path) -> Option<PathBuf> {
+    let out = crate::git::git_command()
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--absolute-git-dir"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let dir = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    let inside = dir.canonicalize().ok()? == root.join(".git").canonicalize().ok()?;
+    (!inside).then_some(dir)
+}
+
 fn debounce_loop(
     root: String,
+    git_dir: Option<PathBuf>,
     rx: mpsc::Receiver<notify::Result<notify::Event>>,
     sink: ChangeSink,
 ) {
@@ -98,7 +121,11 @@ fn debounce_loop(
             }
             let n = ev.paths.len();
             for (i, p) in ev.paths.into_iter().enumerate() {
-                match classify(&root_path, &p) {
+                let kind = match &git_dir {
+                    Some(g) if p.starts_with(g) => classify_git(p.strip_prefix(g).unwrap_or(&p)),
+                    _ => classify(&root_path, &p),
+                };
+                match kind {
                     Kind::Git => git = true,
                     Kind::GitInternal => {}
                     Kind::Work => {
@@ -192,15 +219,56 @@ fn classify(root: &Path, p: &Path) -> Kind {
     let rel = p.strip_prefix(root).unwrap_or(p);
     let mut comps = rel.components();
     match comps.next() {
-        Some(Component::Normal(first)) if first == ".git" => {
-            let rest: PathBuf = comps.collect();
-            let s = rest.to_string_lossy();
-            if s == "index" || s == "HEAD" || s.starts_with("refs") || s == "MERGE_HEAD" {
-                Kind::Git
-            } else {
-                Kind::GitInternal
-            }
-        }
+        Some(Component::Normal(first)) if first == ".git" => classify_git(comps.as_path()),
         _ => Kind::Work,
+    }
+}
+
+/// `rel` is relative to the git dir.
+fn classify_git(rel: &Path) -> Kind {
+    let s = rel.to_string_lossy();
+    if s == "index" || s == "HEAD" || s.starts_with("refs") || s == "MERGE_HEAD" {
+        Kind::Git
+    } else {
+        Kind::GitInternal
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = crate::git::git_command()
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=T", "-c", "user.email=t@t"])
+            .args(args)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "{args:?}");
+    }
+
+    #[test]
+    fn finds_git_dir_of_linked_worktrees() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("app");
+        std::fs::create_dir(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main"]);
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        let wt = tmp.path().join("app-task");
+        git(
+            &main,
+            &["worktree", "add", "-q", "-b", "task", wt.to_str().unwrap()],
+        );
+        assert_eq!(outside_git_dir(&main), None);
+        let dir = outside_git_dir(&wt).expect("worktree git dir");
+        assert!(dir.ends_with("worktrees/app-task"), "{dir:?}");
+        assert!(matches!(classify_git(Path::new("index")), Kind::Git));
+        assert!(matches!(
+            classify_git(Path::new("logs/HEAD")),
+            Kind::GitInternal
+        ));
     }
 }

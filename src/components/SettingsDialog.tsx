@@ -49,7 +49,7 @@ function AgentRow({ id, name, what }: (typeof AGENTS)[number]) {
       setBusy(false);
     }
   };
-  const label = !status ? "…" : status.installed ? (status.stale ? "Installed for another Haze location" : "Installed") : "Not installed";
+  const label = !status ? "…" : status.installed ? (status.stale ? "Needs update" : "Installed") : "Not installed";
   return (
     <div className="settings-agent">
       <div className="settings-agent-head">

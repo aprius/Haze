@@ -108,6 +108,71 @@ fn session_survives_client_and_replays_output() {
         }
     }
 
+    // A large paste into a program that is busy must not freeze the host:
+    // the write blocks until `cat` reads, and `cat` only reads while its
+    // output (echo + copy) keeps being drained.
+    let Reply::Created { session: busy } = second
+        .request(Request::Create {
+            spec: SessionSpec {
+                project_id: Some("p1".into()),
+                cwd: dir.path().to_string_lossy().into_owned(),
+                cols: 80,
+                rows: 24,
+                title: None,
+                command: Some(vec!["sh".into(), "-c".into(), "sleep 1; cat".into()]),
+                env: vec![],
+            },
+        })
+        .unwrap()
+    else {
+        panic!("expected Created")
+    };
+    let paste = format!("{}\n", "x".repeat(99)).repeat(4000);
+    second
+        .notify(Request::Write {
+            id: busy.id.clone(),
+            data: paste,
+        })
+        .unwrap();
+    assert!(matches!(
+        second.request(Request::List),
+        Ok(Reply::Sessions { .. })
+    ));
+    second.request(Request::Close { id: busy.id }).unwrap();
+
+    // Stopping a run configuration must stop the program `dotnet run`
+    // started, not only `dotnet` itself: Close ends the whole process tree.
+    let marker = format!("sleep 4{}", std::process::id() % 1000);
+    let Reply::Created { session: run } = second
+        .request(Request::Create {
+            spec: SessionSpec {
+                project_id: Some("p1".into()),
+                cwd: dir.path().to_string_lossy().into_owned(),
+                cols: 80,
+                rows: 24,
+                title: None,
+                command: Some(vec!["sh".into(), "-c".into(), format!("{marker}; true")]),
+                env: vec![],
+            },
+        })
+        .unwrap()
+    else {
+        panic!("expected Created")
+    };
+    std::thread::sleep(Duration::from_millis(500));
+    let alive = || {
+        std::process::Command::new("pgrep")
+            .args(["-f", &marker])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    };
+    assert!(alive(), "grandchild should be running");
+    second.request(Request::Close { id: run.id }).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(!alive(), "grandchild survived Close");
+
     second
         .request(Request::Close {
             id: session.id.clone(),

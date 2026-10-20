@@ -334,7 +334,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
       count += b.matches.length;
       if (b.wasClean) {
         try {
-          await saveBuffer(b.path);
+          if (!(await saveBuffer(b.path))) skipped.push(`${basename(b.path)} (changed on disk; replaced in the editor, not saved)`);
         } catch (e) {
           skipped.push(`${basename(b.path)} (${errorMessage(e)})`);
         }
@@ -365,7 +365,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
           continue;
         }
         u.model.undo();
-        if (u.save) await saveBuffer(u.path).catch(() => failed++);
+        if (u.save && !(await saveBuffer(u.path).catch(() => false))) failed++;
       }
       toast(failed ? `Undo finished; ${failed} file(s) had changed and were left as is.` : "Replace undone.", failed ? "error" : "info");
     };

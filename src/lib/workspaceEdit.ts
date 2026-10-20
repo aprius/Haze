@@ -61,7 +61,8 @@ export async function applyWorkspaceEdit(edit: WorkspaceEdit): Promise<AppliedEd
     );
     model.pushStackElement();
     count += edits.length;
-    if (wasClean) await saveBuffer(path).catch(() => skipped.push(path));
+    // saveBuffer reports a disk conflict by returning false, not by throwing.
+    if (wasClean && !(await saveBuffer(path).catch(() => false))) skipped.push(path);
     applied.push({ path, model, version: model.getAlternativeVersionId(), save: wasClean });
   }
   return {
@@ -76,7 +77,7 @@ export async function applyWorkspaceEdit(edit: WorkspaceEdit): Promise<AppliedEd
           continue;
         }
         a.model.undo();
-        if (a.save) await saveBuffer(a.path).catch(() => failed++);
+        if (a.save && !(await saveBuffer(a.path).catch(() => false))) failed++;
       }
       return failed;
     },

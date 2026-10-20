@@ -29,8 +29,14 @@ pub fn load(path: &Path) -> Result<serde_json::Value> {
 }
 
 pub fn save(path: &Path, value: &serde_json::Value) -> Result<()> {
+    // Saves can overlap (debounced save + save on close); two writers on the
+    // same temp file could interleave into invalid JSON and lose the drafts.
+    static LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    let _guard = LOCK.lock();
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, serde_json::to_vec(value)?)?;
+    let mut f = fs::File::create(&tmp)?;
+    std::io::Write::write_all(&mut f, &serde_json::to_vec(value)?)?;
+    f.sync_all()?;
     fs::rename(&tmp, path)?;
     Ok(())
 }

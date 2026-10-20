@@ -23,6 +23,7 @@ const CLAUDE_EVENTS: &[&str] = &[
     "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
+    "PostToolUse",
     "PermissionRequest",
     "Notification",
     "Stop",
@@ -39,7 +40,8 @@ pub fn claude_state(payload: &serde_json::Value) -> Option<Option<(&'static str,
         .map(str::to_string);
     Some(match event {
         "SessionStart" => Some(("idle", None)),
-        "UserPromptSubmit" | "PreToolUse" => Some(("working", None)),
+        // PostToolUse also ends "waiting" once a permission was granted and the tool ran.
+        "UserPromptSubmit" | "PreToolUse" | "PostToolUse" => Some(("working", None)),
         "PermissionRequest" => Some(("waiting", Some("Waiting for permission".into()))),
         "Notification" => {
             let kind = payload
@@ -133,7 +135,7 @@ fn status(agent: &str, state: &str, message: Option<String>) -> AgentStatus {
 #[serde(rename_all = "camelCase")]
 pub struct HookStatus {
     pub installed: bool,
-    /// Installed, but pointing at another Haze executable (moved or updated).
+    /// Installed, but by another Haze executable or an older Haze (fewer events).
     pub stale: bool,
     pub config_path: String,
     /// Why it cannot be installed automatically (e.g. Codex already has a notify program).
@@ -258,9 +260,20 @@ pub fn status_of(agent: &str) -> Result<HookStatus> {
                         .map(str::to_string)
                 })
                 .collect();
+            // Installed by an older Haze that listened to fewer events.
+            let missing = CLAUDE_EVENTS.iter().any(|e| {
+                !settings["hooks"][*e]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|g| g.get("hooks").and_then(|h| h.as_array()))
+                    .flatten()
+                    .any(is_ours)
+            });
             Ok(HookStatus {
                 installed: !commands.is_empty(),
-                stale: commands.iter().any(|c| *c != claude_command(&me)),
+                stale: !commands.is_empty()
+                    && (missing || commands.iter().any(|c| *c != claude_command(&me))),
                 config_path: path.to_string_lossy().into_owned(),
                 conflict: None,
             })
@@ -383,7 +396,11 @@ mod tests {
             None
         );
         assert_eq!(st(json!({"hook_event_name": "SessionEnd"})), Some(None));
-        assert_eq!(st(json!({"hook_event_name": "PostToolUse"})), None);
+        assert_eq!(
+            st(json!({"hook_event_name": "PostToolUse"})),
+            Some(Some("working"))
+        );
+        assert_eq!(st(json!({"hook_event_name": "PreCompact"})), None);
     }
 
     #[test]

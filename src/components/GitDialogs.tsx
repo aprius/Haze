@@ -13,7 +13,7 @@ import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { choose, confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
 
-const validBranch = (v: string) => (!v.trim() ? "Name cannot be empty" : /[\s~^:?*[\\]|\.\.|@\{|\/$|\.lock$/.test(v.trim()) ? "Not a valid branch name" : null);
+const validBranch = (v: string) => (!v.trim() ? "Name cannot be empty" : /^-|[\s~^:?*[\\]|\.\.|@\{|\/$|\.lock$/.test(v.trim()) ? "Not a valid branch name" : null);
 
 // ------------------------------------------------------------------ branch actions
 
@@ -33,8 +33,10 @@ export async function checkout(project: Project, target: string, opts: { remote?
     if (!smart) return;
     const stash = await runGit(project.id, ["stash", "push", "--include-untracked", "-m", `Haze smart checkout to ${local ?? target}`], { quiet: true });
     if (!stash?.ok) return;
+    // Nothing stashed: popping would apply an older, unrelated stash.
+    const stashed = !/No local changes to save/i.test(stash.stdout + stash.stderr);
     const again = await runGit(project.id, args, { label: `Checkout ${local ?? target}`, quiet: true });
-    await runGit(project.id, ["stash", "pop"], { label: "Restore local changes" });
+    if (stashed) await runGit(project.id, ["stash", "pop"], { label: "Restore local changes" });
     if (!again?.ok) return;
   }
   if (out?.ok) toast(`Checked out ${local ?? target}`);

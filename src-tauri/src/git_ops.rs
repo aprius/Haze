@@ -862,6 +862,25 @@ mod tests {
     }
 
     #[test]
+    fn paths_with_glob_characters_are_literal() {
+        let r = Repo::new();
+        r.write("Pages/[id].razor", "1");
+        r.write("Pages/i.razor", "1");
+        r.git(&["add", "."]);
+        r.git(&["commit", "-q", "-m", "init"]);
+        r.write("Pages/[id].razor", "2");
+        r.write("Pages/i.razor", "2");
+        // `[id]` as a glob would match `i.razor` instead of the file itself.
+        rollback(r.path(), &["Pages/[id].razor".into()]).unwrap();
+        let left: Vec<String> = changes(r.path())
+            .unwrap()
+            .into_iter()
+            .map(|c| c.rel)
+            .collect();
+        assert_eq!(left, vec!["Pages/i.razor"]);
+    }
+
+    #[test]
     fn branches_stash_and_blame() {
         let r = Repo::new();
         r.write("a.cs", "line1\nline2\n");
