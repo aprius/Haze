@@ -27,7 +27,10 @@ type ClientId = u64;
 struct Session {
     info: SessionInfo,
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    /// Input goes through a writer thread: a blocking PTY write must never
+    /// hold the session lock, or the output reader stalls and both sides
+    /// wait on each other (a large paste into a busy program).
+    input: Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     scrollback: Scrollback,
     subscribers: HashSet<ClientId>,
@@ -201,9 +204,9 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
             Ok(())
         }),
         Request::Write { id, data } => with_session(host, &id, |s| {
-            s.writer.write_all(data.as_bytes())?;
-            s.writer.flush()?;
-            Ok(())
+            s.input
+                .send(data.into_bytes())
+                .map_err(|_| anyhow::anyhow!("terminal input is closed"))
         }),
         Request::Resize { id, cols, rows } => with_session(host, &id, |s| {
             s.master.resize(PtySize {
@@ -322,9 +325,22 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
         agent: None,
     };
     let mut reader = pair.master.try_clone_reader()?;
+    let mut writer = pair.master.take_writer()?;
+    let (input, input_rx) = mpsc::channel::<Vec<u8>>();
+    thread::spawn(move || {
+        for data in input_rx {
+            if writer
+                .write_all(&data)
+                .and_then(|()| writer.flush())
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
     let session = Arc::new(Mutex::new(Session {
         info: info.clone(),
-        writer: pair.master.take_writer()?,
+        input,
         master: pair.master,
         killer: child.clone_killer(),
         scrollback: Scrollback::default(),

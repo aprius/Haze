@@ -77,9 +77,18 @@ function trackDirty(path: string, model: monaco.editor.ITextModel) {
 
 /** Loads a file into a model once. A `draft` (recovered unsaved text) is applied on top. */
 export function ensureBuffer(path: string, draft?: { content: string; baseMtime: number }): Promise<void> {
-  if (models.has(path)) return Promise.resolve();
+  const existing = models.get(path);
+  if (existing) {
+    // Loaded earlier without its draft (a replace or rename touched the file first).
+    const meta = useBuffers.getState().meta[path];
+    if (draft && meta?.status === "text" && !isDirty(path) && draft.content !== existing.model.getValue()) {
+      existing.model.pushEditOperations([], [{ range: existing.model.getFullModelRange(), text: draft.content }], () => null);
+      patchText(path, { diskChanged: draft.baseMtime !== meta.mtime });
+    }
+    return Promise.resolve();
+  }
   const pending = loading.get(path);
-  if (pending) return pending;
+  if (pending) return pending.then(() => (draft ? ensureBuffer(path, draft) : undefined));
   setMeta(path, { status: "loading" });
   const p = (async () => {
     try {
@@ -151,6 +160,9 @@ export async function reloadBuffer(path: string): Promise<void> {
     // pushEditOperations keeps undo history, so a reload can be undone.
     entry.model.pushEditOperations([], [{ range: entry.model.getFullModelRange(), text: file.content }], () => null);
   }
+  // Line endings can change on disk too (checkout with autocrlf); saving must keep the new ones.
+  const eol = file.eol === "crlf" ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF;
+  if (entry.model.getEndOfLineSequence() !== eol) entry.model.pushEOL(eol);
   entry.savedVersion = entry.model.getAlternativeVersionId();
   patchText(path, { mtime: file.mtime, encoding: file.encoding, eol: file.eol, dirty: false, diskChanged: false });
   listeners.forEach((l) => l());

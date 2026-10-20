@@ -192,6 +192,15 @@ pub(crate) fn atomic_write(
     bytes: &[u8],
     existing: Option<&fs::Metadata>,
 ) -> Result<()> {
+    // Renaming over a symlink would replace the link itself; write its target instead.
+    let resolved;
+    let path = match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => {
+            resolved = fs::canonicalize(path)?;
+            resolved.as_path()
+        }
+        _ => path,
+    };
     let dir = path.parent().context("file has no parent directory")?;
     let file_name = path
         .file_name()
@@ -206,7 +215,15 @@ pub(crate) fn atomic_write(
         if let Some(meta) = existing {
             fs::set_permissions(&tmp, meta.permissions())?;
         }
-        fs::rename(&tmp, path)?;
+        if let Err(e) = fs::rename(&tmp, path) {
+            // Windows refuses to replace a file another process holds open
+            // (antivirus, indexers); overwriting in place still works there.
+            if e.kind() != std::io::ErrorKind::PermissionDenied || existing.is_none() {
+                return Err(e.into());
+            }
+            fs::write(path, bytes)?;
+            let _ = fs::remove_file(&tmp);
+        }
         Ok(())
     };
     let result = write();
@@ -253,13 +270,33 @@ pub fn rename(path: &Path, new_name: &str) -> Result<String> {
         .parent()
         .context("cannot rename a root")?
         .join(new_name);
-    let case_only =
-        target.to_string_lossy().to_lowercase() == path.to_string_lossy().to_lowercase();
-    if target.exists() && !case_only {
+    if target.exists() && !same_entry(path, &target) {
         bail!("{} already exists", target.display());
     }
     fs::rename(path, &target).with_context(|| format!("renaming {}", path.display()))?;
     Ok(target.to_string_lossy().into_owned())
+}
+
+/// True when `a` and `b` name the same directory entry, as a case-only
+/// rename does on a case-insensitive file system. On a case-sensitive one
+/// `Foo.cs` and `foo.cs` are different files and must not be overwritten.
+fn same_entry(a: &Path, b: &Path) -> bool {
+    if a.to_string_lossy().to_lowercase() != b.to_string_lossy().to_lowercase() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
+            (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // NTFS is case-insensitive (per-directory case sensitivity is rare).
+        true
+    }
 }
 
 pub fn trash(paths: &[PathBuf]) -> Result<()> {
@@ -390,6 +427,38 @@ pub fn read_lines(path: &Path, lines: &[u32]) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn case_only_rename_never_overwrites_another_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let upper = dir.path().join("Foo.cs");
+        fs::write(&upper, "upper").unwrap();
+        let lower = dir.path().join("foo.cs");
+        let case_sensitive = !lower.exists();
+        if case_sensitive {
+            fs::write(&lower, "lower").unwrap();
+            assert!(rename(&upper, "foo.cs").is_err());
+            assert_eq!(fs::read_to_string(&lower).unwrap(), "lower");
+        } else {
+            rename(&upper, "foo.cs").unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_through_a_symlink_keeps_the_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.json");
+        let link = dir.path().join("link.json");
+        fs::write(&real, "old").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        write_file(&link, "new", TextEncoding::Utf8, None).unwrap();
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+    }
 
     #[test]
     fn reads_selected_lines() {
