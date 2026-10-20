@@ -33,7 +33,9 @@ export interface ProjectUi {
   /** Most recently opened files, newest first (Ctrl+E). */
   recentFiles: string[];
   /** Tool window shown in the bottom panel. */
-  bottomTab: "terminal" | "build";
+  bottomTab: "terminal" | "build" | "git";
+  /** Tool window shown in the left sidebar. */
+  sidebarTab: "project" | "commit";
   /** Selected run configuration id (see RunBar). */
   runConfig: string | null;
 }
@@ -57,6 +59,7 @@ export const defaultUi = (): ProjectUi => ({
   activeTerminal: null,
   recentFiles: [],
   bottomTab: "terminal",
+  sidebarTab: "project",
   runConfig: null,
 });
 
@@ -185,7 +188,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           tabs = [...tabs.slice(0, at), tab, ...tabs.slice(at)];
         }
       }
-      const recentFiles = [path, ...ui.recentFiles.filter((p) => p !== path)].slice(0, 50);
+      const recentFiles = path.startsWith("haze-diff:")
+        ? ui.recentFiles
+        : [path, ...ui.recentFiles.filter((p) => p !== path)].slice(0, 50);
       return { tabs, activeTab: path, recentFiles };
     });
     if (opts.line) {

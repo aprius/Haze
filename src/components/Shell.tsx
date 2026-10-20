@@ -5,7 +5,10 @@ import { FolderOpen, GitBranch, Plus, Star, TerminalSquare } from "lucide-react"
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { basename } from "../lib/path";
+import { useGit } from "../store/git";
 import { useTree } from "../store/tree";
+import { diffTitle, parseDiffPath } from "./DiffView";
+import { openBranchesPopup } from "./GitDialogs";
 import { useWorkspace, type Project } from "../store/workspace";
 import { closeTabsWithPrompt, useCursor } from "./EditorArea";
 import { openMenu } from "./Overlays";
@@ -177,6 +180,7 @@ export function Splitter({
 
 export function StatusBar({ project }: { project: Project | null }) {
   const git = useTree((s) => (project ? s.git[project.id] : undefined));
+  const operation = useGit((s) => (project ? s.repos[project.id]?.branches?.operation : null));
   const ui = useWorkspace((s) => (project ? s.ui[project.id] : undefined));
   const meta = useBuffers((s) => (ui?.activeTab ? s.meta[ui.activeTab] : undefined));
   const cursor = useCursor();
@@ -187,11 +191,14 @@ export function StatusBar({ project }: { project: Project | null }) {
         <>
           <span className="status-item">{project.name}</span>
           {git?.status.isRepo && (
-            <span className="status-item">
+            <button className="status-item status-btn" title="Branches (Ctrl+Shift+`)" onClick={() => openBranchesPopup(project)}>
               <GitBranch size={12} /> {git.status.branch ?? "detached"}
-            </span>
+              {operation && <span className="status-op">({operation} in progress)</span>}
+            </button>
           )}
-          {ui?.activeTab && <span className="status-item muted">{basename(ui.activeTab)}</span>}
+          {ui?.activeTab && (
+            <span className="status-item muted">{parseDiffPath(ui.activeTab) ? diffTitle(parseDiffPath(ui.activeTab)!) : basename(ui.activeTab)}</span>
+          )}
         </>
       )}
       <span className="status-spacer" />

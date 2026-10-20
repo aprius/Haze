@@ -6,7 +6,7 @@ Không gian làm việc nhẹ dành cho việc lập trình cùng AI agent (Clau
 
 ![Haze](docs/screenshot.png)
 
-Trạng thái: **giai đoạn 3** (C# với Roslyn, build, chạy). Lộ trình đầy đủ: [docs/ROADMAP.md](docs/ROADMAP.md).
+Trạng thái: **giai đoạn 4a** (Git kiểu Rider/Rebased). Lộ trình đầy đủ: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Đã có
 
@@ -52,6 +52,16 @@ Trạng thái: **giai đoạn 3** (C# với Roslyn, build, chạy). Lộ trình 
 - Thanh **Run**: cấu hình chạy lấy từ `launchSettings.json` của từng project (và `dotnet test` nếu có project test). **Shift+F10** chạy trong một tab terminal riêng (vẫn sống khi đóng Haze).
 - Double Shift có thêm tab **Symbols** (tìm class/method mờ, ví dụ `OrdSer`), Find in Files có thêm phạm vi **Solution** (đọc `.sln`/`.slnx`).
 - File do AI tạo/sửa/xóa trên đĩa được báo cho Roslyn (`workspace/didChangeWatchedFiles`), nên điều hướng luôn theo code mới.
+
+**Git (giai đoạn 4a)** — tự viết, gọi git CLI; giao diện theo Rider/Rebased
+- **Commit (Alt+0, Ctrl+K)**: tick từng file để commit, không cần stage; nhóm Changes / Unversioned Files / Merge Conflicts; Amend (tự điền message cũ); Commit and Push; Rollback (hỏi trước khi xóa file mới); Add to VCS, Add to .gitignore; banner Continue/Abort khi đang merge/rebase dở.
+- **Git (Alt+9)**: log có **đồ thị nhánh** (lane tính trên toàn bộ lịch sử đã tải, tải thêm khi cuộn), nhãn branch/tag/remote, lọc theo text/hash, tác giả, nhánh, đường dẫn, First parent; danh sách nhánh bên trái; chi tiết commit và file thay đổi bên phải; tab **Console** ghi lại mọi lệnh git Haze đã chạy.
+- Menu commit: Copy Revision, Checkout Revision, New Branch, New Tag, Cherry-Pick, Revert, Undo Commit, Reset Current Branch to Here (Soft/Mixed/Hard).
+- **Branches** (bấm tên nhánh ở thanh trạng thái, hoặc Ctrl+Shift+\`): tìm nhánh, Checkout (có **Smart Checkout** tự stash khi có thay đổi), New Branch, Merge into current, Rebase onto, Compare, Push, Rename, Delete (hỏi khi chưa merge), xóa nhánh trên remote; Fetch.
+- **Push (Ctrl+Shift+K)**: liệt kê các commit sẽ push, chọn remote/nhánh đích, `--force-with-lease`; tự đặt upstream cho nhánh mới. **Update Project (Ctrl+T)**: pull kiểu Merge hoặc Rebase, tự stash/khôi phục thay đổi.
+- **Diff** mở như một tab (F7 / Shift+F7 để nhảy giữa các khác biệt); với file đang sửa, bên phải chính là file thật nên sửa trực tiếp được.
+- **Annotate with Git Blame**, **Show History for File**, **Compare with HEAD** từ menu chuột phải của editor và cây file.
+- Không bao giờ chờ nhập mật khẩu (`GIT_TERMINAL_PROMPT=0`): cần credential helper hoặc SSH agent; lỗi xác thực hiện ngay thành thông báo.
 
 **Terminal**
 - Shell chạy trong một tiến trình nền riêng (PTY host): **đóng hay cập nhật Haze không giết shell hay AI agent đang chạy**; mở lại là nối lại đúng phiên, phát lại output gần nhất (4 MB/phiên).
@@ -108,6 +118,8 @@ src-tauri/src/
   file_index.rs         danh sách file + tìm mờ cho Double Shift
   lsp.rs                chạy language server, chuyển tin nhắn LSP
   dotnet.rs             tìm solution/project/launch profile, chạy dotnet build và tách lỗi MSBuild
+  git_log.rs            git log + tính lane cho đồ thị nhánh
+  git_ops.rs            thay đổi cục bộ, commit theo file, rollback, branch, stash, blame
   pty/                  PTY host (host.rs), client (client.rs), giao thức (protocol.rs)
 ```
 

@@ -23,14 +23,19 @@ Còn để sau: Structural Search & Replace (ast-grep), phạm vi "Solution" (c�
 
 Còn để sau: debug (cần DAP, ví dụ netcoredbg), semantic highlighting, inlay hints, đổi tên file khi đổi tên class.
 
-## 4. Git kiểu Rebased
+## 4. Git kiểu Rider/Rebased
 
-Chuyển từ IdeaGitTool (Apache-2.0, TypeScript, gọi git CLI):
-- Log với commit graph theo màu lane của IntelliJ, lọc theo branch/user/ngày/đường dẫn;
-- Commit theo changelist (tick file, không cần staging), amend, Commit and Push;
-- Shelf, Stash, Branches popup, Update Project (Ctrl+T);
-- cửa sổ merge 3 khung, interactive rebase, cherry-pick, File History, Annotate (blame);
-- thêm từ Tervia: đánh dấu "đã review" từng file, checkpoint trước khi để AI chạy.
+Tự viết lại (IdeaGitTool chỉ dùng tham khảo hành vi: giấy phép trong repo của họ không rõ ràng — `package.json` ghi Apache-2.0 nhưng file LICENSE là điều khoản build của JetBrains).
+
+**4a — xong:** cửa sổ Commit (tick file, không cần staging, amend, commit and push, rollback), cửa sổ Git (log + đồ thị nhánh, lọc, chi tiết commit, console), Branches popup với Smart Checkout, Push dialog, Update Project, cherry-pick / revert / reset / undo commit, diff dạng tab (sửa được bên phải), Annotate (blame), Show History, Compare with HEAD.
+
+**4b — còn lại:**
+- cửa sổ merge 3 khung (Yours / Result / Theirs) và danh sách Conflicts với Accept Yours/Theirs;
+- interactive rebase (reword, squash, fixup, drop, sắp xếp lại);
+- Shelf (cất thay đổi theo từng file), stash UI đầy đủ (danh sách, xem, apply/pop/drop — hiện mới có qua lệnh);
+- changelists;
+- thêm từ Tervia: đánh dấu "đã review" từng file, checkpoint trước khi để AI chạy;
+- Local History.
 
 ## 5. AI agent
 

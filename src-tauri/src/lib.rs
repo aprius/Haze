@@ -2,6 +2,8 @@ mod dotnet;
 mod file_index;
 mod fs_ops;
 mod git;
+mod git_log;
+mod git_ops;
 mod lsp;
 mod nesting;
 pub mod pty;
@@ -251,6 +253,77 @@ async fn read_image(path: String) -> CmdResult<ImageData> {
     .await
 }
 
+// ---------------------------------------------------------------- git tool windows
+
+#[tauri::command]
+async fn git_log(root: String, query: git_log::LogQuery) -> CmdResult<git_log::LogPage> {
+    blocking(move || git_log::log(root.as_ref(), &query)).await
+}
+
+#[tauri::command]
+async fn git_changes(root: String) -> CmdResult<Vec<git_ops::Change>> {
+    blocking(move || git_ops::changes(root.as_ref())).await
+}
+
+#[tauri::command]
+async fn git_toplevel(root: String) -> CmdResult<String> {
+    blocking(move || {
+        Ok(git_ops::toplevel(root.as_ref())?
+            .to_string_lossy()
+            .into_owned())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn git_commit(
+    root: String,
+    message: String,
+    paths: Vec<String>,
+    amend: bool,
+) -> CmdResult<git_ops::GitOutput> {
+    blocking(move || git_ops::commit(root.as_ref(), &message, &paths, amend)).await
+}
+
+#[tauri::command]
+async fn git_rollback(root: String, paths: Vec<String>) -> CmdResult<()> {
+    blocking(move || git_ops::rollback(root.as_ref(), &paths)).await
+}
+
+#[tauri::command]
+async fn git_commit_details(root: String, hash: String) -> CmdResult<git_ops::CommitDetails> {
+    blocking(move || git_ops::commit_details(root.as_ref(), &hash)).await
+}
+
+#[tauri::command]
+async fn git_file_at(root: String, rev: String, rel: String) -> CmdResult<Option<String>> {
+    blocking(move || git_ops::file_at(root.as_ref(), &rev, &rel)).await
+}
+
+#[tauri::command]
+async fn git_branches(root: String) -> CmdResult<git_ops::Branches> {
+    blocking(move || git_ops::branches(root.as_ref())).await
+}
+
+#[tauri::command]
+async fn git_stashes(root: String) -> CmdResult<Vec<git_ops::StashEntry>> {
+    blocking(move || git_ops::stashes(root.as_ref())).await
+}
+
+#[tauri::command]
+async fn git_blame(
+    root: String,
+    rel: String,
+    contents: Option<String>,
+) -> CmdResult<Vec<git_ops::BlameLine>> {
+    blocking(move || git_ops::blame(root.as_ref(), &rel, contents.as_deref())).await
+}
+
+#[tauri::command]
+async fn git_run(root: String, args: Vec<String>) -> CmdResult<git_ops::GitOutput> {
+    blocking(move || git_ops::run(root.as_ref(), &args)).await
+}
+
 // ---------------------------------------------------------------- .NET and language servers
 
 #[tauri::command]
@@ -441,6 +514,17 @@ pub fn run() {
             undo_replace,
             find_files,
             read_image,
+            git_log,
+            git_changes,
+            git_toplevel,
+            git_commit,
+            git_rollback,
+            git_commit_details,
+            git_file_at,
+            git_branches,
+            git_stashes,
+            git_blame,
+            git_run,
             dotnet_info,
             build_start,
             build_cancel,

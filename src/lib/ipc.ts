@@ -193,6 +193,111 @@ export interface ServerCommand {
 
 export type LspEvent = { t: "message"; server: number; message: unknown } | { t: "exit"; server: number; code: number | null };
 
+export interface LogQuery {
+  limit: number;
+  refs: string[];
+  text: string | null;
+  author: string | null;
+  path: string | null;
+  firstParent: boolean;
+}
+
+export interface Commit {
+  hash: string;
+  parents: string[];
+  author: string;
+  email: string;
+  time: number;
+  refs: string[];
+  subject: string;
+}
+
+export interface GraphEdge {
+  from: number;
+  to: number;
+  color: number;
+}
+
+export interface GraphRow {
+  lane: number;
+  color: number;
+  edges: GraphEdge[];
+}
+
+export interface LogPage {
+  commits: Commit[];
+  graph: GraphRow[];
+  hasMore: boolean;
+}
+
+export type ChangeStatus = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflict";
+
+export interface GitChange {
+  rel: string;
+  oldRel: string | null;
+  status: ChangeStatus;
+  staged: boolean;
+}
+
+export interface GitOutput {
+  ok: boolean;
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+export interface ChangedFile {
+  status: string;
+  rel: string;
+  oldRel: string | null;
+}
+
+export interface CommitDetails {
+  hash: string;
+  parents: string[];
+  author: string;
+  email: string;
+  time: number;
+  committer: string;
+  commitTime: number;
+  message: string;
+  files: ChangedFile[];
+}
+
+export interface Branch {
+  name: string;
+  refname: string;
+  hash: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  current: boolean;
+  kind: "local" | "remote" | "tag";
+}
+
+export interface BranchesInfo {
+  current: string | null;
+  detached: boolean;
+  branches: Branch[];
+  remotes: string[];
+  operation: string | null;
+}
+
+export interface StashEntry {
+  index: number;
+  hash: string;
+  time: number;
+  message: string;
+}
+
+export interface BlameLine {
+  line: number;
+  hash: string;
+  author: string;
+  time: number;
+  summary: string;
+}
+
 export const api = {
   loadState: () => invoke<unknown>("load_state"),
   saveState: (value: unknown) => invoke<void>("save_state", { value }),
@@ -220,6 +325,19 @@ export const api = {
   readImage: (path: string) => invoke<{ mime: string; base64: string }>("read_image", { path }),
 
   readLines: (requests: { path: string; lines: number[] }[]) => invoke<string[][]>("read_lines", { requests }),
+
+  gitLog: (root: string, query: LogQuery) => invoke<LogPage>("git_log", { root, query }),
+  gitChanges: (root: string) => invoke<GitChange[]>("git_changes", { root }),
+  gitToplevel: (root: string) => invoke<string>("git_toplevel", { root }),
+  gitCommit: (root: string, message: string, paths: string[], amend: boolean) =>
+    invoke<GitOutput>("git_commit", { root, message, paths, amend }),
+  gitRollback: (root: string, paths: string[]) => invoke<void>("git_rollback", { root, paths }),
+  gitCommitDetails: (root: string, hash: string) => invoke<CommitDetails>("git_commit_details", { root, hash }),
+  gitFileAt: (root: string, rev: string, rel: string) => invoke<string | null>("git_file_at", { root, rev, rel }),
+  gitBranches: (root: string) => invoke<BranchesInfo>("git_branches", { root }),
+  gitStashes: (root: string) => invoke<StashEntry[]>("git_stashes", { root }),
+  gitBlame: (root: string, rel: string, contents: string | null) => invoke<BlameLine[]>("git_blame", { root, rel, contents }),
+  gitRun: (root: string, args: string[]) => invoke<GitOutput>("git_run", { root, args }),
 
   dotnetInfo: (root: string) => invoke<DotnetInfo>("dotnet_info", { root }),
   buildStart: (verb: BuildVerb, target: string | null, cwd: string) => invoke<number>("build_start", { verb, target, cwd }),

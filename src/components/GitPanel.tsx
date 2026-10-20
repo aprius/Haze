@@ -1,0 +1,462 @@
+// Git tool window (Alt+9): branches, log with commit graph, commit details,
+// and a console of the git commands Haze ran.
+import { ChevronDown, Copy, GitBranch, RefreshCw, Tag, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, errorMessage, type Branch, type Commit, type CommitDetails, type GraphRow, type LogQuery } from "../lib/ipc";
+import { basename, dirname } from "../lib/path";
+import { repo, runGit, useGit } from "../store/git";
+import { useWorkspace, type Project } from "../store/workspace";
+import { openDiff } from "./DiffView";
+import { branchMenu, checkout, newBranch, onLogFilter } from "./GitDialogs";
+import { choose, confirmAction, openMenu, prompt, toast } from "./Overlays";
+import { ToolTabs } from "./TerminalPanel";
+
+const ROW_H = 22;
+const LANE_W = 14;
+const PAGE = 1000;
+const COLORS = ["#3574f0", "#e5a03a", "#5fb865", "#c75ad6", "#e8615a", "#3fb0b8", "#a88e5a", "#8c96a6"];
+const colorOf = (c: number) => COLORS[c % COLORS.length];
+
+function formatDate(t: number): string {
+  const d = new Date(t * 1000);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? `Today ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+    : d.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** Commit graph for the visible rows, drawn as one SVG. */
+function Graph({ rows, first, last, width }: { rows: GraphRow[]; first: number; last: number; width: number }) {
+  const x = (lane: number) => lane * LANE_W + LANE_W / 2 + 4;
+  const y = (i: number) => i * ROW_H + ROW_H / 2;
+  const paths: React.ReactNode[] = [];
+  const nodes: React.ReactNode[] = [];
+  for (let i = Math.max(0, first - 1); i < Math.min(rows.length, last + 1); i++) {
+    const r = rows[i];
+    for (const e of r.edges) {
+      const x1 = x(e.from);
+      const x2 = x(e.to);
+      const y1 = y(i);
+      const y2 = y(i + 1);
+      const d = x1 === x2 ? `M${x1},${y1}L${x2},${y2}` : `M${x1},${y1}C${x1},${y1 + ROW_H * 0.6} ${x2},${y2 - ROW_H * 0.6} ${x2},${y2}`;
+      paths.push(<path key={`${i}-${e.from}-${e.to}`} d={d} stroke={colorOf(e.color)} strokeWidth={1.6} fill="none" />);
+    }
+    if (i >= first && i < last) {
+      nodes.push(<circle key={`n${i}`} cx={x(r.lane)} cy={y(i)} r={3.6} fill={colorOf(r.color)} stroke="var(--editor-bg)" strokeWidth={1.2} />);
+    }
+  }
+  return (
+    <svg className="log-graph" width={width} height={rows.length * ROW_H} style={{ width }}>
+      {paths}
+      {nodes}
+    </svg>
+  );
+}
+
+function RefBadges({ refs, branches }: { refs: string[]; branches: Branch[] }) {
+  return (
+    <>
+      {refs.map((r) => {
+        const head = r.startsWith("HEAD -> ");
+        const name = head ? r.slice(8) : r.replace(/^tag: /, "");
+        const tag = r.startsWith("tag: ");
+        const remote = !head && !tag && branches.some((b) => b.kind === "remote" && b.name === name);
+        return (
+          <span key={r} className={"ref-badge" + (head ? " head" : tag ? " tag" : remote ? " remote" : "")}>
+            {tag ? <Tag size={10} /> : <GitBranch size={10} />}
+            {name}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+function Details({ project, root, hash }: { project: Project; root: string; hash: string }) {
+  const [d, setD] = useState<CommitDetails | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    setD(null);
+    setError(null);
+    api
+      .gitCommitDetails(root, hash)
+      .then((x) => !stale && setD(x))
+      .catch((e) => !stale && setError(errorMessage(e)));
+    return () => {
+      stale = true;
+    };
+  }, [root, hash]);
+  if (error) return <div className="se-empty error">{error}</div>;
+  if (!d) return <div className="se-empty">Loading…</div>;
+  const parent = d.parents[0] ?? null;
+  return (
+    <div className="commit-details">
+      <div className="commit-files">
+        {d.files.map((f) => (
+          <div
+            key={f.rel}
+            className={"change-row git-" + (f.status === "copied" ? "added" : f.status)}
+            title={f.oldRel ? `${f.oldRel} → ${f.rel}` : f.rel}
+            onClick={() =>
+              openDiff(project.id, {
+                root,
+                rel: f.rel,
+                oldRel: f.oldRel,
+                left: f.status === "added" ? null : parent,
+                right: d.hash,
+              })
+            }
+          >
+            <span className="tree-name">{basename(f.rel)}</span>
+            <span className="tree-hint">{dirname(f.rel)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="commit-meta">
+        <pre className="commit-msg">{d.message}</pre>
+        <div className="muted small">
+          {d.author} &lt;{d.email}&gt; · {new Date(d.time * 1000).toLocaleString()}
+        </div>
+        {d.committer !== d.author && <div className="muted small">committed by {d.committer}</div>}
+        <div className="small">
+          <span className="hash">{d.hash.slice(0, 12)}</span>
+          <button className="icon-btn" title="Copy revision number" onClick={() => void navigator.clipboard.writeText(d.hash).then(() => toast("Copied"))}>
+            <Copy size={12} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BranchList({ project, branches, refs, onSelect }: { project: Project; branches: Branch[]; refs: string[]; onSelect: (refs: string[]) => void }) {
+  const current = useGit((s) => s.repos[project.id]?.branches?.current ?? null);
+  const [q, setQ] = useState("");
+  const groups: [string, Branch[]][] = [
+    ["Local", branches.filter((b) => b.kind === "local")],
+    ["Remote", branches.filter((b) => b.kind === "remote")],
+    ["Tags", branches.filter((b) => b.kind === "tag")],
+  ];
+  return (
+    <div className="log-branches">
+      <input className="find-input small" placeholder="Filter branches" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="log-branch-list">
+        <div className={"log-branch" + (refs.length === 0 ? " selected" : "")} onClick={() => onSelect([])}>
+          All branches
+        </div>
+        {current && (
+          <div className={"log-branch" + (refs.length === 1 && refs[0] === "HEAD" ? " selected" : "")} onClick={() => onSelect(["HEAD"])}>
+            HEAD ({current})
+          </div>
+        )}
+        {groups.map(([label, list]) => {
+          const shown = list.filter((b) => b.name.toLowerCase().includes(q.toLowerCase()));
+          if (!shown.length) return null;
+          return (
+            <div key={label}>
+              <div className="se-group">{label}</div>
+              {shown.map((b) => (
+                <div
+                  key={b.refname}
+                  className={"log-branch" + (refs.length === 1 && refs[0] === b.refname ? " selected" : "") + (b.current ? " current-branch" : "")}
+                  onClick={() => onSelect([b.refname])}
+                  onDoubleClick={() => b.kind !== "tag" && void checkout(project, b.name, { remote: b.kind === "remote" })}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openMenu(e, branchMenu(project, b, current));
+                  }}
+                  title={b.upstream ? `${b.name} → ${b.upstream}` : b.name}
+                >
+                  {b.kind === "tag" ? <Tag size={12} className="ico" /> : <GitBranch size={12} className="ico" />}
+                  <span className="tree-name">{b.name}</span>
+                  {(b.ahead > 0 || b.behind > 0) && (
+                    <span className="tree-hint">
+                      {b.ahead > 0 && `↑${b.ahead}`} {b.behind > 0 && `↓${b.behind}`}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ConsoleView({ project }: { project: Project }) {
+  const entries = useGit((s) => s.repos[project.id]?.console ?? []);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [entries.length]);
+  return (
+    <div className="git-console" ref={ref}>
+      {entries.length === 0 && <div className="se-empty">Git commands run by Haze appear here.</div>}
+      {entries.map((e, i) => (
+        <div key={i} className={"console-entry" + (e.output && !e.output.ok ? " failed" : "")}>
+          <div className="console-cmd">
+            <span className="muted">{new Date(e.time).toLocaleTimeString()}</span> git {e.args.join(" ")}
+          </div>
+          {e.output && (e.output.stdout || e.output.stderr) && <pre>{(e.output.stdout + e.output.stderr).trim()}</pre>}
+          {e.error && <pre className="error">{e.error}</pre>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function GitPanel({ project }: { project: Project }) {
+  const r = useGit((s) => s.repos[project.id]);
+  const root = r?.root ?? null;
+  const branches = useMemo(() => r?.branches?.branches ?? [], [r?.branches]);
+  const [view, setView] = useState<"log" | "console">("log");
+  const [query, setQuery] = useState<LogQuery>({ limit: PAGE, refs: [], text: null, author: null, path: null, firstParent: false });
+  const [textInput, setTextInput] = useState("");
+  const [authorInput, setAuthorInput] = useState("");
+  const [page, setPage] = useState<{ commits: Commit[]; graph: GraphRow[]; hasMore: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [height, setHeight] = useState(300);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Branch "Compare with" and file "Show History" set filters from outside.
+  useEffect(
+    () =>
+      onLogFilter((pid, f) => {
+        if (pid !== project.id) return;
+        setView("log");
+        setQuery((q) => ({ ...q, limit: PAGE, ...(f.refs ? { refs: f.refs } : {}), ...(f.path !== undefined ? { path: f.path } : {}) }));
+      }),
+    [project.id],
+  );
+
+  const load = useCallback(async () => {
+    if (!root) return;
+    try {
+      const p = await api.gitLog(root, query);
+      setPage(p);
+      setError(null);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }, [root, query]);
+
+  useEffect(() => {
+    void load();
+  }, [load, r?.revision]);
+
+  // Debounced text filters.
+  useEffect(() => {
+    const t = setTimeout(
+      () => setQuery((q) => ({ ...q, limit: PAGE, text: textInput.trim() || null, author: authorInput.trim() || null })),
+      300,
+    );
+    return () => clearTimeout(t);
+  }, [textInput, authorInput]);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setHeight(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [view]);
+
+  const commits = page?.commits ?? [];
+  const graph = page?.graph ?? [];
+  const lanes = graph.reduce((m, g) => Math.max(m, g.lane + 1, ...g.edges.map((e) => Math.max(e.from, e.to) + 1)), 1);
+  const graphWidth = Math.min(lanes, 12) * LANE_W + 10;
+  const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 10);
+  const last = Math.min(commits.length, Math.ceil((scrollTop + height) / ROW_H) + 10);
+  const head = branches.find((b) => b.current)?.hash ?? null;
+
+  const commitMenu = (c: Commit) => {
+    const short = c.hash.slice(0, 8);
+    const isHead = c.hash === head;
+    return [
+      { label: "Copy Revision Number", action: () => void navigator.clipboard.writeText(c.hash) },
+      { separator: true },
+      { label: "Checkout Revision", action: () => void checkout(project, c.hash) },
+      { label: "New Branch…", action: () => void newBranch(project, c.hash) },
+      {
+        label: "New Tag…",
+        action: async () => {
+          const name = await prompt("New Tag", "", { okLabel: "Create" });
+          if (name) await runGit(project.id, ["tag", name.trim(), c.hash], { label: `Tag ${name.trim()}` });
+        },
+      },
+      { separator: true },
+      { label: "Cherry-Pick", action: () => void runGit(project.id, ["cherry-pick", c.hash], { label: `Cherry-pick ${short}` }) },
+      {
+        label: "Revert Commit",
+        action: () => void runGit(project.id, ["revert", "--no-edit", c.hash], { label: `Revert ${short}` }),
+      },
+      {
+        label: "Undo Commit",
+        disabled: !isHead,
+        action: async () => {
+          if (await confirmAction("Undo Commit", "Remove the last commit and keep its changes as local changes?", "Undo Commit")) {
+            await runGit(project.id, ["reset", "--soft", "HEAD~1"], { label: "Undo commit" });
+          }
+        },
+      },
+      {
+        label: "Reset Current Branch to Here…",
+        action: async () => {
+          const mode = await choose("Git Reset", `Reset the current branch to ${short}?`, [
+            { label: "Cancel", value: "cancel" },
+            { label: "Soft", value: "--soft" },
+            { label: "Mixed", value: "--mixed", primary: true },
+            { label: "Hard (discard changes)", value: "--hard", danger: true },
+          ]);
+          if (mode) await runGit(project.id, ["reset", mode, c.hash], { label: `Reset to ${short}` });
+        },
+      },
+    ];
+  };
+
+  if (!root) {
+    return (
+      <div className="terminal-panel">
+        <div className="panel-header">
+          <ToolTabs project={project} />
+        </div>
+        <div className="se-empty">This folder is not a git repository.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="terminal-panel git-panel">
+      <div className="panel-header">
+        <ToolTabs project={project} />
+        <div className="seg small">
+          <button className={"seg-btn" + (view === "log" ? " on" : "")} onClick={() => setView("log")}>
+            Log
+          </button>
+          <button className={"seg-btn" + (view === "console" ? " on" : "")} onClick={() => setView("console")}>
+            Console
+          </button>
+        </div>
+        {view === "log" && (
+          <>
+            <input className="find-input small log-filter" placeholder="Text or hash" value={textInput} onChange={(e) => setTextInput(e.target.value)} />
+            <input className="find-input small log-filter" placeholder="User" value={authorInput} onChange={(e) => setAuthorInput(e.target.value)} />
+            {query.path && (
+              <span className="filter-chip" title={query.path}>
+                Path: {basename(query.path)}
+                <button className="icon-btn" onClick={() => setQuery((q) => ({ ...q, path: null }))}>
+                  <X size={11} />
+                </button>
+              </span>
+            )}
+            {query.refs.length === 1 && query.refs[0].includes("..") && (
+              <span className="filter-chip">
+                {query.refs[0]}
+                <button className="icon-btn" onClick={() => setQuery((q) => ({ ...q, refs: [] }))}>
+                  <X size={11} />
+                </button>
+              </span>
+            )}
+            <label className="find-check">
+              <input type="checkbox" checked={query.firstParent} onChange={(e) => setQuery((q) => ({ ...q, firstParent: e.target.checked }))} />
+              First parent
+            </label>
+          </>
+        )}
+        <div className="panel-actions">
+          {r?.busy && <span className="muted small">{r.busy}</span>}
+          <button className="icon-btn" title="Refresh" onClick={() => void load()}>
+            <RefreshCw size={14} />
+          </button>
+          <button className="icon-btn" title="Hide (Alt+9)" onClick={() => useWorkspace.getState().updateUi(project.id, { terminalVisible: false })}>
+            <ChevronDown size={14} />
+          </button>
+        </div>
+      </div>
+      {view === "console" ? (
+        <ConsoleView project={project} />
+      ) : (
+        <div className="log-body">
+          <BranchList project={project} branches={branches} refs={query.refs} onSelect={(refs) => setQuery((q) => ({ ...q, refs, limit: PAGE }))} />
+          <div
+            ref={listRef}
+            className="log-list"
+            tabIndex={0}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              setScrollTop(el.scrollTop);
+              if (page?.hasMore && el.scrollTop + el.clientHeight > el.scrollHeight - ROW_H * 20) {
+                setQuery((q) => (q.limit <= commits.length ? { ...q, limit: q.limit + PAGE } : q));
+              }
+            }}
+            onKeyDown={(e) => {
+              const i = commits.findIndex((c) => c.hash === selected);
+              const go = (j: number) => {
+                const c = commits[Math.max(0, Math.min(commits.length - 1, j))];
+                if (!c) return;
+                setSelected(c.hash);
+                const el = listRef.current;
+                const top = Math.max(0, Math.min(commits.length - 1, j)) * ROW_H;
+                if (el && top < el.scrollTop) el.scrollTop = top;
+                else if (el && top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
+              };
+              if (e.key === "ArrowDown") go(i + 1);
+              else if (e.key === "ArrowUp") go(i - 1);
+              else return;
+              e.preventDefault();
+            }}
+          >
+            {error && <div className="se-empty error">{error}</div>}
+            {!error && page && commits.length === 0 && <div className="se-empty">No commits</div>}
+            <div style={{ height: commits.length * ROW_H, position: "relative" }}>
+              <Graph rows={graph} first={first} last={last} width={graphWidth} />
+              {commits.slice(first, last).map((c, k) => {
+                const i = first + k;
+                return (
+                  <div
+                    key={c.hash}
+                    className={"log-row" + (selected === c.hash ? " selected" : "") + (c.hash === head ? " head" : "")}
+                    style={{ top: i * ROW_H, height: ROW_H, paddingLeft: graphWidth }}
+                    onClick={() => setSelected(c.hash)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setSelected(c.hash);
+                      openMenu(e, commitMenu(c));
+                    }}
+                    title={`${c.hash}\n${c.author} <${c.email}>`}
+                  >
+                    <span className="log-subject">
+                      <RefBadges refs={c.refs} branches={branches} />
+                      {c.subject}
+                    </span>
+                    <span className="log-author">{c.author}</span>
+                    <span className="log-date">{formatDate(c.time)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="log-details">
+            {selected ? <Details project={project} root={root} hash={selected} /> : <div className="se-empty">Select a commit</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** "Show History" for a file or folder: opens the Git log filtered by that path. */
+export function showHistory(project: Project, absolute: string): void {
+  const root = repo(project.id).root;
+  if (!root) return toast("Not a git repository.", "error");
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  const rel = norm(absolute).startsWith(norm(root) + "/") ? norm(absolute).slice(norm(root).length + 1) : norm(absolute);
+  useWorkspace.getState().updateUi(project.id, { terminalVisible: true, bottomTab: "git" });
+  // The panel may mount now; apply the filter after it subscribes.
+  setTimeout(() => import("./GitDialogs").then((m) => m.setLogFilter(project.id, { path: rel })), 50);
+}
