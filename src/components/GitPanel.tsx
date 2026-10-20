@@ -9,6 +9,7 @@ import { useWorkspace, type Project } from "../store/workspace";
 import { openDiff } from "./DiffView";
 import { branchMenu, checkout, newBranch, onLogFilter } from "./GitDialogs";
 import { choose, confirmAction, openMenu, prompt, toast } from "./Overlays";
+import { openRebaseDialog } from "./RebaseDialog";
 import { ToolTabs } from "./TerminalPanel";
 
 const ROW_H = 22;
@@ -186,6 +187,74 @@ function BranchList({ project, branches, refs, onSelect }: { project: Project; b
   );
 }
 
+function StashView({ project, root }: { project: Project; root: string }) {
+  const stashes = useGit((s) => s.repos[project.id]?.stashes ?? []);
+  const [selected, setSelected] = useState<number | null>(null);
+  const sel = stashes.find((s) => s.index === selected) ?? stashes[0];
+  const ref = (i: number) => `stash@{${i}}`;
+  return (
+    <div className="log-body">
+      <div className="stash-list">
+        <div className="stash-actions">
+          <button
+            className="btn small"
+            onClick={async () => {
+              const msg = await prompt("Stash Changes", "", { okLabel: "Stash" });
+              if (msg !== null) await runGit(project.id, ["stash", "push", "--include-untracked", ...(msg.trim() ? ["-m", msg.trim()] : [])], { label: "Stash" });
+            }}
+          >
+            Stash Changes…
+          </button>
+        </div>
+        {stashes.length === 0 && <div className="se-empty">No stashes</div>}
+        {stashes.map((s) => (
+          <div
+            key={s.hash}
+            className={"log-branch" + (sel?.index === s.index ? " selected" : "")}
+            onClick={() => setSelected(s.index)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setSelected(s.index);
+              openMenu(e, [
+                { label: "Apply", action: () => void runGit(project.id, ["stash", "apply", ref(s.index)], { label: "Apply stash" }) },
+                { label: "Pop", action: () => void runGit(project.id, ["stash", "pop", ref(s.index)], { label: "Pop stash" }) },
+                { label: "Unstash as Branch…", action: async () => {
+                  const name = await prompt("Unstash as Branch", "", { okLabel: "Create" });
+                  if (name) await runGit(project.id, ["stash", "branch", name.trim(), ref(s.index)], { label: "Unstash as branch" });
+                } },
+                { separator: true },
+                {
+                  label: "Drop",
+                  danger: true,
+                  action: async () => {
+                    if (await confirmAction("Drop Stash", `Drop ${ref(s.index)}: ${s.message}?`, "Drop", true))
+                      await runGit(project.id, ["stash", "drop", ref(s.index)], { label: "Drop stash" });
+                  },
+                },
+              ]);
+            }}
+            title={new Date(s.time * 1000).toLocaleString()}
+          >
+            <span className="hash">{ref(s.index)}</span>
+            <span className="tree-name">{s.message}</span>
+          </div>
+        ))}
+        {sel && (
+          <div className="stash-actions">
+            <button className="btn small" onClick={() => void runGit(project.id, ["stash", "apply", ref(sel.index)], { label: "Apply stash" })}>
+              Apply
+            </button>
+            <button className="btn small primary" onClick={() => void runGit(project.id, ["stash", "pop", ref(sel.index)], { label: "Pop stash" })}>
+              Pop
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="log-details wide">{sel ? <Details project={project} root={root} hash={sel.hash} /> : <div className="se-empty">Select a stash</div>}</div>
+    </div>
+  );
+}
+
 function ConsoleView({ project }: { project: Project }) {
   const entries = useGit((s) => s.repos[project.id]?.console ?? []);
   const ref = useRef<HTMLDivElement>(null);
@@ -212,7 +281,7 @@ export function GitPanel({ project }: { project: Project }) {
   const r = useGit((s) => s.repos[project.id]);
   const root = r?.root ?? null;
   const branches = useMemo(() => r?.branches?.branches ?? [], [r?.branches]);
-  const [view, setView] = useState<"log" | "console">("log");
+  const [view, setView] = useState<"log" | "stashes" | "console">("log");
   const [query, setQuery] = useState<LogQuery>({ limit: PAGE, refs: [], text: null, author: null, path: null, firstParent: false });
   const [textInput, setTextInput] = useState("");
   const [authorInput, setAuthorInput] = useState("");
@@ -305,6 +374,10 @@ export function GitPanel({ project }: { project: Project }) {
         },
       },
       {
+        label: "Interactively Rebase from Here…",
+        action: () => openRebaseDialog(project, c.hash),
+      },
+      {
         label: "Reset Current Branch to Here…",
         action: async () => {
           const mode = await choose("Git Reset", `Reset the current branch to ${short}?`, [
@@ -337,6 +410,9 @@ export function GitPanel({ project }: { project: Project }) {
         <div className="seg small">
           <button className={"seg-btn" + (view === "log" ? " on" : "")} onClick={() => setView("log")}>
             Log
+          </button>
+          <button className={"seg-btn" + (view === "stashes" ? " on" : "")} onClick={() => setView("stashes")}>
+            Stashes{r?.stashes.length ? ` (${r.stashes.length})` : ""}
           </button>
           <button className={"seg-btn" + (view === "console" ? " on" : "")} onClick={() => setView("console")}>
             Console
@@ -380,6 +456,8 @@ export function GitPanel({ project }: { project: Project }) {
       </div>
       {view === "console" ? (
         <ConsoleView project={project} />
+      ) : view === "stashes" ? (
+        <StashView project={project} root={root} />
       ) : (
         <div className="log-body">
           <BranchList project={project} branches={branches} refs={query.refs} onSelect={(refs) => setQuery((q) => ({ ...q, refs, limit: PAGE }))} />

@@ -23,6 +23,7 @@
     "lucide-react": "^1.60.0",
     "marked": "^18.1.1",
     "monaco-editor": "^0.57.0",
+    "node-diff3": "^3.2.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "zustand": "^5.0.15"

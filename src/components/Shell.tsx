@@ -197,7 +197,11 @@ export function StatusBar({ project }: { project: Project | null }) {
             </button>
           )}
           {ui?.activeTab && (
-            <span className="status-item muted">{parseDiffPath(ui.activeTab) ? diffTitle(parseDiffPath(ui.activeTab)!) : basename(ui.activeTab)}</span>
+            <span className="status-item muted">{parseDiffPath(ui.activeTab)
+                ? diffTitle(parseDiffPath(ui.activeTab)!)
+                : ui.activeTab.startsWith("haze-merge:")
+                  ? "Merge"
+                  : basename(ui.activeTab)}</span>
           )}
         </>
       )}

@@ -10,6 +10,7 @@ import { BuildPanel } from "./components/BuildPanel";
 import { CommitPanel } from "./components/CommitPanel";
 import { BranchesPopup, openBranchesPopup, openPushDialog, PushDialog, updateProject } from "./components/GitDialogs";
 import { GitPanel } from "./components/GitPanel";
+import { RebaseDialog } from "./components/RebaseDialog";
 import { refreshRepo } from "./store/git";
 import { RunBar, runConfig, runConfigs } from "./components/RunBar";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -272,7 +273,7 @@ export default function App() {
   }, [nest]);
 
   useEffect(() => {
-    const title = active ? `${active.name}${activeTab && !activeTab.startsWith("haze-diff:") ? " – " + basename(activeTab) : ""} — Haze` : "Haze";
+    const title = active ? `${active.name}${activeTab && !activeTab.startsWith("haze-") ? " – " + basename(activeTab) : ""} — Haze` : "Haze";
     document.title = title;
     void getCurrentWindow().setTitle(title).catch(() => {});
   }, [active, activeTab]);
@@ -294,6 +295,7 @@ export default function App() {
       <UsagesPopup project={active} />
       <BranchesPopup project={active} />
       <PushDialog project={active} />
+      <RebaseDialog project={active} />
       <ContextMenu />
       <Dialogs />
       <Toasts />

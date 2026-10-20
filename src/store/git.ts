@@ -2,7 +2,7 @@
 // root, local changes, branches, stashes, and a console of commands run.
 import { create } from "zustand";
 import { toast } from "../components/Overlays";
-import { api, errorMessage, type BranchesInfo, type GitChange, type GitOutput, type StashEntry } from "../lib/ipc";
+import { api, errorMessage, type BranchesInfo, type ChangedFile, type Checkpoint, type GitChange, type GitOutput, type StashEntry } from "../lib/ipc";
 import { refreshGit as refreshTreeGit } from "./tree";
 import { useWorkspace } from "./workspace";
 
@@ -26,6 +26,12 @@ export interface RepoState {
   console: ConsoleEntry[];
   /** Bumped after any operation, so the log reloads. */
   revision: number;
+  /** Files marked reviewed: rel → content fingerprint when marked (dropped once the file changes). */
+  reviewed: Record<string, string>;
+  checkpoints: Checkpoint[];
+  /** Checkpoint whose changes are listed ("Since checkpoint"), if any. */
+  checkpoint: string | null;
+  since: ChangedFile[];
 }
 
 const empty = (): RepoState => ({
@@ -39,6 +45,10 @@ const empty = (): RepoState => ({
   busy: null,
   console: [],
   revision: 0,
+  reviewed: {},
+  checkpoints: [],
+  checkpoint: null,
+  since: [],
 });
 
 export const useGit = create<{ repos: Record<string, RepoState> }>(() => ({ repos: {} }));
@@ -77,12 +87,23 @@ export function refreshRepo(projectId: string, projectPath: string, delay = 0): 
         if (!root) return;
         patchRepo(projectId, { root });
       }
-      const [changes, branches, stashes] = await Promise.all([
-        api.gitChanges(root).catch(() => repo(projectId).changes),
-        api.gitBranches(root).catch(() => repo(projectId).branches),
-        api.gitStashes(root).catch(() => repo(projectId).stashes),
+      const cur = repo(projectId);
+      const reviewedRels = Object.keys(cur.reviewed);
+      const [changes, branches, stashes, checkpoints, prints] = await Promise.all([
+        api.gitChanges(root).catch(() => cur.changes),
+        api.gitBranches(root).catch(() => cur.branches),
+        api.gitStashes(root).catch(() => cur.stashes),
+        api.gitCheckpoints(root).catch(() => cur.checkpoints),
+        reviewedRels.length ? api.gitFingerprints(root, reviewedRels).catch(() => []) : Promise.resolve([]),
       ]);
-      patchRepo(projectId, (r) => ({ changes, branches, stashes, revision: r.revision + 1 }));
+      const checkpoint = cur.checkpoint && checkpoints.some((c) => c.hash === cur.checkpoint) ? cur.checkpoint : (checkpoints[0]?.hash ?? null);
+      const since = checkpoint ? await api.gitChangesSince(root, checkpoint).catch(() => []) : [];
+      // A reviewed mark only holds while the file is unchanged since marking it.
+      const reviewed: Record<string, string> = {};
+      reviewedRels.forEach((rel, i) => {
+        if ((prints[i] ?? "missing") === cur.reviewed[rel]) reviewed[rel] = cur.reviewed[rel];
+      });
+      patchRepo(projectId, (r) => ({ changes, branches, stashes, checkpoints, checkpoint, since, reviewed, revision: r.revision + 1 }));
     }, delay),
   );
 }
@@ -103,7 +124,11 @@ export async function runGit(projectId: string, args: string[], opts: { label?: 
   try {
     const out = await api.gitRun(r.root, args);
     entry.output = out;
-    if (!out.ok) toast(`${opts.label ?? "git " + args[0]} failed: ${(out.stderr || out.stdout).trim().split("\n").slice(-3).join(" ")}`, "error");
+    if (/^CONFLICT|Merge conflict in|could not apply/m.test(out.stdout + out.stderr)) {
+      // Rider opens the conflicts list; ours is the Commit window's "Merge Conflicts" group.
+      useWorkspace.getState().updateUi(projectId, { sidebarVisible: true, sidebarTab: "commit" });
+      toast("Conflicts need to be resolved — see Merge Conflicts in the Commit window (double-click to merge).", "error");
+    } else if (!out.ok) toast(`${opts.label ?? "git " + args[0]} failed: ${(out.stderr || out.stdout).trim().split("\n").slice(-3).join(" ")}`, "error");
     else if (!opts.quiet && opts.label) toast(`${opts.label}: done`);
     return out;
   } catch (e) {
@@ -115,4 +140,34 @@ export async function runGit(projectId: string, args: string[], opts: { label?: 
     refreshRepo(projectId, project.path);
     refreshTreeGit(projectId, project.path, 0);
   }
+}
+
+export async function toggleReviewed(projectId: string, rel: string): Promise<void> {
+  const r = repo(projectId);
+  if (!r.root) return;
+  if (r.reviewed[rel]) {
+    patchRepo(projectId, (s) => {
+      const reviewed = { ...s.reviewed };
+      delete reviewed[rel];
+      return { reviewed };
+    });
+    return;
+  }
+  const [print] = await api.gitFingerprints(r.root, [rel]);
+  patchRepo(projectId, (s) => ({ reviewed: { ...s.reviewed, [rel]: print ?? "missing" } }));
+}
+
+/** Snapshots the working tree so an agent's edits can be reviewed afterwards. */
+export async function createCheckpoint(projectId: string, projectPath: string): Promise<void> {
+  const r = repo(projectId);
+  if (!r.root) return;
+  try {
+    const label = new Date().toLocaleString();
+    const hash = await api.gitCheckpoint(r.root, label);
+    patchRepo(projectId, { checkpoint: hash, reviewed: {} });
+    toast(`Checkpoint created (${label}). Changes made after it appear under "Since checkpoint".`);
+  } catch (e) {
+    toast(`Checkpoint failed: ${errorMessage(e)}`, "error");
+  }
+  refreshRepo(projectId, projectPath);
 }
