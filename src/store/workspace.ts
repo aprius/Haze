@@ -32,6 +32,10 @@ export interface ProjectUi {
   activeTerminal: string | null;
   /** Most recently opened files, newest first (Ctrl+E). */
   recentFiles: string[];
+  /** Tool window shown in the bottom panel. */
+  bottomTab: "terminal" | "build";
+  /** Selected run configuration id (see RunBar). */
+  runConfig: string | null;
 }
 
 export interface Reveal {
@@ -52,6 +56,8 @@ export const defaultUi = (): ProjectUi => ({
   terminalOrder: [],
   activeTerminal: null,
   recentFiles: [],
+  bottomTab: "terminal",
+  runConfig: null,
 });
 
 interface WorkspaceState {

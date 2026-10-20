@@ -6,7 +6,7 @@ Không gian làm việc nhẹ dành cho việc lập trình cùng AI agent (Clau
 
 ![Haze](docs/screenshot.png)
 
-Trạng thái: **giai đoạn 2** (editor và tìm kiếm). Lộ trình đầy đủ: [docs/ROADMAP.md](docs/ROADMAP.md).
+Trạng thái: **giai đoạn 3** (C# với Roslyn, build, chạy). Lộ trình đầy đủ: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Đã có
 
@@ -45,6 +45,14 @@ Trạng thái: **giai đoạn 2** (editor và tìm kiếm). Lộ trình đầy �
 - Phím kiểu Rider: Ctrl+D nhân đôi dòng, Ctrl+Y xóa dòng, Ctrl+R thay thế trong file, Ctrl+W/Ctrl+Shift+W mở rộng/thu hẹp vùng chọn, Alt+J chọn chỗ trùng tiếp theo, Alt+Shift+↑/↓ di chuyển dòng, Alt+F1 tìm file đang mở trong Project view.
 - Xem trước Markdown (Source/Preview), xem ảnh (png, jpg, gif, webp, svg…).
 
+**C# và .NET (giai đoạn 3)**
+- Dùng **Roslyn Language Server** (`roslyn-language-server`, bản .NET tool của Microsoft); dự phòng `csharp-ls`. Nếu chưa cài, thanh trên cùng có nút **Install** chạy `dotnet tool install --global roslyn-language-server --prerelease`.
+- Điều hướng kiểu Rider: **Ctrl+B / Ctrl+click** tới định nghĩa (mở được cả file khác), **Alt+F7 / Shift+F12** Find Usages, **Ctrl+Alt+B** Go to Implementation, **Ctrl+F12** cấu trúc file, **Shift+F6** Rename (đổi tên qua nhiều file, một lần Undo), **Alt+Enter** quick fix/refactoring của Roslyn, **Ctrl+Alt+L** format, hover, completion, gợi ý tham số, tô sáng các chỗ dùng.
+- **Không có lỗi "ảo"**: Haze không lấy lỗi từ language server. Lỗi chỉ đến từ build thật: **Ctrl+Shift+B** chạy `dotnet build`, panel **Build** liệt kê lỗi/cảnh báo MSBuild (bấm để nhảy tới), và vạch đỏ trong editor; vạch đỏ của file nào sẽ tự xóa khi file đó bị sửa, cho tới lần build sau.
+- Thanh **Run**: cấu hình chạy lấy từ `launchSettings.json` của từng project (và `dotnet test` nếu có project test). **Shift+F10** chạy trong một tab terminal riêng (vẫn sống khi đóng Haze).
+- Double Shift có thêm tab **Symbols** (tìm class/method mờ, ví dụ `OrdSer`), Find in Files có thêm phạm vi **Solution** (đọc `.sln`/`.slnx`).
+- File do AI tạo/sửa/xóa trên đĩa được báo cho Roslyn (`workspace/didChangeWatchedFiles`), nên điều hướng luôn theo code mới.
+
 **Terminal**
 - Shell chạy trong một tiến trình nền riêng (PTY host): **đóng hay cập nhật Haze không giết shell hay AI agent đang chạy**; mở lại là nối lại đúng phiên, phát lại output gần nhất (4 MB/phiên).
 - Nhiều tab, tìm trong output (Ctrl+F), Ctrl+C copy khi có vùng chọn.
@@ -55,6 +63,8 @@ Trạng thái: **giai đoạn 2** (editor và tìm kiếm). Lộ trình đầy �
 ## Chạy và build
 
 Yêu cầu: Node.js 20+, Rust stable, git; trên Linux cần thêm `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev`.
+
+Cho C#: .NET SDK (Roslyn Language Server cần .NET 10 runtime) và `dotnet tool install --global roslyn-language-server --prerelease`.
 
 ```bash
 npm install
@@ -79,12 +89,14 @@ cd src-tauri && cargo test && cargo clippy      # Rust
 | Terminal | xterm.js + `portable-pty`, PTY host riêng nói chuyện qua local socket (`interprocess`) |
 | Theo dõi file | `notify` |
 | Git | git CLI của hệ thống |
+| C# | Roslyn Language Server qua LSP (stdio), client JSON-RPC tự viết trong `src/lib/lsp` |
 | Tìm kiếm | `ignore` (bộ duyệt file của ripgrep), `fancy-regex`, `globset`, `nucleo-matcher`, `tree-sitter-c-sharp` |
 
 ```
 src/                    giao diện (React)
   components/           FileTree, EditorArea, TerminalPanel, SearchEverywhere, FindInFiles, Shell, Overlays
-  lib/                  ipc (gọi Rust), buffers (file đang mở), monaco, path, termLinks
+  lib/                  ipc (gọi Rust), buffers (file đang mở), monaco, path, termLinks, workspaceEdit
+  lib/lsp/              client JSON-RPC, phiên C# + provider cho Monaco
   store/                workspace (project, tab), tree, terminals, persist
 src-tauri/src/
   fs_ops.rs             thao tác file, đọc/ghi giữ encoding
@@ -94,6 +106,8 @@ src-tauri/src/
   search.rs             Find/Replace in Files, hoàn tác
   syntax.rs             vùng comment/string của C# (tree-sitter)
   file_index.rs         danh sách file + tìm mờ cho Double Shift
+  lsp.rs                chạy language server, chuyển tin nhắn LSP
+  dotnet.rs             tìm solution/project/launch profile, chạy dotnet build và tách lỗi MSBuild
   pty/                  PTY host (host.rs), client (client.rs), giao thức (protocol.rs)
 ```
 

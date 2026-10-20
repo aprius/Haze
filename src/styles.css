@@ -1381,3 +1381,206 @@ kbd {
   align-items: center;
   gap: 10px;
 }
+
+/* ------------------------------------------------------------ .NET: run bar, build, usages */
+
+.run-bar {
+  flex: none;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.run-target {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.run-spacer {
+  flex: 1;
+}
+
+.run-select {
+  max-width: 260px;
+}
+
+.icon-btn.run {
+  color: var(--git-added);
+}
+
+.csharp-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.csharp-status.ok::before,
+.csharp-status.busy::before,
+.csharp-status.warn::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.csharp-status.ok::before {
+  background: var(--git-added);
+}
+
+.csharp-status.busy::before {
+  background: #e5b93a;
+}
+
+.csharp-status.warn::before {
+  background: var(--danger);
+}
+
+.tool-tabs {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+
+.tool-tab {
+  border: 0;
+  background: transparent;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.tool-tab.active {
+  color: var(--fg);
+  background: var(--selected-inactive);
+}
+
+.bottom-slot {
+  flex: 1;
+  min-width: 0;
+}
+
+.build-status {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.build-status.failed {
+  color: var(--danger);
+}
+
+.build-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sev-error {
+  color: var(--danger);
+  flex: none;
+}
+
+.sev-warning {
+  color: #d9a53a;
+  flex: none;
+}
+
+.build-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.problems {
+  flex: 1 1 55%;
+  overflow: auto;
+  min-width: 0;
+}
+
+.problem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.problem:hover {
+  background: var(--hover);
+}
+
+.problem-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  user-select: text;
+}
+
+.problem-code {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.problem-loc {
+  margin-left: auto;
+  color: var(--fg);
+  font-size: 11px;
+}
+
+.build-output {
+  flex: 1 1 45%;
+  margin: 0;
+  padding: 6px 10px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  border-left: 1px solid var(--border);
+  background: var(--term-bg);
+  user-select: text;
+  white-space: pre;
+}
+
+.usages-title {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 10px 12px 6px;
+}
+
+.usages-popup .se-list {
+  max-height: 60vh;
+  outline: none;
+}
+
+.sym-kind {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  flex: none;
+}
+
+.se-right {
+  margin-left: auto;
+}

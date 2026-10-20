@@ -40,6 +40,8 @@ export interface FsChange {
   root: string;
   dirs: string[];
   files: string[];
+  created: string[];
+  removed: string[];
   overflow: boolean;
   git: boolean;
 }
@@ -145,6 +147,52 @@ export interface FileHit {
   nameIndices: number[];
 }
 
+export interface LaunchProfile {
+  name: string;
+  commandName: string;
+  applicationUrl: string | null;
+}
+
+export interface DotnetProject {
+  path: string;
+  name: string;
+  isTest: boolean;
+  runnable: boolean;
+  launchProfiles: LaunchProfile[];
+}
+
+export interface DotnetInfo {
+  dotnetVersion: string | null;
+  solutions: string[];
+  projects: DotnetProject[];
+}
+
+export interface BuildDiagnostic {
+  severity: "error" | "warning";
+  code: string | null;
+  message: string;
+  file: string | null;
+  line: number | null;
+  column: number | null;
+  endLine: number | null;
+  endColumn: number | null;
+  project: string | null;
+}
+
+export type BuildEvent =
+  | { t: "line"; id: number; text: string; diagnostic: BuildDiagnostic | null }
+  | { t: "done"; id: number; code: number | null; cancelled: boolean; millis: number };
+
+export type BuildVerb = "build" | "rebuild" | "clean" | "test" | "restore";
+
+export interface ServerCommand {
+  kind: "roslyn" | "csharp-ls";
+  program: string;
+  args: string[];
+}
+
+export type LspEvent = { t: "message"; server: number; message: unknown } | { t: "exit"; server: number; code: number | null };
+
 export const api = {
   loadState: () => invoke<unknown>("load_state"),
   saveState: (value: unknown) => invoke<void>("save_state", { value }),
@@ -171,6 +219,16 @@ export const api = {
     invoke<FileHit[]>("find_files", { root, query, limit: limit ?? null }),
   readImage: (path: string) => invoke<{ mime: string; base64: string }>("read_image", { path }),
 
+  readLines: (requests: { path: string; lines: number[] }[]) => invoke<string[][]>("read_lines", { requests }),
+
+  dotnetInfo: (root: string) => invoke<DotnetInfo>("dotnet_info", { root }),
+  buildStart: (verb: BuildVerb, target: string | null, cwd: string) => invoke<number>("build_start", { verb, target, cwd }),
+  buildCancel: (id: number) => invoke<void>("build_cancel", { id }),
+  lspFindServer: () => invoke<ServerCommand | null>("lsp_find_server"),
+  lspStart: (cwd: string) => invoke<{ id: number; kind: ServerCommand["kind"] }>("lsp_start", { cwd }),
+  lspSend: (id: number, message: unknown) => invoke<void>("lsp_send", { id, message }),
+  lspStop: (id: number) => invoke<void>("lsp_stop", { id }),
+
   gitStatus: (dir: string) => invoke<GitStatus>("git_status", { dir }),
   watchProject: (root: string) => invoke<void>("watch_project", { root }),
   unwatchProject: (root: string) => invoke<void>("unwatch_project", { root }),
@@ -186,6 +244,14 @@ export const api = {
 
 export function onFsChange(cb: (c: FsChange) => void): Promise<UnlistenFn> {
   return listen<FsChange>("fs://changed", (e) => cb(e.payload));
+}
+
+export function onBuildEvent(cb: (e: BuildEvent) => void): Promise<UnlistenFn> {
+  return listen<BuildEvent>("build://event", (e) => cb(e.payload));
+}
+
+export function onLspEvent(cb: (e: LspEvent) => void): Promise<UnlistenFn> {
+  return listen<LspEvent>("lsp://event", (e) => cb(e.payload));
 }
 
 export function onPtyEvent(cb: (e: PtyEvent) => void): Promise<UnlistenFn> {

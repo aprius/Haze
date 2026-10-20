@@ -239,6 +239,22 @@ function SearchBar({ id, onClose }: { id: string; onClose: () => void }) {
   );
 }
 
+/** Switches the bottom panel between tool windows (Terminal, Build). */
+export function ToolTabs({ project }: { project: Project }) {
+  const tab = useWorkspace((s) => s.ui[project.id]?.bottomTab ?? "terminal");
+  const set = (bottomTab: "terminal" | "build") => useWorkspace.getState().updateUi(project.id, { bottomTab });
+  return (
+    <div className="tool-tabs">
+      <button className={"tool-tab" + (tab === "terminal" ? " active" : "")} onClick={() => set("terminal")}>
+        Terminal
+      </button>
+      <button className={"tool-tab" + (tab === "build" ? " active" : "")} onClick={() => set("build")}>
+        Build
+      </button>
+    </div>
+  );
+}
+
 export function TerminalPanel({ project }: { project: Project }) {
   const ui = useWorkspace((s) => s.ui[project.id]);
   const updateUi = useWorkspace((s) => s.updateUi);
@@ -250,10 +266,10 @@ export function TerminalPanel({ project }: { project: Project }) {
   const active = ui?.activeTerminal ?? null;
 
   useEffect(() => {
-    if (ui?.terminalVisible && order.length === 0 && connected) void newTerminal(project.id, project.path);
+    if (ui?.terminalVisible && ui.bottomTab !== "build" && order.length === 0 && connected) void newTerminal(project.id, project.path);
     // Only when the panel is shown empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ui?.terminalVisible, order.length === 0, connected]);
+  }, [ui?.terminalVisible, ui?.bottomTab, order.length === 0, connected]);
 
   useEffect(() => {
     const onFind = () => setSearching(true);
@@ -272,7 +288,7 @@ export function TerminalPanel({ project }: { project: Project }) {
   return (
     <div className="terminal-panel">
       <div className="panel-header">
-        <span className="panel-title">Terminal</span>
+        <ToolTabs project={project} />
         <div className="term-tabs">
           {order.map((id) => {
             const s = sessions[id];

@@ -8,10 +8,13 @@ import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, saveBuffer, useBuf
 import { api, errorMessage } from "../lib/ipc";
 import { languageFor, monaco } from "../lib/monaco";
 import { basename, dirname, extname, relative } from "../lib/path";
+import { findImplementations, findUsages, prepareRename, renameSymbol } from "../lib/lsp/csharp";
+import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
 import { setSelection } from "../store/tree";
-import { useWorkspace, type Project } from "../store/workspace";
-import { choose, openMenu, toast } from "./Overlays";
+import { activeProject, projectForPath, useWorkspace, type Project } from "../store/workspace";
+import { choose, openMenu, prompt, toast } from "./Overlays";
+import { showLocations } from "./UsagesPopup";
 
 export const useCursor = create<{ line: number; column: number; selected: number }>(() => ({
   line: 1,
@@ -27,6 +30,14 @@ let currentPath: string | null = null;
 
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"];
 export const isImagePath = (path: string) => IMAGE_EXTS.includes(extname(path));
+
+/** Runs an editor action (e.g. "haze.rename") when the editor has focus. */
+export function triggerEditorAction(id: string): boolean {
+  const ed = currentEditor;
+  if (!ed?.hasTextFocus()) return false;
+  ed.trigger("keyboard", id, null);
+  return true;
+}
 
 /** Text selected in the editor (single line only), to seed searches. */
 export function selectedText(): string | null {
@@ -62,6 +73,14 @@ export function copyContext(): void {
   void navigator.clipboard.writeText(text).then(() => toast("Copied with path and line numbers"));
 }
 
+// Popups closing leave focus on <body>; give it back to the editor like Rider does.
+window.addEventListener("haze:popup-closed", () =>
+  requestAnimationFrame(() => {
+    const el = document.activeElement;
+    if (!el || el === document.body) currentEditor?.focus();
+  }),
+);
+
 let keymapInstalled = false;
 
 /** A few IntelliJ/Rider keys that differ from Monaco's VS Code defaults. */
@@ -81,7 +100,62 @@ function installRiderKeymap() {
     { keybinding: M.Alt | M.Shift | K.DownArrow, command: "editor.action.moveLinesDownAction", when: "editorTextFocus && !editorReadonly" },
     { keybinding: M.CtrlCmd | M.Shift | K.Slash, command: "editor.action.blockComment", when: "editorTextFocus && !editorReadonly" },
     { keybinding: M.CtrlCmd | M.Shift | K.KeyU, command: "editor.action.transformToUppercase", when: "editorTextFocus && !editorReadonly" },
+    // Code navigation (C# via Roslyn).
+    { keybinding: M.CtrlCmd | K.KeyB, command: "editor.action.revealDefinition", when: "editorTextFocus" },
+    { keybinding: M.Alt | K.Enter, command: "editor.action.quickFix", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.CtrlCmd | M.Alt | K.KeyL, command: "editor.action.formatDocument", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.CtrlCmd | K.F12, command: "-editor.action.goToImplementation" },
+    { keybinding: M.CtrlCmd | K.F12, command: "editor.action.quickOutline", when: "editorTextFocus" },
   ]);
+  // Navigating to another file (Ctrl+click, F12…) opens it in Haze's tabs.
+  monaco.editor.registerEditorOpener({
+    openCodeEditor(_source, resource, selectionOrPosition) {
+      if (resource.scheme !== "file") return false;
+      const path = resource.fsPath;
+      const project = projectForPath(path) ?? activeProject();
+      if (!project) return false;
+      const pos =
+        selectionOrPosition && "startLineNumber" in selectionOrPosition
+          ? { line: selectionOrPosition.startLineNumber, column: selectionOrPosition.startColumn }
+          : selectionOrPosition
+            ? { line: selectionOrPosition.lineNumber, column: selectionOrPosition.column }
+            : {};
+      useWorkspace.getState().openFile(project.id, path, pos);
+      return true;
+    },
+  });
+}
+
+/** Rider's Rename (Shift+F6) for C# symbols, applied across files with one Undo. */
+async function renameAt(editor: monaco.editor.ICodeEditor) {
+  const model = editor.getModel();
+  const pos = editor.getPosition();
+  if (!model || !pos) return;
+  try {
+    const target = await prepareRename(model, pos);
+    if (!target) return toast("This element cannot be renamed.", "error");
+    const name = await prompt("Rename", target.placeholder, {
+      okLabel: "Rename",
+      validate: (v) => (!/^@?[\p{L}_][\p{L}\p{N}_]*$/u.test(v.trim()) ? "Not a valid identifier" : null),
+    });
+    if (!name || name === target.placeholder) return;
+    const edit = await renameSymbol(model, pos, name.trim());
+    if (!edit) return toast("Nothing to rename.", "error");
+    const applied = await applyWorkspaceEdit(edit);
+    toast(`Renamed ${applied.edits} occurrence(s) in ${applied.files} file(s).`, "info", {
+      label: "Undo",
+      run: () => void applied.undo().then((failed) => failed && toast(`${failed} file(s) changed since; left as is.`, "error")),
+    });
+    if (applied.skipped.length) toast(`Could not edit: ${applied.skipped.map(basename).join(", ")}`, "error");
+  } catch (e) {
+    toast(`Rename failed: ${errorMessage(e)}`, "error");
+  }
+}
+
+function symbolAt(editor: monaco.editor.ICodeEditor): string {
+  const model = editor.getModel();
+  const pos = editor.getPosition();
+  return (model && pos && model.getWordAtPosition(pos)?.word) || "symbol";
 }
 
 function ImageView({ path }: { path: string }) {
@@ -344,6 +418,25 @@ export function EditorArea({ project }: { project: Project }) {
       contextMenuGroupId: "9_cutcopypaste",
       run: () => copyContext(),
     });
+    const codeAction = (id: string, label: string, keys: number[], run: () => void, group = "navigation") =>
+      editor.addAction({ id, label, keybindings: keys, contextMenuGroupId: group, run });
+    const { KeyMod: M, KeyCode: K } = monaco;
+    const isCs = () => editor.getModel()?.getLanguageId() === "csharp";
+    codeAction("haze.findUsages", "Find Usages", [M.Alt | K.F7, M.Shift | K.F12], () => {
+      const model = editor.getModel();
+      const pos = editor.getPosition();
+      if (!model || !pos || !isCs()) return;
+      void showLocations(project, `Usages of ${symbolAt(editor)}`, () => findUsages(model, pos));
+    });
+    codeAction("haze.gotoImplementation", "Go to Implementation", [M.CtrlCmd | M.Alt | K.KeyB], () => {
+      const model = editor.getModel();
+      const pos = editor.getPosition();
+      if (!model || !pos || !isCs()) return;
+      void showLocations(project, `Implementations of ${symbolAt(editor)}`, () => findImplementations(model, pos), true);
+    });
+    codeAction("haze.rename", "Rename Symbol…", [M.Shift | K.F6, K.F2], () => {
+      if (isCs()) void renameAt(editor);
+    }, "1_modification");
     editorRef.current = editor;
     currentEditor = editor;
     return () => {

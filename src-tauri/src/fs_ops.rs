@@ -370,9 +370,37 @@ pub fn resolve_paths(cwd: &Path, candidates: &[String]) -> Vec<Option<String>> {
         .collect()
 }
 
+/// Text of the given 1-based lines (empty string for lines past the end).
+pub fn read_lines(path: &Path, lines: &[u32]) -> Result<Vec<String>> {
+    let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let Decoded::Text { content, .. } = text::decode(&bytes) else {
+        return Ok(vec![String::new(); lines.len()]);
+    };
+    let all: Vec<&str> = content.lines().collect();
+    Ok(lines
+        .iter()
+        .map(|&n| {
+            all.get((n as usize).wrapping_sub(1))
+                .map(|l| l.trim_end_matches('\r').to_string())
+                .unwrap_or_default()
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_selected_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.cs");
+        fs::write(&p, "one\r\ntwo\r\nthree").unwrap();
+        assert_eq!(
+            read_lines(&p, &[2, 3, 9]).unwrap(),
+            vec!["two", "three", ""]
+        );
+    }
 
     #[test]
     fn natural_order() {
