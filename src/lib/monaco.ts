@@ -1,6 +1,13 @@
-// Monaco setup: bundled locally (no CDN). Since 0.5x Monaco locates its
-// workers through `new URL(..., import.meta.url)`, which Vite bundles as is.
+// Monaco setup: bundled locally (no CDN).
 import * as monaco from "monaco-editor";
+// Monaco's own `new URL(worker, import.meta.url)` is copied by Vite without
+// its imports, so the worker (diff computation, word suggestions) would fail.
+// Vite's `?worker` import bundles it properly.
+import EditorWorker from "monaco-editor/editor/editor.worker?worker";
+
+(self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
+  getWorker: () => new EditorWorker(),
+};
 
 monaco.editor.defineTheme("haze-dark", {
   base: "vs-dark",

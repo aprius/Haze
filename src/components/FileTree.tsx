@@ -4,7 +4,10 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEven
 import { disposeBuffer, renameBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type DirEntry, type GitFileStatus } from "../lib/ipc";
 import { basename, dirname, extname, isWithin, join, relative } from "../lib/path";
+import { repo } from "../store/git";
 import { newTerminal } from "../store/terminals";
+import { openDiff } from "./DiffView";
+import { showHistory } from "./GitPanel";
 import { isIgnored, loadDir, refreshDirs, refreshGit, setSelection, useTree, type DirState, type GitView } from "../store/tree";
 import { useWorkspace, type Project } from "../store/workspace";
 import { confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
@@ -259,6 +262,19 @@ export function FileTree({ project }: { project: Project }) {
       { label: "Delete", shortcut: "Delete", disabled: isRoot, danger: true, action: () => void remove(entries) },
       { separator: true },
       { label: "Open in Terminal", action: () => void newTerminal(project.id, dir, { title: basename(dir) }) },
+      { separator: true },
+      { label: "Git: Show History", action: () => showHistory(project, entry.path) },
+      {
+        label: "Git: Compare with HEAD",
+        disabled: entry.isDir,
+        action: () => {
+          const root = repo(project.id).root;
+          if (!root) return toast("Not a git repository.", "error");
+          const rel = relative(root, entry.path);
+          openDiff(project.id, { root, rel, left: "HEAD", right: "working" });
+        },
+      },
+      { separator: true },
       { label: "Reveal in File Manager", action: () => void revealItemInDir(entry.path).catch((e) => toast(errorMessage(e), "error")) },
       { label: "Reload from Disk", action: () => afterChange() },
     ];
@@ -363,9 +379,6 @@ export function FileTree({ project }: { project: Project }) {
 
   return (
     <div className="file-tree">
-      <div className="panel-header">
-        <span className="panel-title">Project</span>
-      </div>
       <div
         ref={scroller}
         className="tree-scroll"

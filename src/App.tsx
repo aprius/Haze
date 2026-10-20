@@ -7,6 +7,10 @@ import { SearchEverywhere } from "./components/SearchEverywhere";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
+import { CommitPanel } from "./components/CommitPanel";
+import { BranchesPopup, openBranchesPopup, openPushDialog, PushDialog, updateProject } from "./components/GitDialogs";
+import { GitPanel } from "./components/GitPanel";
+import { refreshRepo } from "./store/git";
 import { RunBar, runConfig, runConfigs } from "./components/RunBar";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { UsagesPopup } from "./components/UsagesPopup";
@@ -32,7 +36,15 @@ function ProjectView({ project }: { project: Project }) {
         {ui.sidebarVisible && (
           <>
             <div className="sidebar" style={{ width: ui.sidebarWidth }}>
-              <FileTree project={project} />
+              <div className="sidebar-tabs">
+                <button className={"tool-tab" + (ui.sidebarTab !== "commit" ? " active" : "")} onClick={() => updateUi(project.id, { sidebarTab: "project" })} title="Project (Alt+1)">
+                  Project
+                </button>
+                <button className={"tool-tab" + (ui.sidebarTab === "commit" ? " active" : "")} onClick={() => updateUi(project.id, { sidebarTab: "commit" })} title="Commit (Alt+0)">
+                  Commit
+                </button>
+              </div>
+              {ui.sidebarTab === "commit" ? <CommitPanel project={project} /> : <FileTree project={project} />}
             </div>
             <Splitter vertical value={ui.sidebarWidth} min={160} max={800} onChange={(v) => updateUi(project.id, { sidebarWidth: v })} />
           </>
@@ -53,10 +65,11 @@ function ProjectView({ project }: { project: Project }) {
           />
           <div className="bottom" style={{ height: ui.terminalHeight }}>
             {/* The terminal stays mounted so xterm keeps its screen while Build is shown. */}
-            <div className="bottom-slot" style={{ display: ui.bottomTab === "build" ? "none" : "flex" }}>
+            <div className="bottom-slot" style={{ display: ui.bottomTab === "terminal" ? "flex" : "none" }}>
               <TerminalPanel project={project} />
             </div>
             {ui.bottomTab === "build" && <BuildPanel project={project} />}
+            {ui.bottomTab === "git" && <GitPanel project={project} />}
           </div>
         </>
       )}
@@ -91,7 +104,21 @@ function useGlobalShortcuts(project: Project | null) {
       else if (e.shiftKey && !mod && !e.altKey && e.key === "F6" && triggerEditorAction("haze.rename")) {
         /* handled */
       }
-      else if (mod && e.shiftKey && k === "b" && project) {
+      else if (mod && e.shiftKey && k === "k" && project) openPushDialog(project);
+      else if (mod && !e.shiftKey && !e.altKey && k === "k" && project) {
+        useWorkspace.getState().updateUi(project.id, { sidebarVisible: true, sidebarTab: "commit" });
+        requestAnimationFrame(() => (document.querySelector(".commit-message") as HTMLElement | null)?.focus());
+      } else if (mod && !e.shiftKey && !e.altKey && k === "t" && project) void updateProject(project);
+      else if (mod && e.shiftKey && e.code === "Backquote" && project) openBranchesPopup(project);
+      else if (e.altKey && !mod && e.key === "0" && project) {
+        const ui = useWorkspace.getState().ui[project.id];
+        const showing = ui?.sidebarVisible && ui.sidebarTab === "commit";
+        useWorkspace.getState().updateUi(project.id, { sidebarVisible: !showing, sidebarTab: "commit" });
+      } else if (e.altKey && !mod && e.key === "9" && project) {
+        const ui = useWorkspace.getState().ui[project.id];
+        const showing = ui?.terminalVisible && ui.bottomTab === "git";
+        useWorkspace.getState().updateUi(project.id, { terminalVisible: !showing, bottomTab: "git" });
+      } else if (mod && e.shiftKey && k === "b" && project) {
         void startBuild(project.id, project.path, "build", defaultBuildTarget(project.id));
       } else if (e.shiftKey && !mod && e.key === "F10" && project) {
         const configs = runConfigs(useDotnet.getState().info[project.id]);
@@ -158,7 +185,7 @@ function useGlobalShortcuts(project: Project | null) {
       if (e.altKey && e.key === "1") {
         e.preventDefault();
         const inTree = (document.activeElement as HTMLElement | null)?.closest(".file-tree");
-        ws.updateUi(project.id, { sidebarVisible: !(ui.sidebarVisible && inTree) });
+        ws.updateUi(project.id, { sidebarVisible: !(ui.sidebarVisible && ui.sidebarTab !== "commit" && inTree), sidebarTab: "project" });
         requestAnimationFrame(() => (document.querySelector(".tree-scroll") as HTMLElement | null)?.focus());
         return;
       }
@@ -199,6 +226,7 @@ export default function App() {
     for (const p of open) {
       void api.watchProject(p.path).catch((e) => console.warn("watch failed", p.path, e));
       refreshGit(p.id, p.path);
+      refreshRepo(p.id, p.path);
     }
     return () => {
       for (const p of open) void api.unwatchProject(p.path).catch(() => {});
@@ -225,6 +253,7 @@ export default function App() {
       const project = ws.projects.find((p) => p.path === change.root);
       if (!project) return;
       handleFsChange(project.id, change, ws.nestFiles);
+      if (change.git) refreshRepo(project.id, project.path, 400);
       void handleDiskChanges(change.overflow ? "all" : change.files);
       notifyFileChanges(change);
       if (change.overflow || change.files.some((f) => /\.(csproj|fsproj|sln|slnx)$|launchSettings\.json$/i.test(f))) {
@@ -243,7 +272,7 @@ export default function App() {
   }, [nest]);
 
   useEffect(() => {
-    const title = active ? `${active.name}${activeTab ? " – " + basename(activeTab) : ""} — Haze` : "Haze";
+    const title = active ? `${active.name}${activeTab && !activeTab.startsWith("haze-diff:") ? " – " + basename(activeTab) : ""} — Haze` : "Haze";
     document.title = title;
     void getCurrentWindow().setTitle(title).catch(() => {});
   }, [active, activeTab]);
@@ -263,6 +292,8 @@ export default function App() {
       <SearchEverywhere project={active} />
       <FindInFiles project={active} />
       <UsagesPopup project={active} />
+      <BranchesPopup project={active} />
+      <PushDialog project={active} />
       <ContextMenu />
       <Dialogs />
       <Toasts />

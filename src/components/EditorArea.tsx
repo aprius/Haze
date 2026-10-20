@@ -13,6 +13,9 @@ import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
 import { setSelection } from "../store/tree";
 import { activeProject, projectForPath, useWorkspace, type Project } from "../store/workspace";
+import { repo } from "../store/git";
+import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
+import { showHistory } from "./GitPanel";
 import { choose, openMenu, prompt, toast } from "./Overlays";
 import { showLocations } from "./UsagesPopup";
 
@@ -149,6 +152,50 @@ async function renameAt(editor: monaco.editor.ICodeEditor) {
     if (applied.skipped.length) toast(`Could not edit: ${applied.skipped.map(basename).join(", ")}`, "error");
   } catch (e) {
     toast(`Rename failed: ${errorMessage(e)}`, "error");
+  }
+}
+
+// Annotate (git blame): model decorations, so they survive switching tabs.
+const blameDecorations = new Map<string, string[]>();
+
+async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) {
+  const model = editor.getModel();
+  if (!model || model.uri.scheme !== "file") return;
+  const path = model.uri.fsPath;
+  const existing = blameDecorations.get(path);
+  if (existing) {
+    model.deltaDecorations(existing, []);
+    blameDecorations.delete(path);
+    return;
+  }
+  const root = repo(project.id).root;
+  if (!root) return toast("Not a git repository.", "error");
+  const rel = relative(root, path);
+  try {
+    const meta = useBuffers.getState().meta[path];
+    const dirty = meta?.status === "text" && meta.dirty;
+    const lines = await api.gitBlame(root, rel, dirty ? model.getValue() : null);
+    const uncommitted = "0".repeat(40);
+    const ids = model.deltaDecorations(
+      [],
+      lines
+        .filter((l) => l.line >= 1 && l.line <= model.getLineCount())
+        .map((l) => {
+          const date = new Date(l.time * 1000).toISOString().slice(0, 10);
+          const label = l.hash === uncommitted ? "Not committed yet".padEnd(31) : `${l.hash.slice(0, 7)} ${date} ${l.author.slice(0, 12).padEnd(12)}`;
+          return {
+            range: new monaco.Range(l.line, 1, l.line, 1),
+            options: {
+              showIfCollapsed: true,
+              before: { content: label + "  ", inlineClassName: "blame-text", cursorStops: monaco.editor.InjectedTextCursorStops.None },
+              hoverMessage: l.hash === uncommitted ? undefined : { value: `**${l.summary}**\n\n${l.author} · ${new Date(l.time * 1000).toLocaleString()} · \`${l.hash.slice(0, 12)}\`` },
+            },
+          };
+        }),
+    );
+    blameDecorations.set(path, ids);
+  } catch (e) {
+    toast(`Annotate failed: ${errorMessage(e)}`, "error");
   }
 }
 
@@ -298,7 +345,7 @@ function TabBar({ project }: { project: Project }) {
               openMenu(e, tabMenu(t.path));
             }}
           >
-            <span className="editor-tab-name">{basename(t.path)}</span>
+            <span className="editor-tab-name">{tabTitle(t.path)}</span>
             {isDirty(m) ? (
               <span className="dirty-dot" title="Unsaved changes" />
             ) : null}
@@ -316,6 +363,11 @@ function TabBar({ project }: { project: Project }) {
       })}
     </div>
   );
+}
+
+function tabTitle(path: string): string {
+  const diff = parseDiffPath(path);
+  return diff ? diffTitle(diff) : basename(path);
 }
 
 export function revealInTree(project: Project, path: string): void {
@@ -434,6 +486,16 @@ export function EditorArea({ project }: { project: Project }) {
       if (!model || !pos || !isCs()) return;
       void showLocations(project, `Implementations of ${symbolAt(editor)}`, () => findImplementations(model, pos), true);
     });
+    codeAction("haze.annotate", "Annotate with Git Blame", [], () => void toggleBlame(project, editor), "9_git");
+    codeAction("haze.fileHistory", "Show History for File", [], () => {
+      const model = editor.getModel();
+      if (model?.uri.scheme === "file") showHistory(project, model.uri.fsPath);
+    }, "9_git");
+    codeAction("haze.compareHead", "Compare with HEAD", [], () => {
+      const model = editor.getModel();
+      const root = repo(project.id).root;
+      if (model?.uri.scheme === "file" && root) openDiff(project.id, { root, rel: relative(root, model.uri.fsPath), left: "HEAD", right: "working" });
+    }, "9_git");
     codeAction("haze.rename", "Rename Symbol…", [M.Shift | K.F6, K.F2], () => {
       if (isCs()) void renameAt(editor);
     }, "1_modification");
@@ -453,7 +515,7 @@ export function EditorArea({ project }: { project: Project }) {
 
   // Load the active file (applying any recovered draft once).
   useEffect(() => {
-    if (!active || isImagePath(active)) return;
+    if (!active || isImagePath(active) || parseDiffPath(active)) return;
     const draft = recoveredDrafts.get(active);
     recoveredDrafts.delete(active);
     void ensureBuffer(active, draft);
@@ -492,11 +554,12 @@ export function EditorArea({ project }: { project: Project }) {
   const [mdPreview, setMdPreview] = useState<Record<string, boolean>>({});
   const showMd = isMarkdown && ready && !!mdPreview[active!];
   const image = !!active && isImagePath(active);
+  const diff = active ? parseDiffPath(active) : null;
 
   return (
     <div className="editor-area">
       <TabBar project={project} />
-      {active && (
+      {active && !diff && (
         <div className="editor-toolbar">
           <Breadcrumb project={project} path={active} />
           {isMarkdown && (
@@ -513,7 +576,8 @@ export function EditorArea({ project }: { project: Project }) {
       )}
       {active && meta?.status === "text" && meta.diskChanged && <DiskBanner path={active} />}
       <div className="editor-stack">
-        <div ref={host} className="monaco-host" style={{ visibility: ready && !image ? "visible" : "hidden" }} />
+        <div ref={host} className="monaco-host" style={{ visibility: ready && !image && !diff ? "visible" : "hidden" }} />
+        {diff && <DiffView key={active} spec={diff} />}
         {showMd && <MarkdownPreview path={active!} />}
         {image && <ImageView path={active!} />}
         {!active && (
@@ -530,7 +594,7 @@ export function EditorArea({ project }: { project: Project }) {
             </div>
           </div>
         )}
-        {active && !image && meta && meta.status !== "text" && (
+        {active && !image && !diff && meta && meta.status !== "text" && (
           <div className="editor-empty">
             {meta.status === "loading" && "Loading…"}
             {meta.status === "error" && <span className="error">{meta.message}</span>}

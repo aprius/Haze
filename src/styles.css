@@ -1584,3 +1584,396 @@ kbd {
 .se-right {
   margin-left: auto;
 }
+
+/* ------------------------------------------------------------ git: commit window */
+
+.sidebar-tabs {
+  flex: none;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+}
+
+.panel-header.slim {
+  height: 28px;
+}
+
+.commit-panel {
+  min-height: 0;
+}
+
+.changes-list {
+  flex: 1;
+  overflow: auto;
+  outline: none;
+  min-height: 60px;
+}
+
+.change-group,
+.change-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.change-group {
+  font-weight: 600;
+}
+
+.change-group-name {
+  margin-right: 4px;
+}
+
+.change-row {
+  padding-left: 26px;
+}
+
+.change-row:hover {
+  background: var(--hover);
+}
+
+.change-row.selected {
+  background: var(--selected);
+}
+
+.change-row .tree-hint {
+  flex: 1 1 0;
+}
+
+.commit-box {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.commit-message {
+  min-height: 90px;
+  resize: vertical;
+  background: var(--editor-bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+}
+
+.commit-message:focus {
+  border-color: var(--accent);
+}
+
+.commit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------------ git: log window */
+
+.git-panel .log-filter {
+  flex: 0 1 160px;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  padding: 0 0 0 6px;
+  border-radius: 10px;
+  background: var(--selected);
+  white-space: nowrap;
+}
+
+.log-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.log-branches {
+  flex: 0 0 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+
+.log-branches .find-input.small {
+  flex: none;
+}
+
+.log-branch-list {
+  overflow: auto;
+  flex: 1;
+}
+
+.log-branch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  cursor: default;
+  font-size: 12px;
+}
+
+.log-branch:hover {
+  background: var(--hover);
+}
+
+.log-branch.selected {
+  background: var(--selected);
+}
+
+.current-branch {
+  font-weight: 600;
+}
+
+.log-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-width: 0;
+  outline: none;
+  background: var(--editor-bg);
+}
+
+.log-graph {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.log-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 10px;
+  white-space: nowrap;
+  cursor: default;
+  font-size: 12px;
+}
+
+.log-row:hover {
+  background: var(--hover);
+}
+
+.log-row.selected {
+  background: var(--selected);
+}
+
+.log-row.head .log-subject {
+  font-weight: 600;
+}
+
+.log-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-author {
+  flex: 0 0 120px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-date {
+  flex: 0 0 110px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.ref-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  border: 1px solid #5fb86588;
+  color: var(--git-added);
+}
+
+.ref-badge.head {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ref-badge.remote {
+  border-color: #c75ad688;
+  color: #c75ad6;
+}
+
+.ref-badge.tag {
+  border-color: #e5a03a88;
+  color: #d9922b;
+}
+
+.log-details {
+  flex: 0 0 340px;
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.commit-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.commit-files {
+  flex: 1 1 50%;
+  overflow: auto;
+}
+
+.commit-files .change-row {
+  padding-left: 10px;
+  cursor: pointer;
+}
+
+.commit-meta {
+  flex: 0 1 auto;
+  max-height: 50%;
+  overflow: auto;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  user-select: text;
+}
+
+.commit-msg {
+  margin: 0 0 6px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.hash {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.git-console {
+  flex: 1;
+  overflow: auto;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  user-select: text;
+}
+
+.console-entry {
+  margin-bottom: 6px;
+}
+
+.console-cmd {
+  color: var(--fg);
+}
+
+.console-entry.failed .console-cmd {
+  color: var(--danger);
+}
+
+.console-entry pre {
+  margin: 2px 0 0 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+/* ------------------------------------------------------------ git: diff, blame, dialogs */
+
+.diff-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--editor-bg);
+}
+
+.diff-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-hint {
+  margin-left: auto;
+}
+
+.diff-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.blame-text {
+  color: var(--muted) !important;
+  font-style: normal;
+  opacity: 0.85;
+}
+
+.push-dialog {
+  width: min(560px, calc(100% - 32px));
+}
+
+.push-target {
+  display: flex;
+  gap: 6px;
+}
+
+.push-commits {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.push-commit {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-op {
+  color: var(--danger);
+  margin-left: 4px;
+}
+
+.sev-ok {
+  color: var(--git-added);
+}
