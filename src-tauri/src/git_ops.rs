@@ -550,6 +550,217 @@ pub fn blame(root: &Path, rel: &str, contents: Option<&str>) -> Result<Vec<Blame
     Ok(parse_blame(&String::from_utf8_lossy(&out.stdout)))
 }
 
+// ---------------------------------------------------------------- interactive rebase
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseStep {
+    /// pick | reword | edit | squash | fixup | drop
+    pub action: String,
+    pub hash: String,
+    /// New message for `reword`.
+    pub message: Option<String>,
+}
+
+/// Builds the rebase todo; rewording is done with an `exec git commit --amend`
+/// line so no editor is ever needed.
+pub fn rebase_todo(steps: &[RebaseStep], msg_dir: &Path) -> Result<String> {
+    let mut todo = String::new();
+    for (i, s) in steps.iter().enumerate() {
+        match s.action.as_str() {
+            "pick" | "edit" | "squash" | "fixup" | "drop" => {
+                todo.push_str(&format!("{} {}\n", s.action, s.hash))
+            }
+            "reword" => {
+                todo.push_str(&format!("pick {}\n", s.hash));
+                let file = msg_dir.join(format!("msg-{i}.txt"));
+                std::fs::write(&file, s.message.as_deref().unwrap_or_default())?;
+                todo.push_str(&format!(
+                    "exec git commit --amend --only --allow-empty --cleanup=strip -F {}\n",
+                    shell_quote(&file)
+                ));
+            }
+            other => bail!("unknown rebase action {other}"),
+        }
+    }
+    Ok(todo)
+}
+
+fn shell_quote(p: &Path) -> String {
+    format!(
+        "'{}'",
+        p.to_string_lossy()
+            .replace('\\', "/")
+            .replace('\'', "'\\''")
+    )
+}
+
+/// `git rebase -i` onto `base` (`None` = from the root commit) with our todo.
+pub fn rebase_interactive(
+    root: &Path,
+    base: Option<&str>,
+    steps: &[RebaseStep],
+) -> Result<GitOutput> {
+    let dir = tempfile::Builder::new().prefix("haze-rebase").tempdir()?;
+    let todo_path = dir.path().join("todo");
+    std::fs::write(&todo_path, rebase_todo(steps, dir.path())?)?;
+    let mut cmd = git(root);
+    // git runs the sequence editor through its shell (also on Windows), so `cp` is available.
+    cmd.env(
+        "GIT_SEQUENCE_EDITOR",
+        format!("cp {}", shell_quote(&todo_path)),
+    );
+    cmd.args(["rebase", "-i", "--autostash"]);
+    match base {
+        Some(b) => cmd.arg(b),
+        None => cmd.arg("--root"),
+    };
+    let out = cmd.output()?;
+    // Keep message files until git is done with them (it is, once rebase returns or stops).
+    let result = GitOutput {
+        ok: out.status.success(),
+        code: out.status.code(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+    };
+    if !result.ok || git_dir(root)?.join("rebase-merge").exists() {
+        // Stopped (edit, conflict): later `exec` lines still need the message files.
+        let _ = dir.keep();
+    }
+    Ok(result)
+}
+
+fn git_dir(root: &Path) -> Result<std::path::PathBuf> {
+    Ok(run_ok(root, &["rev-parse", "--absolute-git-dir"])?
+        .trim()
+        .into())
+}
+
+// ---------------------------------------------------------------- checkpoints
+
+/// Snapshots the whole working tree (tracked and untracked, honoring
+/// .gitignore) as a commit without touching the index, HEAD or any branch.
+/// The commit is kept alive by a `refs/haze/checkpoints/*` ref.
+pub fn checkpoint(root: &Path, label: &str) -> Result<String> {
+    let tree = snapshot_tree(root)?;
+    let mut args = vec![
+        "commit-tree".to_string(),
+        tree,
+        "-m".into(),
+        format!("Haze checkpoint: {label}"),
+    ];
+    if run_ok(root, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok() {
+        args.push("-p".into());
+        args.push("HEAD".into());
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let hash = run_ok(root, &refs)?.trim().to_string();
+    let name = format!("refs/haze/checkpoints/{}", crate::pty::now_ms());
+    run_ok(root, &["update-ref", &name, &hash])?;
+    Ok(hash)
+}
+
+fn snapshot_tree(root: &Path) -> Result<String> {
+    let index = git_dir(root)?.join("index");
+    let tmp = tempfile::NamedTempFile::new()?;
+    if index.exists() {
+        std::fs::copy(&index, tmp.path())?;
+    }
+    let with_index = |args: &[&str]| -> Result<String> {
+        let out = git(root)
+            .env("GIT_INDEX_FILE", tmp.path())
+            .args(args)
+            .output()?;
+        if !out.status.success() {
+            bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    with_index(&["add", "-A", "--", "."])?;
+    with_index(&["write-tree"])
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Checkpoint {
+    pub hash: String,
+    pub time: i64,
+    pub label: String,
+}
+
+pub fn checkpoints(root: &Path) -> Result<Vec<Checkpoint>> {
+    let out = run_ok(
+        root,
+        &[
+            "for-each-ref",
+            "--sort=-creatordate",
+            "--format=%(objectname)%1f%(creatordate:unix)%1f%(contents:subject)",
+            "refs/haze/checkpoints",
+        ],
+    )?;
+    Ok(out
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\u{1f}').collect();
+            Some(Checkpoint {
+                hash: f.first()?.to_string(),
+                time: f.get(1)?.parse().unwrap_or(0),
+                label: f
+                    .get(2)?
+                    .trim_start_matches("Haze checkpoint: ")
+                    .to_string(),
+            })
+        })
+        .collect())
+}
+
+/// Files that differ between a checkpoint and the working tree now.
+pub fn changes_since(root: &Path, checkpoint: &str) -> Result<Vec<ChangedFile>> {
+    let now = snapshot_tree(root)?;
+    let out = run_ok(
+        root,
+        &[
+            "diff-tree",
+            "-r",
+            "-z",
+            "-M",
+            "--name-status",
+            &format!("{checkpoint}^{{tree}}"),
+            &now,
+        ],
+    )?;
+    Ok(parse_name_status(&out))
+}
+
+pub fn delete_checkpoints(root: &Path) -> Result<()> {
+    let out = run_ok(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/haze/checkpoints",
+        ],
+    )?;
+    for r in out.lines() {
+        run_ok(root, &["update-ref", "-d", r])?;
+    }
+    Ok(())
+}
+
+/// Content fingerprints (or `None` for missing files), so "reviewed" marks
+/// can be dropped when a file changes again.
+pub fn fingerprints(root: &Path, rels: &[String]) -> Vec<Option<String>> {
+    rels.iter()
+        .map(|r| {
+            let bytes = std::fs::read(root.join(r)).ok()?;
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut h);
+            Some(format!("{:016x}", h.finish()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -676,6 +887,86 @@ mod tests {
         );
         assert_eq!(blame[0].summary, "init");
         assert_eq!(blame[2].hash, "0".repeat(40));
+    }
+
+    #[test]
+    fn interactive_rebase_squashes_rewords_and_drops() {
+        let r = Repo::new();
+        for (i, name) in ["a", "b", "c", "d"].iter().enumerate() {
+            r.write(&format!("{name}.txt"), &i.to_string());
+            r.git(&["add", "."]);
+            r.git(&["commit", "-q", "-m", &format!("add {name}")]);
+        }
+        let hashes: Vec<String> = r
+            .git(&["log", "--format=%H", "--reverse"])
+            .lines()
+            .map(str::to_string)
+            .collect();
+        let steps = vec![
+            RebaseStep {
+                action: "reword".into(),
+                hash: hashes[1].clone(),
+                message: Some("add b (reworded)".into()),
+            },
+            RebaseStep {
+                action: "fixup".into(),
+                hash: hashes[2].clone(),
+                message: None,
+            },
+            RebaseStep {
+                action: "drop".into(),
+                hash: hashes[3].clone(),
+                message: None,
+            },
+        ];
+        let out = rebase_interactive(r.path(), Some(&hashes[0]), &steps).unwrap();
+        assert!(out.ok, "{}", out.stderr);
+        let log = r.git(&["log", "--format=%s"]);
+        assert_eq!(
+            log.lines().collect::<Vec<_>>(),
+            vec!["add b (reworded)", "add a"]
+        );
+        assert!(r.path().join("c.txt").exists() && !r.path().join("d.txt").exists());
+    }
+
+    #[test]
+    fn checkpoints_capture_untracked_files_without_touching_index() {
+        let r = Repo::new();
+        r.write("a.cs", "1");
+        r.git(&["add", "."]);
+        r.git(&["commit", "-q", "-m", "init"]);
+        r.write("a.cs", "2");
+        r.write("new.cs", "n");
+        let before = r.git(&["status", "--porcelain"]);
+        let cp = checkpoint(r.path(), "before agent").unwrap();
+        assert_eq!(r.git(&["status", "--porcelain"]), before, "index untouched");
+        assert_eq!(checkpoints(r.path()).unwrap()[0].label, "before agent");
+        assert!(changes_since(r.path(), &cp).unwrap().is_empty());
+        r.write("a.cs", "3");
+        std::fs::remove_file(r.path().join("new.cs")).unwrap();
+        r.write("other.cs", "o");
+        let mut changed: Vec<(String, String)> = changes_since(r.path(), &cp)
+            .unwrap()
+            .into_iter()
+            .map(|f| (f.status, f.rel))
+            .collect();
+        changed.sort();
+        assert_eq!(
+            changed,
+            vec![
+                ("added".into(), "other.cs".into()),
+                ("deleted".into(), "new.cs".into()),
+                ("modified".into(), "a.cs".into())
+            ]
+        );
+        assert_eq!(
+            file_at(r.path(), &cp, "new.cs").unwrap().as_deref(),
+            Some("n")
+        );
+        let fp = fingerprints(r.path(), &["a.cs".into(), "missing".into()]);
+        assert!(fp[0].is_some() && fp[1].is_none());
+        delete_checkpoints(r.path()).unwrap();
+        assert!(checkpoints(r.path()).unwrap().is_empty());
     }
 
     #[test]

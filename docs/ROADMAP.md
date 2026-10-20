@@ -29,13 +29,9 @@ Tự viết lại (IdeaGitTool chỉ dùng tham khảo hành vi: giấy phép tr
 
 **4a — xong:** cửa sổ Commit (tick file, không cần staging, amend, commit and push, rollback), cửa sổ Git (log + đồ thị nhánh, lọc, chi tiết commit, console), Branches popup với Smart Checkout, Push dialog, Update Project, cherry-pick / revert / reset / undo commit, diff dạng tab (sửa được bên phải), Annotate (blame), Show History, Compare with HEAD.
 
-**4b — còn lại:**
-- cửa sổ merge 3 khung (Yours / Result / Theirs) và danh sách Conflicts với Accept Yours/Theirs;
-- interactive rebase (reword, squash, fixup, drop, sắp xếp lại);
-- Shelf (cất thay đổi theo từng file), stash UI đầy đủ (danh sách, xem, apply/pop/drop — hiện mới có qua lệnh);
-- changelists;
-- thêm từ Tervia: đánh dấu "đã review" từng file, checkpoint trước khi để AI chạy;
-- Local History.
+**4b — xong:** danh sách xung đột + cửa sổ merge 3 khung (diff3, tự gộp phần không xung đột), interactive rebase (reword/edit/squash/fixup/drop, đổi thứ tự), giao diện Stashes, checkpoint trước khi để AI chạy + "Since checkpoint", đánh dấu "đã review" theo nội dung file.
+
+**Còn để sau:** Shelf và changelists (stash đang thay thế), Local History, sửa amend commit cũ (fixup vào commit bất kỳ đã có qua interactive rebase).
 
 ## 5. AI agent
 

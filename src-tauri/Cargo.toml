@@ -32,6 +32,7 @@ serde_json = "1.0.154"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2.8.3"
 tauri-plugin-opener = "2.7.2"
+tempfile = "3.27.0"
 thiserror = "2.0.21"
 trash = "5.2.9"
 tree-sitter = "0.27.1"
@@ -45,6 +46,3 @@ libc = "0.2"
 codegen-units = 1
 lto = true
 strip = true
-
-[dev-dependencies]
-tempfile = "3.27.0"

@@ -15,6 +15,7 @@ import { setSelection } from "../store/tree";
 import { activeProject, projectForPath, useWorkspace, type Project } from "../store/workspace";
 import { repo } from "../store/git";
 import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
+import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
 import { choose, openMenu, prompt, toast } from "./Overlays";
 import { showLocations } from "./UsagesPopup";
@@ -367,7 +368,8 @@ function TabBar({ project }: { project: Project }) {
 
 function tabTitle(path: string): string {
   const diff = parseDiffPath(path);
-  return diff ? diffTitle(diff) : basename(path);
+  const merge = parseMergePath(path);
+  return diff ? diffTitle(diff) : merge ? mergeTitle(merge) : basename(path);
 }
 
 export function revealInTree(project: Project, path: string): void {
@@ -515,7 +517,7 @@ export function EditorArea({ project }: { project: Project }) {
 
   // Load the active file (applying any recovered draft once).
   useEffect(() => {
-    if (!active || isImagePath(active) || parseDiffPath(active)) return;
+    if (!active || isImagePath(active) || active.startsWith("haze-")) return;
     const draft = recoveredDrafts.get(active);
     recoveredDrafts.delete(active);
     void ensureBuffer(active, draft);
@@ -555,11 +557,13 @@ export function EditorArea({ project }: { project: Project }) {
   const showMd = isMarkdown && ready && !!mdPreview[active!];
   const image = !!active && isImagePath(active);
   const diff = active ? parseDiffPath(active) : null;
+  const merge = active ? parseMergePath(active) : null;
+  const special = !!diff || !!merge;
 
   return (
     <div className="editor-area">
       <TabBar project={project} />
-      {active && !diff && (
+      {active && !special && (
         <div className="editor-toolbar">
           <Breadcrumb project={project} path={active} />
           {isMarkdown && (
@@ -576,8 +580,9 @@ export function EditorArea({ project }: { project: Project }) {
       )}
       {active && meta?.status === "text" && meta.diskChanged && <DiskBanner path={active} />}
       <div className="editor-stack">
-        <div ref={host} className="monaco-host" style={{ visibility: ready && !image && !diff ? "visible" : "hidden" }} />
+        <div ref={host} className="monaco-host" style={{ visibility: ready && !image && !special ? "visible" : "hidden" }} />
         {diff && <DiffView key={active} spec={diff} />}
+        {merge && <MergeView key={active} project={project} spec={merge} />}
         {showMd && <MarkdownPreview path={active!} />}
         {image && <ImageView path={active!} />}
         {!active && (
@@ -594,7 +599,7 @@ export function EditorArea({ project }: { project: Project }) {
             </div>
           </div>
         )}
-        {active && !image && !diff && meta && meta.status !== "text" && (
+        {active && !image && !special && meta && meta.status !== "text" && (
           <div className="editor-empty">
             {meta.status === "loading" && "Loading…"}
             {meta.status === "error" && <span className="error">{meta.message}</span>}

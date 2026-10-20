@@ -1977,3 +1977,190 @@ kbd {
 .sev-ok {
   color: var(--git-added);
 }
+
+/* ------------------------------------------------------------ git: merge, stash, rebase, review */
+
+.merge-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--editor-bg);
+}
+
+.merge-columns {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.merge-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+
+.merge-col:last-child {
+  border-right: 0;
+}
+
+.merge-label {
+  flex: none;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.merge-col.center .merge-label {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.merge-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.merge-conflict {
+  background: rgba(219, 59, 75, 0.14);
+}
+
+.merge-conflict-side {
+  background: rgba(229, 160, 58, 0.16);
+}
+
+.merge-resolved {
+  background: rgba(95, 184, 101, 0.14);
+}
+
+.merge-conflicts {
+  flex: none;
+  max-height: 120px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 4px 8px;
+}
+
+.merge-conflict-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.merge-conflict-row.selected {
+  background: var(--selected);
+}
+
+.merge-conflict-row.done {
+  color: var(--muted);
+}
+
+.stash-list {
+  flex: 0 0 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-right: 1px solid var(--border);
+  overflow: auto;
+}
+
+.stash-actions {
+  display: flex;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.log-details.wide {
+  flex: 1 1 auto;
+}
+
+.rebase-dialog {
+  width: min(720px, calc(100% - 32px));
+}
+
+.rebase-rows {
+  max-height: 50vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rebase-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rebase-row.dropped .rebase-subject {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.rebase-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rebase-msg {
+  flex: 1 1 auto !important;
+}
+
+.review-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  width: 20px;
+  height: 18px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+  opacity: 0.5;
+}
+
+.change-row:hover .review-toggle,
+.review-toggle.on {
+  opacity: 1;
+}
+
+.review-toggle.on {
+  color: var(--git-added);
+}
+
+.change-row.reviewed .tree-name,
+.reviewed-name {
+  opacity: 0.55;
+}
+
+.since-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.since-section .change-row {
+  padding-left: 22px;
+  cursor: pointer;
+}
+
+.checkpoint-select {
+  max-width: 130px;
+  font-weight: 400;
+}
+
+.since-empty {
+  padding: 2px 26px 4px;
+}

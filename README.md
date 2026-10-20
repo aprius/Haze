@@ -6,7 +6,7 @@ Không gian làm việc nhẹ dành cho việc lập trình cùng AI agent (Clau
 
 ![Haze](docs/screenshot.png)
 
-Trạng thái: **giai đoạn 4a** (Git kiểu Rider/Rebased). Lộ trình đầy đủ: [docs/ROADMAP.md](docs/ROADMAP.md).
+Trạng thái: **giai đoạn 4** (Git kiểu Rider/Rebased). Lộ trình đầy đủ: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Đã có
 
@@ -53,7 +53,7 @@ Trạng thái: **giai đoạn 4a** (Git kiểu Rider/Rebased). Lộ trình đầ
 - Double Shift có thêm tab **Symbols** (tìm class/method mờ, ví dụ `OrdSer`), Find in Files có thêm phạm vi **Solution** (đọc `.sln`/`.slnx`).
 - File do AI tạo/sửa/xóa trên đĩa được báo cho Roslyn (`workspace/didChangeWatchedFiles`), nên điều hướng luôn theo code mới.
 
-**Git (giai đoạn 4a)** — tự viết, gọi git CLI; giao diện theo Rider/Rebased
+**Git (giai đoạn 4)** — tự viết, gọi git CLI; giao diện theo Rider/Rebased
 - **Commit (Alt+0, Ctrl+K)**: tick từng file để commit, không cần stage; nhóm Changes / Unversioned Files / Merge Conflicts; Amend (tự điền message cũ); Commit and Push; Rollback (hỏi trước khi xóa file mới); Add to VCS, Add to .gitignore; banner Continue/Abort khi đang merge/rebase dở.
 - **Git (Alt+9)**: log có **đồ thị nhánh** (lane tính trên toàn bộ lịch sử đã tải, tải thêm khi cuộn), nhãn branch/tag/remote, lọc theo text/hash, tác giả, nhánh, đường dẫn, First parent; danh sách nhánh bên trái; chi tiết commit và file thay đổi bên phải; tab **Console** ghi lại mọi lệnh git Haze đã chạy.
 - Menu commit: Copy Revision, Checkout Revision, New Branch, New Tag, Cherry-Pick, Revert, Undo Commit, Reset Current Branch to Here (Soft/Mixed/Hard).
@@ -61,6 +61,11 @@ Trạng thái: **giai đoạn 4a** (Git kiểu Rider/Rebased). Lộ trình đầ
 - **Push (Ctrl+Shift+K)**: liệt kê các commit sẽ push, chọn remote/nhánh đích, `--force-with-lease`; tự đặt upstream cho nhánh mới. **Update Project (Ctrl+T)**: pull kiểu Merge hoặc Rebase, tự stash/khôi phục thay đổi.
 - **Diff** mở như một tab (F7 / Shift+F7 để nhảy giữa các khác biệt); với file đang sửa, bên phải chính là file thật nên sửa trực tiếp được.
 - **Annotate with Git Blame**, **Show History for File**, **Compare with HEAD** từ menu chuột phải của editor và cây file.
+- **Xung đột**: nhóm Merge Conflicts trong cửa sổ Commit (tự mở khi merge/rebase/cherry-pick gặp xung đột); Accept Yours / Accept Theirs, hoặc **cửa sổ merge 3 khung** (Yours | Result | Theirs): thay đổi không xung đột được gộp sẵn, mỗi xung đột chọn « Left / Both / Right » hoặc sửa tay, Apply ghi file và `git add`; sau đó Continue.
+- **Interactive Rebase from Here…** (menu commit trong log): sắp xếp lại, pick / reword / edit / squash / fixup / drop — không cần mở trình soạn thảo văn bản.
+- **Stashes** (tab trong cửa sổ Git): xem nội dung, Apply, Pop, Drop, Unstash as Branch, Stash Changes (kèm file chưa track).
+- **Checkpoint cho AI** (nút máy ảnh trong cửa sổ Commit): chụp toàn bộ thư mục làm việc (kể cả file mới, không đụng index/nhánh) trước khi để agent chạy; mục **Since checkpoint** liệt kê mọi file agent đã đổi, bấm để xem diff so với lúc chụp.
+- **Đánh dấu đã review** từng file (biểu tượng con mắt); dấu tự mất khi file bị sửa lại.
 - Không bao giờ chờ nhập mật khẩu (`GIT_TERMINAL_PROMPT=0`): cần credential helper hoặc SSH agent; lỗi xác thực hiện ngay thành thông báo.
 
 **Terminal**

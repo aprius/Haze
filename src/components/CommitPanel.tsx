@@ -1,14 +1,15 @@
 // Commit tool window (Alt+0), like Rider's: tick files, write a message,
 // Commit or Commit and Push — no staging area to manage.
-import { ChevronDown, ChevronRight, RefreshCw, Undo2 } from "lucide-react";
+import { Camera, Check, ChevronDown, ChevronRight, Eye, RefreshCw, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { saveAll } from "./EditorArea";
 import { api, type GitChange } from "../lib/ipc";
 import { basename, dirname } from "../lib/path";
-import { absPath, checkedPaths, patchRepo, refreshRepo, repo, runGit, useGit } from "../store/git";
+import { absPath, checkedPaths, createCheckpoint, patchRepo, refreshRepo, repo, runGit, toggleReviewed, useGit } from "../store/git";
 import { refreshGit as refreshTreeGit } from "../store/tree";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openDiff } from "./DiffView";
+import { openMerge } from "./MergeView";
 import { choose, openMenu, toast } from "./Overlays";
 import { openPushDialog } from "./GitDialogs";
 
@@ -19,6 +20,10 @@ const GROUPS: { id: string; label: string; match: (c: GitChange) => boolean }[] 
 ];
 
 export function showChangeDiff(project: Project, root: string, c: GitChange): void {
+  if (c.status === "conflict") {
+    openMerge(project.id, { root, rel: c.rel });
+    return;
+  }
   if (c.status === "untracked" || c.status === "added") {
     useWorkspace.getState().openFile(project.id, absPath(root, c.rel), { preview: true });
     return;
@@ -47,6 +52,22 @@ export async function commitChanges(project: Project, push: boolean): Promise<vo
   patchRepo(project.id, { message: "", amend: false, checked: null });
   toast(`Committed ${paths.length} file(s).`);
   if (push) openPushDialog(project);
+}
+
+/** Marks a file as reviewed; the mark disappears by itself when the file changes again. */
+function ReviewToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      className={"review-toggle" + (on ? " on" : "")}
+      title={on ? "Reviewed — click to unmark" : "Mark as reviewed"}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+    >
+      {on ? <Check size={12} /> : <Eye size={12} />}
+    </button>
+  );
 }
 
 export function CommitPanel({ project }: { project: Project }) {
@@ -97,7 +118,22 @@ export function CommitPanel({ project }: { project: Project }) {
     refreshTreeGit(project.id, project.path, 0);
   };
 
+  const resolveSide = async (c: GitChange, side: "--ours" | "--theirs") => {
+    const out = await runGit(project.id, ["checkout", side, "--", c.rel], { quiet: true });
+    // The file may not exist on that side (deleted there): resolve by removing it.
+    if (out && !out.ok) await runGit(project.id, ["rm", "-q", "--", c.rel], { quiet: true });
+    else await runGit(project.id, ["add", "--", c.rel], { quiet: true });
+  };
+
   const menu = (c: GitChange) => [
+    ...(c.status === "conflict"
+      ? [
+          { label: "Merge…", action: () => openMerge(project.id, { root, rel: c.rel }) },
+          { label: "Accept Yours", action: () => void resolveSide(c, "--ours") },
+          { label: "Accept Theirs", action: () => void resolveSide(c, "--theirs") },
+          { separator: true },
+        ]
+      : []),
     { label: "Show Diff", shortcut: "Ctrl+D", action: () => showChangeDiff(project, root, c) },
     { label: "Open File", shortcut: "F4", disabled: c.status === "deleted", action: () => useWorkspace.getState().openFile(project.id, absPath(root, c.rel)) },
     { separator: true },
@@ -129,6 +165,13 @@ export function CommitPanel({ project }: { project: Project }) {
       <div className="panel-header slim">
         <span className="muted small">{r.branches?.current ? `On ${r.branches.current}` : r.branches?.detached ? "Detached HEAD" : ""}</span>
         <div className="panel-actions">
+          <button
+            className="icon-btn"
+            title="Create a checkpoint (before letting an AI agent work), to review what changed since"
+            onClick={() => void createCheckpoint(project.id, project.path)}
+          >
+            <Camera size={14} />
+          </button>
           <button className="icon-btn" title="Refresh" onClick={() => refreshRepo(project.id, project.path)}>
             <RefreshCw size={14} />
           </button>
@@ -153,6 +196,60 @@ export function CommitPanel({ project }: { project: Project }) {
         </div>
       )}
       <div className="changes-list" tabIndex={0}>
+        {r.checkpoint && (
+          <div className="since-section">
+            <div className="change-group">
+              <span className="chevron" onClick={() => setCollapsed((c) => ({ ...c, since: !c.since }))}>
+                {collapsed.since ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </span>
+              <span className="change-group-name">Since checkpoint</span>
+              <select
+                className="find-select checkpoint-select"
+                value={r.checkpoint}
+                onChange={(e) => {
+                  patchRepo(project.id, { checkpoint: e.target.value });
+                  refreshRepo(project.id, project.path);
+                }}
+              >
+                {r.checkpoints.map((c) => (
+                  <option key={c.hash} value={c.hash}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <span className="muted small">
+                {r.since.filter((f) => r.reviewed[f.rel]).length}/{r.since.length} reviewed
+              </span>
+              <button
+                className="btn small"
+                title="Delete all checkpoints"
+                onClick={async () => {
+                  await api.gitDeleteCheckpoints(root).catch(() => {});
+                  patchRepo(project.id, { checkpoint: null, since: [], checkpoints: [] });
+                }}
+              >
+                Clear
+              </button>
+            </div>
+            {!collapsed.since &&
+              (r.since.length === 0 ? (
+                <div className="muted small since-empty">Nothing changed since this checkpoint.</div>
+              ) : (
+                r.since.map((f) => (
+                  <div
+                    key={f.rel}
+                    className={"change-row git-" + (f.status === "copied" ? "added" : f.status) + (r.reviewed[f.rel] ? " reviewed" : "")}
+                    onClick={() => openDiff(project.id, { root, rel: f.rel, oldRel: f.oldRel, left: f.status === "added" ? null : r.checkpoint, right: "working" })}
+                    title="Show what changed since the checkpoint"
+                  >
+                    <ReviewToggle on={!!r.reviewed[f.rel]} onToggle={() => void toggleReviewed(project.id, f.rel)} />
+                    <span className="tree-name">{basename(f.rel)}</span>
+                    <span className="tree-hint">{dirname(f.rel)}</span>
+                  </div>
+                ))
+              ))}
+          </div>
+        )}
         {r.changes.length === 0 && <div className="se-empty">No local changes</div>}
         {GROUPS.map((g) => {
           const items = r.changes.filter(g.match);
@@ -194,8 +291,9 @@ export function CommitPanel({ project }: { project: Project }) {
                     title={c.oldRel ? `${c.oldRel} → ${c.rel}` : c.rel}
                   >
                     <input type="checkbox" checked={checked.has(c.rel)} onChange={() => toggle(c.rel)} onClick={(e) => e.stopPropagation()} />
-                    <span className="tree-name">{basename(c.rel)}</span>
+                    <span className={"tree-name" + (r.reviewed[c.rel] ? " reviewed-name" : "")}>{basename(c.rel)}</span>
                     <span className="tree-hint">{dirname(c.rel)}</span>
+                    <ReviewToggle on={!!r.reviewed[c.rel]} onToggle={() => void toggleReviewed(project.id, c.rel)} />
                   </div>
                 ))}
             </div>

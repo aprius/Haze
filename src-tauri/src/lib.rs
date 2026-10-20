@@ -320,6 +320,43 @@ async fn git_blame(
 }
 
 #[tauri::command]
+async fn git_rebase_interactive(
+    root: String,
+    base: Option<String>,
+    steps: Vec<git_ops::RebaseStep>,
+) -> CmdResult<git_ops::GitOutput> {
+    blocking(move || git_ops::rebase_interactive(root.as_ref(), base.as_deref(), &steps)).await
+}
+
+#[tauri::command]
+async fn git_checkpoint(root: String, label: String) -> CmdResult<String> {
+    blocking(move || git_ops::checkpoint(root.as_ref(), &label)).await
+}
+
+#[tauri::command]
+async fn git_checkpoints(root: String) -> CmdResult<Vec<git_ops::Checkpoint>> {
+    blocking(move || git_ops::checkpoints(root.as_ref())).await
+}
+
+#[tauri::command]
+async fn git_changes_since(
+    root: String,
+    checkpoint: String,
+) -> CmdResult<Vec<git_ops::ChangedFile>> {
+    blocking(move || git_ops::changes_since(root.as_ref(), &checkpoint)).await
+}
+
+#[tauri::command]
+async fn git_delete_checkpoints(root: String) -> CmdResult<()> {
+    blocking(move || git_ops::delete_checkpoints(root.as_ref())).await
+}
+
+#[tauri::command]
+async fn git_fingerprints(root: String, rels: Vec<String>) -> CmdResult<Vec<Option<String>>> {
+    blocking(move || Ok(git_ops::fingerprints(root.as_ref(), &rels))).await
+}
+
+#[tauri::command]
 async fn git_run(root: String, args: Vec<String>) -> CmdResult<git_ops::GitOutput> {
     blocking(move || git_ops::run(root.as_ref(), &args)).await
 }
@@ -525,6 +562,12 @@ pub fn run() {
             git_stashes,
             git_blame,
             git_run,
+            git_rebase_interactive,
+            git_checkpoint,
+            git_checkpoints,
+            git_changes_since,
+            git_delete_checkpoints,
+            git_fingerprints,
             dotnet_info,
             build_start,
             build_cancel,

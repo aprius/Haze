@@ -298,6 +298,18 @@ export interface BlameLine {
   summary: string;
 }
 
+export interface RebaseStep {
+  action: "pick" | "reword" | "edit" | "squash" | "fixup" | "drop";
+  hash: string;
+  message: string | null;
+}
+
+export interface Checkpoint {
+  hash: string;
+  time: number;
+  label: string;
+}
+
 export const api = {
   loadState: () => invoke<unknown>("load_state"),
   saveState: (value: unknown) => invoke<void>("save_state", { value }),
@@ -338,6 +350,13 @@ export const api = {
   gitStashes: (root: string) => invoke<StashEntry[]>("git_stashes", { root }),
   gitBlame: (root: string, rel: string, contents: string | null) => invoke<BlameLine[]>("git_blame", { root, rel, contents }),
   gitRun: (root: string, args: string[]) => invoke<GitOutput>("git_run", { root, args }),
+  gitRebaseInteractive: (root: string, base: string | null, steps: RebaseStep[]) =>
+    invoke<GitOutput>("git_rebase_interactive", { root, base, steps }),
+  gitCheckpoint: (root: string, label: string) => invoke<string>("git_checkpoint", { root, label }),
+  gitCheckpoints: (root: string) => invoke<Checkpoint[]>("git_checkpoints", { root }),
+  gitChangesSince: (root: string, checkpoint: string) => invoke<ChangedFile[]>("git_changes_since", { root, checkpoint }),
+  gitDeleteCheckpoints: (root: string) => invoke<void>("git_delete_checkpoints", { root }),
+  gitFingerprints: (root: string, rels: string[]) => invoke<(string | null)[]>("git_fingerprints", { root, rels }),
 
   dotnetInfo: (root: string) => invoke<DotnetInfo>("dotnet_info", { root }),
   buildStart: (verb: BuildVerb, target: string | null, cwd: string) => invoke<number>("build_start", { verb, target, cwd }),
