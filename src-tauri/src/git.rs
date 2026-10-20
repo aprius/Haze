@@ -38,6 +38,9 @@ pub fn git_command() -> Command {
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     cmd.env("GIT_OPTIONAL_LOCKS", "0");
+    // Paths are always literal: `Pages/[id].razor` must not act as a glob
+    // (newer git no longer prefers an exact match over the pattern).
+    cmd.env("GIT_LITERAL_PATHSPECS", "1");
     cmd
 }
 
