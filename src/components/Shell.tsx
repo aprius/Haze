@@ -1,14 +1,16 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, GitBranch, Plus, Star, TerminalSquare } from "lucide-react";
+import { FolderOpen, GitBranch, Plus, Settings, Star, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { basename } from "../lib/path";
 import { useGit } from "../store/git";
+import { useTerminals } from "../store/terminals";
 import { useTree } from "../store/tree";
 import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
+import { openSettings } from "./SettingsDialog";
 import { useWorkspace, type Project } from "../store/workspace";
 import { closeTabsWithPrompt, useCursor } from "./EditorArea";
 import { openMenu } from "./Overlays";
@@ -49,6 +51,18 @@ async function closeProject(project: Project) {
   useWorkspace.getState().closeProject(project.id);
 }
 
+/** Dot on a project's avatar when one of its agents needs a look. */
+function AgentBadge({ projectId }: { projectId: string }) {
+  const state = useTerminals((s) => {
+    const mine = Object.entries(s.sessions).filter(([, x]) => x.projectId === projectId);
+    // Waiting for input stays visible until answered; "done" only until seen.
+    if (mine.some(([, x]) => x.agent?.state === "waiting")) return "waiting";
+    if (mine.some(([id]) => s.attention[id])) return "done";
+    return mine.some(([, x]) => x.agent?.state === "working") ? "working" : null;
+  });
+  return state ? <span className={"rail-agent " + state} title={state === "waiting" ? "An agent needs your input" : state === "done" ? "An agent finished" : "An agent is working"} /> : null;
+}
+
 export function ProjectRail() {
   const projects = useWorkspace((s) => s.projects);
   const activeId = useWorkspace((s) => s.activeProjectId);
@@ -78,12 +92,16 @@ export function ProjectRail() {
         >
           <ProjectAvatar project={p} />
           {p.favorite && <Star size={9} className="rail-star" />}
+          <AgentBadge projectId={p.id} />
         </button>
       ))}
       <button className="rail-item add" title="Open Folder…" onClick={() => void openFolder()}>
         <Plus size={18} />
       </button>
       <div className="rail-spacer" />
+      <button className="rail-item" title="Settings (Ctrl+Alt+S)" onClick={() => openSettings()}>
+        <Settings size={17} />
+      </button>
       <button
         className={"rail-item" + (activeId === null ? " active" : "")}
         title="Welcome / Recent Projects"

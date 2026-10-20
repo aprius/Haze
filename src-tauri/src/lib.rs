@@ -1,3 +1,4 @@
+pub mod agent_hooks;
 mod dotnet;
 mod file_index;
 mod fs_ops;
@@ -361,6 +362,23 @@ async fn git_run(root: String, args: Vec<String>) -> CmdResult<git_ops::GitOutpu
     blocking(move || git_ops::run(root.as_ref(), &args)).await
 }
 
+// ---------------------------------------------------------------- AI agent hooks
+
+#[tauri::command]
+async fn agent_hooks_status(agent: String) -> CmdResult<agent_hooks::HookStatus> {
+    blocking(move || agent_hooks::status_of(&agent)).await
+}
+
+#[tauri::command]
+async fn agent_hooks_install(agent: String) -> CmdResult<agent_hooks::HookStatus> {
+    blocking(move || agent_hooks::install(&agent)).await
+}
+
+#[tauri::command]
+async fn agent_hooks_uninstall(agent: String) -> CmdResult<agent_hooks::HookStatus> {
+    blocking(move || agent_hooks::uninstall(&agent)).await
+}
+
 // ---------------------------------------------------------------- .NET and language servers
 
 #[tauri::command]
@@ -446,9 +464,22 @@ struct Pty(Arc<PtyClient>);
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "t")]
 enum PtyUiEvent {
-    Snapshot { id: String, data: String },
-    Output { id: String, data: String },
-    Exit { id: String, code: Option<u32> },
+    Snapshot {
+        id: String,
+        data: String,
+    },
+    Output {
+        id: String,
+        data: String,
+    },
+    Exit {
+        id: String,
+        code: Option<u32>,
+    },
+    Agent {
+        id: String,
+        status: Option<pty::protocol::AgentStatus>,
+    },
     Disconnected,
 }
 
@@ -507,6 +538,7 @@ fn forward_pty_event(app: &AppHandle, event: Option<PtyEvent>) {
         Some(PtyEvent::Snapshot { id, data }) => PtyUiEvent::Snapshot { id, data },
         Some(PtyEvent::Output { id, data }) => PtyUiEvent::Output { id, data },
         Some(PtyEvent::Exit { id, code }) => PtyUiEvent::Exit { id, code },
+        Some(PtyEvent::Agent { id, status }) => PtyUiEvent::Agent { id, status },
         None => PtyUiEvent::Disconnected,
     };
     let _ = app.emit("pty://event", ui);
@@ -517,6 +549,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(watcher::Watchers::default())
         .manage(Arc::new(file_index::FileIndex::default()))
         .manage(Arc::new(search::ReplaceHistory::default()))
@@ -568,6 +601,9 @@ pub fn run() {
             git_changes_since,
             git_delete_checkpoints,
             git_fingerprints,
+            agent_hooks_status,
+            agent_hooks_install,
+            agent_hooks_uninstall,
             dotnet_info,
             build_start,
             build_cancel,

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use haze_lib::pty::client::PtyClient;
-use haze_lib::pty::protocol::{Event, Reply, Request, SessionSpec};
+use haze_lib::pty::protocol::{AgentStatus, Event, Reply, Request, SessionSpec};
 
 fn decode(data: &str) -> String {
     String::from_utf8_lossy(
@@ -76,6 +76,37 @@ fn session_survives_client_and_replays_output() {
         }
     };
     assert!(snapshot.contains("hello-haze"), "snapshot was {snapshot:?}");
+
+    // An agent hook reports a state: the list keeps it and attached clients hear about it.
+    second
+        .request(Request::Agent {
+            id: session.id.clone(),
+            status: Some(AgentStatus {
+                agent: "claude".into(),
+                state: "waiting".into(),
+                message: Some("needs permission".into()),
+                at: 1,
+            }),
+        })
+        .unwrap();
+    let Reply::Sessions { sessions } = second.request(Request::List).unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        sessions[0].agent.as_ref().map(|a| a.state.as_str()),
+        Some("waiting")
+    );
+    loop {
+        match events.recv_timeout(Duration::from_secs(5)).unwrap() {
+            Some(Event::Agent {
+                status: Some(s), ..
+            }) => {
+                assert_eq!(s.agent, "claude");
+                break;
+            }
+            _ => continue,
+        }
+    }
 
     second
         .request(Request::Close {

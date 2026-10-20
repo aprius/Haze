@@ -33,8 +33,9 @@ Tự viết lại (IdeaGitTool chỉ dùng tham khảo hành vi: giấy phép tr
 
 **Còn để sau:** Shelf và changelists (stash đang thay thế), Local History, sửa amend commit cũ (fixup vào commit bất kỳ đã có qua interactive rebase).
 
-## 5. AI agent
+## 5. AI agent — xong
 
-- Hook của Claude Code/Codex: trạng thái đang làm / chờ duyệt / xong trên tab terminal, thông báo desktop; dùng `HAZE_TERMINAL_ID`.
-- Worktree: mỗi worktree có terminal, tab và bản nháp riêng, để nhiều agent chạy song song.
-- Local History.
+- Hook của Claude Code/Codex (cài trong Settings, chỉ khi người dùng bấm): trạng thái đang làm / chờ bạn / xong / lỗi trên tab terminal và dự án ở thanh bên trái, thông báo desktop khi Haze ở nền; dùng `HAZE_TERMINAL_ID`.
+- Worktree: tạo từ Branches popup, nhóm Worktrees trong cửa sổ Git; mỗi worktree mở thành một dự án riêng (terminal, tab, bản nháp riêng) để nhiều agent chạy song song.
+
+**Còn để sau:** Local History, hook cho các agent khác (Gemini CLI, OpenCode…).

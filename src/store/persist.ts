@@ -14,6 +14,7 @@ interface Persisted {
   ui: Record<string, ProjectUi>;
   drafts: Record<string, { content: string; baseMtime: number }>;
   nestFiles: boolean;
+  notifyAgents?: boolean;
 }
 
 /** Drafts restored from the last run, consumed when their tab first opens. */
@@ -32,6 +33,7 @@ function snapshot(): Persisted {
     ui: s.ui,
     drafts,
     nestFiles: s.nestFiles,
+    notifyAgents: s.notifyAgents,
   };
 }
 
@@ -69,6 +71,7 @@ async function doRestore(): Promise<void> {
       activeProjectId: data.activeProjectId ?? null,
       ui,
       nestFiles: data.nestFiles ?? true,
+      notifyAgents: data.notifyAgents ?? true,
     });
   }
   useWorkspace.setState({ loaded: true });

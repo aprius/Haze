@@ -65,12 +65,30 @@ export interface SessionInfo {
   createdAt: number;
   running: boolean;
   exitCode: number | null;
+  agent: AgentStatus | null;
+}
+
+export type AgentState = "idle" | "working" | "waiting" | "done" | "error";
+
+export interface AgentStatus {
+  agent: "claude" | "codex" | string;
+  state: AgentState;
+  message: string | null;
+  at: number;
+}
+
+export interface HookStatus {
+  installed: boolean;
+  stale: boolean;
+  configPath: string;
+  conflict: string | null;
 }
 
 export type PtyEvent =
   | { t: "snapshot"; id: string; data: string }
   | { t: "output"; id: string; data: string }
   | { t: "exit"; id: string; code: number | null }
+  | { t: "agent"; id: string; status: AgentStatus | null }
   | { t: "disconnected" };
 
 export type SearchContext =
@@ -337,6 +355,10 @@ export const api = {
   readImage: (path: string) => invoke<{ mime: string; base64: string }>("read_image", { path }),
 
   readLines: (requests: { path: string; lines: number[] }[]) => invoke<string[][]>("read_lines", { requests }),
+
+  agentHooksStatus: (agent: "claude" | "codex") => invoke<HookStatus>("agent_hooks_status", { agent }),
+  agentHooksInstall: (agent: "claude" | "codex") => invoke<HookStatus>("agent_hooks_install", { agent }),
+  agentHooksUninstall: (agent: "claude" | "codex") => invoke<HookStatus>("agent_hooks_uninstall", { agent }),
 
   gitLog: (root: string, query: LogQuery) => invoke<LogPage>("git_log", { root, query }),
   gitChanges: (root: string) => invoke<GitChange[]>("git_changes", { root }),

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the protocol changes incompatibly. It is part of the socket
 /// name, so a new Haze build never talks to an older host.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 const MAX_FRAME: usize = 32 * 1024 * 1024;
 
@@ -38,6 +38,20 @@ pub struct SessionInfo {
     pub created_at: u64,
     pub running: bool,
     pub exit_code: Option<u32>,
+    /// AI agent running in this terminal, as reported by its hooks.
+    #[serde(default)]
+    pub agent: Option<AgentStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStatus {
+    /// `claude` or `codex`.
+    pub agent: String,
+    /// idle | working | waiting | done | error
+    pub state: String,
+    pub message: Option<String>,
+    pub at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,6 +82,11 @@ pub enum Request {
     /// Kills the process (if still running) and forgets the session.
     Close {
         id: String,
+    },
+    /// Sent by `haze --agent-hook` from inside a terminal; `None` clears it.
+    Agent {
+        id: String,
+        status: Option<AgentStatus>,
     },
 }
 
@@ -105,6 +124,11 @@ pub enum Event {
     Exit {
         id: String,
         code: Option<u32>,
+    },
+    /// An agent's state changed (sent to every client, attached or not).
+    Agent {
+        id: String,
+        status: Option<AgentStatus>,
     },
 }
 
