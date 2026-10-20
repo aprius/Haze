@@ -3,18 +3,22 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { actions, scoreLabel, type Action } from "../lib/actions";
 import { api, type FileHit, type SearchMatch } from "../lib/ipc";
+import { symbolKindName } from "../lib/lsp/convert";
+import { workspaceSymbols, type WorkspaceSymbolHit } from "../lib/lsp/csharp";
 import { basename, relative } from "../lib/path";
 import { closeSearchEverywhere, useUi, type SeTab } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 
 type Item =
   | { kind: "file"; path: string; rel: string; indices: number[]; recent?: boolean }
+  | { kind: "symbol"; symbol: WorkspaceSymbolHit; rel: string }
   | { kind: "action"; action: Action }
   | { kind: "text"; path: string; rel: string; match: SearchMatch };
 
 const TABS: { id: SeTab; label: string }[] = [
   { id: "all", label: "All" },
   { id: "files", label: "Files" },
+  { id: "symbols", label: "Symbols" },
   { id: "actions", label: "Actions" },
   { id: "text", label: "Text" },
 ];
@@ -54,6 +58,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<FileHit[]>([]);
   const [text, setText] = useState<{ path: string; match: SearchMatch }[]>([]);
+  const [symbols, setSymbols] = useState<WorkspaceSymbolHit[]>([]);
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -70,7 +75,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
 
   // File search (debounced, newest request wins).
   useEffect(() => {
-    if (!open || !project || !query || tab === "actions" || tab === "text") {
+    if (!open || !project || !query || tab === "actions" || tab === "text" || tab === "symbols") {
       setFiles([]);
       return;
     }
@@ -81,6 +86,24 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
         .then((hits) => !stale && setFiles(hits))
         .catch(() => !stale && setFiles([]));
     }, 40);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
+  }, [open, project, query, tab]);
+
+  // Symbols from the C# language server.
+  useEffect(() => {
+    if (!open || !project || !query || (tab !== "symbols" && tab !== "all")) {
+      setSymbols([]);
+      return;
+    }
+    let stale = false;
+    const t = setTimeout(() => {
+      workspaceSymbols(project.id, query)
+        .then((hits) => !stale && setSymbols(hits))
+        .catch(() => !stale && setSymbols([]));
+    }, 120);
     return () => {
       stale = true;
       clearTimeout(t);
@@ -121,6 +144,9 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
         for (const h of files) out.push({ kind: "file", path: h.path, rel: h.rel, indices: h.nameIndices });
       }
     }
+    if ((tab === "all" || tab === "symbols") && project) {
+      for (const sym of symbols.slice(0, tab === "all" ? 8 : 60)) out.push({ kind: "symbol", symbol: sym, rel: relative(project.path, sym.path) });
+    }
     if ((tab === "all" && query) || tab === "actions") {
       const scored = actions
         .filter((a) => project || !a.needsProject)
@@ -134,7 +160,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
       for (const t of text) out.push({ kind: "text", path: t.path, rel: relative(project.path, t.path), match: t.match });
     }
     return out;
-  }, [tab, project, query, files, text, recentFiles]);
+  }, [tab, project, query, files, symbols, text, recentFiles]);
 
   useEffect(() => setSelected(0), [items.length, tab]);
 
@@ -150,8 +176,13 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
     if (item.kind === "action") {
       item.action.run();
     } else if (project) {
-      const pos = item.kind === "text" ? { line: item.match.line, column: item.match.column } : { line, column };
-      useWorkspace.getState().openFile(project.id, item.path, pos);
+      const pos =
+        item.kind === "text"
+          ? { line: item.match.line, column: item.match.column }
+          : item.kind === "symbol"
+            ? { line: item.symbol.line, column: item.symbol.column }
+            : { line, column };
+      useWorkspace.getState().openFile(project.id, item.kind === "symbol" ? item.symbol.path : item.path, pos);
     }
   };
 
@@ -193,7 +224,15 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
         <div className="se-list" ref={listRef}>
           {items.map((item, i) => {
             const group =
-              item.kind === "action" ? "Actions" : item.kind === "text" ? "Text" : item.kind === "file" && item.recent ? "Recent Files" : "Files";
+              item.kind === "action"
+                ? "Actions"
+                : item.kind === "symbol"
+                  ? "Symbols"
+                  : item.kind === "text"
+                    ? "Text"
+                    : item.kind === "file" && item.recent
+                      ? "Recent Files"
+                      : "Files";
             const header = tab === "all" && group !== lastGroup ? group : null;
             lastGroup = group;
             return (
@@ -210,6 +249,16 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
                         <Highlighted text={basename(item.path)} indices={item.indices} />
                       </span>
                       <span className="se-detail">{item.rel}</span>
+                    </>
+                  )}
+                  {item.kind === "symbol" && (
+                    <>
+                      <span className="sym-kind">{symbolKindName(item.symbol.kind)}</span>
+                      <span className="se-name">{item.symbol.name}</span>
+                      {item.symbol.container && <span className="se-detail">{item.symbol.container}</span>}
+                      <span className="se-detail se-right">
+                        {item.rel}:{item.symbol.line}
+                      </span>
                     </>
                   )}
                   {item.kind === "action" && (

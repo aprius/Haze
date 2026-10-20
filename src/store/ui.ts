@@ -1,7 +1,7 @@
 // Transient UI state: which popups are open. Not persisted.
 import { create } from "zustand";
 
-export type SeTab = "all" | "files" | "actions" | "text";
+export type SeTab = "all" | "files" | "symbols" | "actions" | "text";
 
 interface UiState {
   searchEverywhere: { open: boolean; tab: SeTab; nonce: number; query: string | null };
@@ -18,8 +18,14 @@ export function openSearchEverywhere(tab: SeTab = "all", query: string | null = 
   useUi.setState({ searchEverywhere: { open: true, tab, nonce: Date.now(), query } });
 }
 
+/** Lets the editor take focus back after a popup closes (see EditorArea). */
+export function popupClosed(): void {
+  window.dispatchEvent(new Event("haze:popup-closed"));
+}
+
 export function closeSearchEverywhere(): void {
   useUi.setState((s) => ({ searchEverywhere: { ...s.searchEverywhere, open: false } }));
+  popupClosed();
 }
 
 export function openFindInFiles(opts: { replace?: boolean; query?: string | null; directory?: string | null } = {}): void {
@@ -36,4 +42,5 @@ export function openFindInFiles(opts: { replace?: boolean; query?: string | null
 
 export function closeFindInFiles(): void {
   useUi.setState((s) => ({ findInFiles: { ...s.findInFiles, open: false } }));
+  popupClosed();
 }

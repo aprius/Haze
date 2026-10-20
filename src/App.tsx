@@ -1,12 +1,17 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
-import { closeTabsWithPrompt, EditorArea, revealInTree, saveAll, selectedText } from "./components/EditorArea";
+import { closeTabsWithPrompt, EditorArea, revealInTree, saveAll, selectedText, triggerEditorAction } from "./components/EditorArea";
 import { FileTree } from "./components/FileTree";
 import { FindInFiles } from "./components/FindInFiles";
 import { SearchEverywhere } from "./components/SearchEverywhere";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, Welcome } from "./components/Shell";
+import { BuildPanel } from "./components/BuildPanel";
+import { RunBar, runConfig, runConfigs } from "./components/RunBar";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { UsagesPopup } from "./components/UsagesPopup";
+import { notifyFileChanges, startCsharp, stopCsharp } from "./lib/lsp/csharp";
+import { defaultBuildTarget, loadDotnetInfo, startBuild, useDotnet } from "./store/dotnet";
 import { handleDiskChanges } from "./lib/buffers";
 import { api, onFsChange } from "./lib/ipc";
 import { basename } from "./lib/path";
@@ -22,6 +27,7 @@ function ProjectView({ project }: { project: Project }) {
   if (!ui) return null;
   return (
     <div className="project-view">
+      <RunBar project={project} />
       <div className="main-row">
         {ui.sidebarVisible && (
           <>
@@ -46,7 +52,11 @@ function ProjectView({ project }: { project: Project }) {
             onChange={(v) => updateUi(project.id, { terminalHeight: v })}
           />
           <div className="bottom" style={{ height: ui.terminalHeight }}>
-            <TerminalPanel project={project} />
+            {/* The terminal stays mounted so xterm keeps its screen while Build is shown. */}
+            <div className="bottom-slot" style={{ display: ui.bottomTab === "build" ? "none" : "flex" }}>
+              <TerminalPanel project={project} />
+            </div>
+            {ui.bottomTab === "build" && <BuildPanel project={project} />}
           </div>
         </>
       )}
@@ -77,6 +87,18 @@ function useGlobalShortcuts(project: Project | null) {
       const k = e.key.toLowerCase();
       let handled = true;
       if (mod && e.shiftKey && k === "n") openSearchEverywhere("files");
+      // Monaco does not always receive Shift+F6 (WebKitGTK); route it to Rename ourselves.
+      else if (e.shiftKey && !mod && !e.altKey && e.key === "F6" && triggerEditorAction("haze.rename")) {
+        /* handled */
+      }
+      else if (mod && e.shiftKey && k === "b" && project) {
+        void startBuild(project.id, project.path, "build", defaultBuildTarget(project.id));
+      } else if (e.shiftKey && !mod && e.key === "F10" && project) {
+        const configs = runConfigs(useDotnet.getState().info[project.id]);
+        const id = useWorkspace.getState().ui[project.id]?.runConfig;
+        const cfg = configs.find((c) => c.id === id) ?? configs[0];
+        if (cfg) void runConfig(project, cfg);
+      }
       else if (mod && e.shiftKey && k === "a") openSearchEverywhere("actions");
       else if (mod && !e.shiftKey && !e.altKey && k === "e" && project) openSearchEverywhere("files", "");
       else if (mod && e.shiftKey && (k === "f" || k === "r") && project) {
@@ -183,6 +205,20 @@ export default function App() {
     };
   }, [loaded, openRoots]);
 
+  // C# support for open .NET projects: discover projects, then start Roslyn.
+  useEffect(() => {
+    if (!loaded) return;
+    const open = useWorkspace.getState().projects.filter((p) => p.open);
+    for (const p of open) {
+      void loadDotnetInfo(p.id, p.path).then((info) => {
+        if (info && info.projects.length) void startCsharp(p.id, p.path);
+      });
+    }
+    for (const id of Object.keys(useDotnet.getState().csharp)) {
+      if (!open.some((p) => p.id === id)) void stopCsharp(id);
+    }
+  }, [loaded, openRoots]);
+
   useEffect(() => {
     const un = onFsChange((change) => {
       const ws = useWorkspace.getState();
@@ -190,6 +226,12 @@ export default function App() {
       if (!project) return;
       handleFsChange(project.id, change, ws.nestFiles);
       void handleDiskChanges(change.overflow ? "all" : change.files);
+      notifyFileChanges(change);
+      if (change.overflow || change.files.some((f) => /\.(csproj|fsproj|sln|slnx)$|launchSettings\.json$/i.test(f))) {
+        void loadDotnetInfo(project.id, project.path).then((info) => {
+          if (info && info.projects.length) void startCsharp(project.id, project.path);
+        });
+      }
     });
     return () => void un.then((f) => f());
   }, []);
@@ -220,6 +262,7 @@ export default function App() {
       <StatusBar project={active} />
       <SearchEverywhere project={active} />
       <FindInFiles project={active} />
+      <UsagesPopup project={active} />
       <ContextMenu />
       <Dialogs />
       <Toasts />

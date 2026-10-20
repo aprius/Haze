@@ -10,10 +10,11 @@ import { api, errorMessage, type FileMatches, type ReplaceTarget, type SearchCon
 import { languageFor, monaco } from "../lib/monaco";
 import { basename, dirname, relative } from "../lib/path";
 import { closeFindInFiles, useUi } from "../store/ui";
+import { solutionDirs, useDotnet } from "../store/dotnet";
 import { useWorkspace, type Project } from "../store/workspace";
 import { toast } from "./Overlays";
 
-type ScopeKind = "project" | "directory" | "openFiles";
+type ScopeKind = "project" | "solution" | "directory" | "openFiles";
 
 interface FindOptions {
   query: string;
@@ -147,6 +148,7 @@ function Preview({ path, match }: { path: string | null; match: SearchMatch | nu
 export function FindInFiles({ project }: { project: Project | null }) {
   const { open, replace: replaceMode, initialQuery, directory, nonce } = useUi((s) => s.findInFiles);
   const opts = useFindOptions();
+  const hasSolution = useDotnet((s) => !!project && (s.info[project.id]?.projects.length ?? 0) > 0);
   const set = (patch: Partial<FindOptions>) => useFindOptions.setState(patch);
   const [replace, setReplace] = useState(replaceMode);
   const [results, setResults] = useState<SearchResults | null>(null);
@@ -211,7 +213,14 @@ export function FindInFiles({ project }: { project: Project | null }) {
     }
     const openTabs = Object.values(useWorkspace.getState().ui).flatMap((u) => u.tabs.map((t) => t.path));
     const scope = {
-      dirs: o.scope === "project" ? [project.path] : o.scope === "directory" ? [o.directory || project.path] : [],
+      dirs:
+        o.scope === "project"
+          ? [project.path]
+          : o.scope === "solution" && solutionDirs(project.id).length
+            ? solutionDirs(project.id)
+            : o.scope === "directory"
+              ? [o.directory || project.path]
+              : [],
       files: o.scope === "openFiles" ? [...new Set(openTabs)] : [],
       fileMask: o.fileMask.trim() || null,
       includeIgnored: o.includeIgnored,
@@ -435,9 +444,9 @@ export function FindInFiles({ project }: { project: Project | null }) {
         {error && <div className="find-error">{error}</div>}
         <div className="find-options">
           <div className="seg">
-            {(["project", "directory", "openFiles"] as ScopeKind[]).map((s) => (
+            {(["project", ...(hasSolution ? ["solution"] : []), "directory", "openFiles"] as ScopeKind[]).map((s) => (
               <button key={s} className={"seg-btn" + (opts.scope === s ? " on" : "")} onClick={() => set({ scope: s })}>
-                {s === "project" ? "In Project" : s === "directory" ? "Directory" : "Open Files"}
+                {s === "project" ? "In Project" : s === "solution" ? "Solution" : s === "directory" ? "Directory" : "Open Files"}
               </button>
             ))}
           </div>

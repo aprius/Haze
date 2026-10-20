@@ -1,6 +1,8 @@
+mod dotnet;
 mod file_index;
 mod fs_ops;
 mod git;
+mod lsp;
 mod nesting;
 pub mod pty;
 mod search;
@@ -116,6 +118,26 @@ async fn resolve_paths(cwd: String, candidates: Vec<String>) -> CmdResult<Vec<Op
     blocking(move || Ok(fs_ops::resolve_paths(cwd.as_ref(), &candidates))).await
 }
 
+#[derive(serde::Deserialize)]
+struct LinesRequest {
+    path: String,
+    lines: Vec<u32>,
+}
+
+#[tauri::command]
+async fn read_lines(requests: Vec<LinesRequest>) -> CmdResult<Vec<Vec<String>>> {
+    blocking(move || {
+        Ok(requests
+            .iter()
+            .map(|r| {
+                fs_ops::read_lines(r.path.as_ref(), &r.lines)
+                    .unwrap_or_else(|_| vec![String::new(); r.lines.len()])
+            })
+            .collect())
+    })
+    .await
+}
+
 #[tauri::command]
 async fn git_status(dir: String) -> CmdResult<git::GitStatus> {
     blocking(move || git::status(dir.as_ref())).await
@@ -229,6 +251,84 @@ async fn read_image(path: String) -> CmdResult<ImageData> {
     .await
 }
 
+// ---------------------------------------------------------------- .NET and language servers
+
+#[tauri::command]
+async fn dotnet_info(root: String) -> CmdResult<dotnet::DotnetInfo> {
+    blocking(move || Ok(dotnet::info(root.as_ref()))).await
+}
+
+#[tauri::command]
+fn build_start(
+    app: AppHandle,
+    builds: State<'_, dotnet::Builds>,
+    verb: String,
+    target: Option<String>,
+    cwd: String,
+) -> CmdResult<u64> {
+    let (verb, extra): (&str, &[&str]) = match verb.as_str() {
+        "build" | "clean" | "test" | "restore" => (verb.as_str(), &[]),
+        "rebuild" => ("build", &["--no-incremental"]),
+        other => return Err(format!("unsupported verb {other}")),
+    };
+    let sink: dotnet::BuildSink = Arc::new(move |e| {
+        let _ = app.emit("build://event", e);
+    });
+    builds
+        .start(verb, target.as_deref(), extra, cwd.as_ref(), sink)
+        .map_err(err)
+}
+
+#[tauri::command]
+fn build_cancel(builds: State<'_, dotnet::Builds>, id: u64) {
+    builds.cancel(id);
+}
+
+#[tauri::command]
+async fn lsp_find_server() -> CmdResult<Option<lsp::ServerCommand>> {
+    blocking(|| Ok(lsp::find_csharp_server())).await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartedServer {
+    id: u64,
+    kind: &'static str,
+}
+
+#[tauri::command]
+async fn lsp_start(
+    app: AppHandle,
+    servers: State<'_, Arc<lsp::LspServers>>,
+    cwd: String,
+) -> CmdResult<StartedServer> {
+    let servers = servers.inner().clone();
+    blocking(move || {
+        let cmd = lsp::find_csharp_server()
+            .ok_or_else(|| anyhow::anyhow!("no C# language server installed"))?;
+        let sink: lsp::MessageSink = Arc::new(move |e| {
+            let _ = app.emit("lsp://event", e);
+        });
+        let id = servers.start(&cmd, cwd.as_ref(), sink)?;
+        Ok(StartedServer { id, kind: cmd.kind })
+    })
+    .await
+}
+
+#[tauri::command]
+fn lsp_send(
+    servers: State<'_, Arc<lsp::LspServers>>,
+    id: u64,
+    message: serde_json::Value,
+) -> CmdResult<()> {
+    servers.send(id, &message).map_err(err)
+}
+
+#[tauri::command]
+fn lsp_stop(servers: State<'_, Arc<lsp::LspServers>>, id: u64) {
+    servers.stop(id);
+}
+
 // ---------------------------------------------------------------- terminals
 
 struct Pty(Arc<PtyClient>);
@@ -311,6 +411,8 @@ pub fn run() {
         .manage(Arc::new(file_index::FileIndex::default()))
         .manage(Arc::new(search::ReplaceHistory::default()))
         .manage(SearchGeneration::default())
+        .manage(Arc::new(lsp::LspServers::default()))
+        .manage(dotnet::Builds::default())
         .setup(|app| {
             let handle = app.handle().clone();
             let client = PtyClient::new(Arc::new(move |ev| forward_pty_event(&handle, ev)));
@@ -330,6 +432,7 @@ pub fn run() {
             copy_paths,
             move_paths,
             resolve_paths,
+            read_lines,
             git_status,
             watch_project,
             unwatch_project,
@@ -338,6 +441,13 @@ pub fn run() {
             undo_replace,
             find_files,
             read_image,
+            dotnet_info,
+            build_start,
+            build_cancel,
+            lsp_find_server,
+            lsp_start,
+            lsp_send,
+            lsp_stop,
             pty_list,
             pty_create,
             pty_attach,
@@ -346,6 +456,12 @@ pub fn run() {
             pty_resize,
             pty_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Haze");
+        .build(tauri::generate_context!())
+        .expect("error while building Haze")
+        .run(|app, event| {
+            // Language servers are children of this window process; stop them with it.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<Arc<lsp::LspServers>>().stop_all();
+            }
+        });
 }

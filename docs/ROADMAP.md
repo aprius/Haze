@@ -14,12 +14,14 @@ Thanh project, cây file (git status, lồng file, thao tác đầy đủ, kéo 
 
 Còn để sau: Structural Search & Replace (ast-grep), phạm vi "Solution" (cần đọc `.sln`, làm cùng giai đoạn 3), lọc ngữ cảnh cho ngôn ngữ khác C#.
 
-## 3. C#
+## 3. C# — xong
 
-- Roslyn Language Server (`Microsoft.CodeAnalysis.LanguageServer`), dự phòng `csharp-ls`. Monaco 0.5x đã có sẵn LSP client.
-- Go to Definition (Ctrl+B / F12), Find Usages (Alt+F7), Rename (Shift+F6), Go to Symbol, Go to Implementation.
-- **Mặc định tắt diagnostics của language server**; bảng lỗi lấy từ `dotnet build` thật (MSBuild output), nên không có lỗi "ảo".
-- Run/Debug configuration đọc từ `.sln`/`.slnx`, `.csproj`, `launchSettings.json` → `dotnet build/test/run` trong terminal riêng.
+- Roslyn Language Server (`roslyn-language-server` trên nuget.org, chạy `--stdio --autoLoadProjects`), dự phòng `csharp-ls`; client LSP tự viết, đồng bộ tăng dần nội dung editor, báo file đổi trên đĩa.
+- Go to Definition (Ctrl+B), Find Usages (Alt+F7), Go to Implementation (Ctrl+Alt+B), Rename (Shift+F6) qua nhiều file có Undo, Alt+Enter (code action của Roslyn), hover, completion, signature help, document highlight, File Structure (Ctrl+F12), format (Ctrl+Alt+L), tab Symbols trong Double Shift.
+- Không lấy diagnostics từ language server; lỗi lấy từ `dotnet build` (panel Build + vạch đỏ trong editor).
+- Run configuration từ `launchSettings.json`, `dotnet test`; phạm vi "Solution" trong Find in Files.
+
+Còn để sau: debug (cần DAP, ví dụ netcoredbg), semantic highlighting, inlay hints, đổi tên file khi đổi tên class.
 
 ## 4. Git kiểu Rebased
 

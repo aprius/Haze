@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use notify::event::{AccessKind, AccessMode};
+use notify::event::{AccessKind, AccessMode, ModifyKind, RenameMode};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -22,8 +22,12 @@ pub struct FsChange {
     pub root: String,
     /// Directories whose listing may have changed.
     pub dirs: Vec<String>,
-    /// Files whose content may have changed.
+    /// Files whose content may have changed (includes created/removed ones).
     pub files: Vec<String>,
+    /// Paths that appeared (created, or renamed to).
+    pub created: Vec<String>,
+    /// Paths that disappeared (deleted, or renamed from).
+    pub removed: Vec<String>,
     pub overflow: bool,
     /// Git metadata (index, HEAD, refs) changed.
     pub git: bool,
@@ -77,6 +81,8 @@ fn debounce_loop(
         }
         let mut dirs = HashSet::new();
         let mut files = HashSet::new();
+        let mut created = HashSet::new();
+        let mut removed = HashSet::new();
         let mut git = false;
         let mut overflow = false;
         for ev in batch {
@@ -90,7 +96,8 @@ fn debounce_loop(
             if !changes_content(&ev.kind) {
                 continue;
             }
-            for p in ev.paths {
+            let n = ev.paths.len();
+            for (i, p) in ev.paths.into_iter().enumerate() {
                 match classify(&root_path, &p) {
                     Kind::Git => git = true,
                     Kind::GitInternal => {}
@@ -98,7 +105,19 @@ fn debounce_loop(
                         if let Some(parent) = p.parent() {
                             dirs.insert(parent.to_string_lossy().into_owned());
                         }
-                        files.insert(p.to_string_lossy().into_owned());
+                        let key = p.to_string_lossy().into_owned();
+                        match lifecycle(&ev.kind, i, n) {
+                            Some(true) => {
+                                removed.remove(&key);
+                                created.insert(key.clone());
+                            }
+                            Some(false) => {
+                                created.remove(&key);
+                                removed.insert(key.clone());
+                            }
+                            None => {}
+                        }
+                        files.insert(key);
                     }
                 }
             }
@@ -115,6 +134,16 @@ fn debounce_loop(
                 vec![]
             } else {
                 dirs.into_iter().collect()
+            },
+            created: if overflow {
+                vec![]
+            } else {
+                created.into_iter().collect()
+            },
+            removed: if overflow {
+                vec![]
+            } else {
+                removed.into_iter().collect()
             },
             files: if overflow {
                 vec![]
@@ -135,6 +164,19 @@ fn changes_content(kind: &EventKind) -> bool {
         EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
         EventKind::Access(_) => false,
         _ => true,
+    }
+}
+
+/// `Some(true)` when the path appeared, `Some(false)` when it went away.
+fn lifecycle(kind: &EventKind, index: usize, count: usize) -> Option<bool> {
+    match kind {
+        EventKind::Create(_) => Some(true),
+        EventKind::Remove(_) => Some(false),
+        EventKind::Modify(ModifyKind::Name(RenameMode::From)) => Some(false),
+        EventKind::Modify(ModifyKind::Name(RenameMode::To)) => Some(true),
+        // Both paths in one event: [from, to].
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if count == 2 => Some(index == 1),
+        _ => None,
     }
 }
 
