@@ -1,0 +1,385 @@
+//! The detached PTY host process.
+
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Sender};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result};
+use base64::Engine;
+use interprocess::local_socket::{prelude::*, ListenerOptions, Stream};
+use parking_lot::Mutex;
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+
+use super::protocol::*;
+use super::{now_ms, socket_name};
+
+/// Output kept per session for replay after reattaching.
+const SCROLLBACK_BYTES: usize = 4 * 1024 * 1024;
+/// The host exits after this long with no clients and no running session.
+const IDLE_EXIT: Duration = Duration::from_secs(60);
+
+type ClientId = u64;
+
+struct Session {
+    info: SessionInfo,
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    killer: Box<dyn ChildKiller + Send + Sync>,
+    scrollback: Scrollback,
+    subscribers: HashSet<ClientId>,
+}
+
+#[derive(Default)]
+pub(crate) struct Scrollback {
+    buf: VecDeque<u8>,
+}
+
+impl Scrollback {
+    pub(crate) fn push(&mut self, data: &[u8]) {
+        self.buf.extend(data);
+        if self.buf.len() > SCROLLBACK_BYTES {
+            let mut cut = self.buf.len() - SCROLLBACK_BYTES;
+            // Prefer to cut right after a newline so replay starts on a clean line.
+            if let Some(nl) = self
+                .buf
+                .range(cut..)
+                .take(64 * 1024)
+                .position(|&b| b == b'\n')
+            {
+                cut += nl + 1;
+            }
+            self.buf.drain(..cut);
+        }
+    }
+
+    pub(crate) fn bytes(&self) -> Vec<u8> {
+        self.buf.iter().copied().collect()
+    }
+}
+
+#[derive(Default)]
+struct Host {
+    sessions: Mutex<HashMap<String, Arc<Mutex<Session>>>>,
+    clients: Mutex<HashMap<ClientId, Sender<ServerMsg>>>,
+    last_activity: Mutex<Option<Instant>>,
+}
+
+fn b64(data: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(data)
+}
+
+/// Entry point for `haze --pty-host`.
+pub fn run() -> Result<()> {
+    let name = socket_name()?;
+    // Another live host owns the socket: nothing to do.
+    if Stream::connect(name.clone()).is_ok() {
+        return Ok(());
+    }
+    let listener = ListenerOptions::new()
+        .name(name)
+        .try_overwrite(true)
+        .create_sync()
+        .context("binding PTY host socket")?;
+
+    let host = Arc::new(Host::default());
+    *host.last_activity.lock() = Some(Instant::now());
+    spawn_idle_watchdog(host.clone());
+
+    let next_client = AtomicU64::new(1);
+    for conn in listener.incoming() {
+        let Ok(conn) = conn else { continue };
+        let id = next_client.fetch_add(1, Ordering::Relaxed);
+        let host = host.clone();
+        thread::spawn(move || serve_client(host, id, conn));
+    }
+    Ok(())
+}
+
+fn spawn_idle_watchdog(host: Arc<Host>) {
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(5));
+        let busy = !host.clients.lock().is_empty()
+            || host.sessions.lock().values().any(|s| s.lock().info.running);
+        let mut last = host.last_activity.lock();
+        if busy {
+            *last = Some(Instant::now());
+        } else if last.map(|t| t.elapsed() > IDLE_EXIT).unwrap_or(true) {
+            #[cfg(not(windows))]
+            if let Ok(path) = super::socket_path() {
+                let _ = std::fs::remove_file(path);
+            }
+            std::process::exit(0);
+        }
+    });
+}
+
+fn serve_client(host: Arc<Host>, client: ClientId, conn: Stream) {
+    let conn = Arc::new(conn);
+    let (tx, rx) = mpsc::channel::<ServerMsg>();
+    host.clients.lock().insert(client, tx.clone());
+
+    let writer_conn = conn.clone();
+    let writer = thread::spawn(move || {
+        let mut w = &*writer_conn;
+        for msg in rx {
+            if write_frame(&mut w, &msg).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut r = &*conn;
+    while let Ok(Some(msg)) = read_frame::<_, ClientMsg>(&mut r) {
+        let reply = handle(&host, client, msg.body);
+        if msg.req != 0 {
+            let _ = tx.send(ServerMsg::Reply {
+                req: msg.req,
+                body: reply,
+            });
+        }
+    }
+
+    host.clients.lock().remove(&client);
+    for s in host.sessions.lock().values() {
+        s.lock().subscribers.remove(&client);
+    }
+    drop(tx);
+    let _ = writer.join();
+}
+
+fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
+    let result = match req {
+        Request::Hello { .. } => {
+            return Reply::Hello {
+                version: PROTOCOL_VERSION,
+                pid: std::process::id(),
+            }
+        }
+        Request::List => {
+            let mut sessions: Vec<SessionInfo> = host
+                .sessions
+                .lock()
+                .values()
+                .map(|s| s.lock().info.clone())
+                .collect();
+            sessions.sort_by_key(|s| s.created_at);
+            return Reply::Sessions { sessions };
+        }
+        Request::Create { spec } => match create(host, spec) {
+            Ok(session) => return Reply::Created { session },
+            Err(e) => Err(e),
+        },
+        Request::Attach { id } => with_session(host, &id, |s| {
+            // Snapshot and subscription happen under the session lock, so the
+            // reader thread cannot slip output in between them.
+            let snapshot = ServerMsg::Event {
+                body: Event::Snapshot {
+                    id: id.clone(),
+                    data: b64(&s.scrollback.bytes()),
+                },
+            };
+            if let Some(tx) = host.clients.lock().get(&client) {
+                let _ = tx.send(snapshot);
+                if !s.info.running {
+                    let _ = tx.send(ServerMsg::Event {
+                        body: Event::Exit {
+                            id: id.clone(),
+                            code: s.info.exit_code,
+                        },
+                    });
+                }
+            }
+            s.subscribers.insert(client);
+            Ok(())
+        }),
+        Request::Detach { id } => with_session(host, &id, |s| {
+            s.subscribers.remove(&client);
+            Ok(())
+        }),
+        Request::Write { id, data } => with_session(host, &id, |s| {
+            s.writer.write_all(data.as_bytes())?;
+            s.writer.flush()?;
+            Ok(())
+        }),
+        Request::Resize { id, cols, rows } => with_session(host, &id, |s| {
+            s.master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })?;
+            Ok(())
+        }),
+        Request::Close { id } => {
+            if let Some(s) = host.sessions.lock().remove(&id) {
+                let mut s = s.lock();
+                if s.info.running {
+                    let _ = s.killer.kill();
+                }
+            }
+            Ok(())
+        }
+    };
+    match result {
+        Ok(()) => Reply::Ok,
+        Err(e) => Reply::Error {
+            message: format!("{e:#}"),
+        },
+    }
+}
+
+fn with_session(host: &Host, id: &str, f: impl FnOnce(&mut Session) -> Result<()>) -> Result<()> {
+    let session = host.sessions.lock().get(id).cloned();
+    let session = session.with_context(|| format!("no terminal session {id}"))?;
+    let mut s = session.lock();
+    f(&mut s)
+}
+
+fn build_command(spec: &SessionSpec, id: &str) -> CommandBuilder {
+    let mut cmd = match &spec.command {
+        Some(argv) if !argv.is_empty() => {
+            let mut c = CommandBuilder::new(&argv[0]);
+            c.args(&argv[1..]);
+            c
+        }
+        _ => default_shell(),
+    };
+    cmd.cwd(&spec.cwd);
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "Haze");
+    cmd.env("HAZE_TERMINAL_ID", id);
+    for (k, v) in &spec.env {
+        cmd.env(k, v);
+    }
+    cmd
+}
+
+#[cfg(windows)]
+fn default_shell() -> CommandBuilder {
+    let has = |exe: &str| {
+        std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).any(|d| d.join(exe).is_file()))
+            .unwrap_or(false)
+    };
+    if has("pwsh.exe") {
+        CommandBuilder::new("pwsh.exe")
+    } else {
+        CommandBuilder::new("powershell.exe")
+    }
+}
+
+#[cfg(not(windows))]
+fn default_shell() -> CommandBuilder {
+    // Starts the user's login shell, like a terminal emulator would.
+    CommandBuilder::new_default_prog()
+}
+
+fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let pair = native_pty_system().openpty(PtySize {
+        rows: spec.rows.max(1),
+        cols: spec.cols.max(1),
+        pixel_width: 0,
+        pixel_height: 0,
+    })?;
+    let cmd = build_command(&spec, &id);
+    let mut child = pair.slave.spawn_command(cmd).context("starting shell")?;
+    drop(pair.slave);
+
+    let title = spec.title.clone().unwrap_or_else(|| match &spec.command {
+        Some(argv) if !argv.is_empty() => argv.join(" "),
+        _ => "Terminal".into(),
+    });
+    let info = SessionInfo {
+        id: id.clone(),
+        project_id: spec.project_id.clone(),
+        cwd: spec.cwd.clone(),
+        title,
+        pid: child.process_id(),
+        created_at: now_ms(),
+        running: true,
+        exit_code: None,
+    };
+    let mut reader = pair.master.try_clone_reader()?;
+    let session = Arc::new(Mutex::new(Session {
+        info: info.clone(),
+        writer: pair.master.take_writer()?,
+        master: pair.master,
+        killer: child.clone_killer(),
+        scrollback: Scrollback::default(),
+        subscribers: HashSet::new(),
+    }));
+    host.sessions.lock().insert(id.clone(), session.clone());
+
+    let out_host = host.clone();
+    let out_session = session.clone();
+    let out_id = id.clone();
+    thread::spawn(move || {
+        let mut buf = [0u8; 32 * 1024];
+        loop {
+            let n = match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            let chunk = &buf[..n];
+            let mut s = out_session.lock();
+            s.scrollback.push(chunk);
+            broadcast(
+                &out_host,
+                &s.subscribers,
+                Event::Output {
+                    id: out_id.clone(),
+                    data: b64(chunk),
+                },
+            );
+        }
+    });
+
+    let exit_host = host.clone();
+    thread::spawn(move || {
+        let code = child.wait().ok().map(|status| status.exit_code());
+        let mut s = session.lock();
+        s.info.running = false;
+        s.info.exit_code = code;
+        broadcast(&exit_host, &s.subscribers, Event::Exit { id, code });
+    });
+
+    Ok(info)
+}
+
+fn broadcast(host: &Host, subscribers: &HashSet<ClientId>, event: Event) {
+    let clients = host.clients.lock();
+    for c in subscribers {
+        if let Some(tx) = clients.get(c) {
+            let _ = tx.send(ServerMsg::Event {
+                body: event.clone(),
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrollback_is_bounded_and_cuts_at_newline() {
+        let mut sb = Scrollback::default();
+        let line = vec![b'x'; 1023]
+            .into_iter()
+            .chain(*b"\n")
+            .collect::<Vec<_>>();
+        for _ in 0..(SCROLLBACK_BYTES / 1024 + 10) {
+            sb.push(&line);
+        }
+        let bytes = sb.bytes();
+        assert!(bytes.len() <= SCROLLBACK_BYTES);
+        assert_eq!(bytes[0], b'x');
+        assert_eq!(bytes.len() % 1024, 0);
+    }
+}
