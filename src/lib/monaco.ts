@@ -102,8 +102,23 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
 defineMonokai("haze-dark", "vs-dark", MONOKAI.dark);
 defineMonokai("haze-light", "vs", MONOKAI.light);
 
+// Comments are dim by design, too dim on a diff block's tint. Token classes
+// are numbered from the theme's colour map, so look up the comment's class
+// and let a diff block lift it (`.rd-text` in DiffView, `--diff-comment`).
+const diffCommentStyle = document.head.appendChild(document.createElement("style"));
+const markComment = () =>
+  void monaco.editor.colorize("// c", "javascript", {}).then((html) => {
+    const cls = /class="(mtk\d+)/.exec(html)?.[1];
+    diffCommentStyle.textContent = cls ? `.monaco-editor .rd-text.${cls} { color: var(--diff-comment); }` : "";
+  });
+
 // Theme names are global in Monaco: one setTheme repaints every editor.
-useTheme.subscribe((s) => monaco.editor.setTheme(monacoTheme(s.mode)));
+monaco.editor.setTheme(monacoTheme());
+markComment();
+useTheme.subscribe((s) => {
+  monaco.editor.setTheme(monacoTheme(s.mode));
+  markComment();
+});
 
 /** Font options for a new editor; open editors follow later changes below. */
 export const codeFontOptions = () => {

@@ -32,6 +32,8 @@
   --diff-tint: 14%;
   --diff-word: 28%;
   --diff-edge: 55%;
+  /* Comments inside a diff block: the theme's comment grey is too faint on the tint. */
+  --diff-comment: #706b6e;
   /* Same as editorLineNumber in src/lib/monaco.ts, for the diff's own left gutter. */
   --line-number: #bfb9ba;
   --line-number-active: #706b6e;
@@ -70,6 +72,7 @@
   --diff-tint: 15%;
   --diff-word: 30%;
   --diff-edge: 60%;
+  --diff-comment: #c1c0c0;
   --line-number: #5b595c;
   --line-number-active: #c1c0c0;
   color-scheme: dark;

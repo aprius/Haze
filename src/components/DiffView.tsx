@@ -236,7 +236,11 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
         options: { isWholeLine: true, className: cls, marginClassName: cls },
       });
       const lineDeco = (ed: monaco.editor.ICodeEditor, kind: ChunkKind, s: number, e: number): monaco.editor.IModelDeltaDecoration[] => {
-        if (s < e) return [whole(s + 1, e, `rd-line rd-${kind}`), whole(s + 1, s + 1, `rd-top rd-${kind}`), whole(e, e, `rd-bottom rd-${kind}`)];
+        if (s < e) {
+          // `rd-text` marks the block's text, so dim tokens (comments) can be lifted off the tint.
+          const text = { range: new monaco.Range(s + 1, 1, e, ed.getModel()?.getLineMaxColumn(e) ?? 1), options: { inlineClassName: "rd-text" } };
+          return [whole(s + 1, e, `rd-line rd-${kind}`), whole(s + 1, s + 1, `rd-top rd-${kind}`), whole(e, e, `rd-bottom rd-${kind}`), text];
+        }
         // Empty side: a thin line where the other side's block belongs.
         const lines = ed.getModel()?.getLineCount() ?? 1;
         return s >= 1 ? [whole(Math.min(s, lines), Math.min(s, lines), `rd-bottom rd-${kind}`)] : [whole(1, 1, `rd-top rd-${kind}`)];
