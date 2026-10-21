@@ -92,7 +92,7 @@ export function RunBar({ project }: { project: Project }) {
         {target ? basename(target) : project.name}
       </span>
       {label.text && (
-        <span className={"csharp-status " + label.tone} title={csharp?.kind ? `Language server: ${csharp.kind}` : undefined}>
+        <span className={"csharp-status " + label.tone} title={[csharp?.kind && `Language server: ${csharp.kind}`, csharp?.message].filter(Boolean).join("\n") || undefined}>
           {label.text}
           {csharp?.state === "missing" && (
             <button
