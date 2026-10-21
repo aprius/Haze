@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use regex::Regex;
 use serde::Serialize;
 
-use crate::search::walker;
+use crate::search::SKIPPED_DIRS;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -156,11 +156,27 @@ pub fn dotnet_command() -> Command {
     cmd
 }
 
+/// Unity's caches and build output: large, and never hold the user's projects.
+const UNITY_GENERATED_DIRS: &[&str] =
+    &["Library", "Temp", "Logs", "Build", "Builds", "UserSettings"];
+
 pub fn info(root: &Path) -> DotnetInfo {
     let mut solutions = Vec::new();
     let mut loose_projects = Vec::new();
-    let mut w = walker(root, false);
-    w.max_depth(Some(6));
+    // Not filtered by .gitignore: Unity (and others) generate the .sln and
+    // .csproj files and ignore them in git, yet they are the projects.
+    let unity = root.join("ProjectSettings").is_dir();
+    let mut w = ignore::WalkBuilder::new(root);
+    w.standard_filters(false)
+        .max_depth(Some(6))
+        .filter_entry(move |e| {
+            if !e.file_type().is_some_and(|t| t.is_dir()) || e.depth() == 0 {
+                return true;
+            }
+            let name = e.file_name().to_string_lossy();
+            !SKIPPED_DIRS.contains(&name.as_ref())
+                && !(unity && e.depth() == 1 && UNITY_GENERATED_DIRS.contains(&name.as_ref()))
+        });
     for e in w.build().flatten() {
         let p = e.path();
         let ext = p
@@ -429,6 +445,27 @@ mod tests {
         );
         assert!(info.projects[1].is_test);
         assert!(info.projects[0].runnable && !info.projects[1].runnable);
+    }
+
+    #[test]
+    fn finds_git_ignored_unity_projects() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("ProjectSettings")).unwrap();
+        std::fs::create_dir_all(root.join("Library/PackageCache/x")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.csproj\n*.sln\n").unwrap();
+        std::fs::write(root.join("Assembly-CSharp.csproj"), "<Project/>").unwrap();
+        std::fs::write(root.join("Library/PackageCache/x/X.csproj"), "<Project/>").unwrap();
+        std::fs::write(
+            root.join("Game.sln"),
+            "Project(\"{FAE04EC0}\") = \"Assembly-CSharp\", \"Assembly-CSharp.csproj\", \"{1}\"\nEndProject\n",
+        )
+        .unwrap();
+        let info = info(root);
+        assert_eq!(info.solutions.len(), 1);
+        let names: Vec<_> = info.projects.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["Assembly-CSharp"]);
     }
 
     /// Builds a broken library with the real SDK (skipped when `dotnet` is missing).
