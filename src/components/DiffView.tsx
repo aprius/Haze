@@ -64,6 +64,9 @@ const GAP = 24;
 const ICON = 16;
 const ARROW =
   '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 4.5 12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// Shown instead while Ctrl is held: append the left lines below the right block.
+const ARROW_DOWN =
+  '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M4 4l7.5 7.5M11.5 6v5.5H6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 /**
  * Rider-style diff: two plain editors (no filler lines), curved connectors
@@ -164,7 +167,11 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
         }
         if (editable) {
           const at = boundaryY(left, Math.min(c.a0 + 1, model.getLineCount()) - 1);
-          html += `<button class="rd-apply" data-chunk="${i}" title="Revert" style="top:${at + (line - ICON) / 2}px">${ARROW}</button>`;
+          // Like IntelliJ, Ctrl turns the icon of a modified block into Append.
+          const append = ctrl && kind === "modified";
+          html +=
+            `<button class="rd-apply" data-chunk="${i}"${append ? " data-append" : ""} title="${append ? "Append" : "Revert (Ctrl: Append)"}" ` +
+            `style="top:${at + (line - ICON) / 2}px">${append ? ARROW_DOWN : ARROW}</button>`;
         }
       });
       const caret = left.getPosition()?.lineNumber;
@@ -269,6 +276,19 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     }
 
     let first = true;
+    // IntelliJ tracks the Ctrl key itself (also on macOS), not Cmd.
+    let ctrl = false;
+    const modifiers = (e: KeyboardEvent | FocusEvent) => {
+      const now = e instanceof KeyboardEvent && e.ctrlKey;
+      if (now !== ctrl) {
+        ctrl = now;
+        redraw();
+      }
+    };
+    window.addEventListener("keydown", modifiers);
+    window.addEventListener("keyup", modifiers);
+    window.addEventListener("blur", modifiers);
+
     const subs = [
       left.onDidScrollChange(follow(left, right, true)),
       right.onDidScrollChange(follow(right, left, false)),
@@ -314,6 +334,9 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       cancelled = true;
       cancelAnimationFrame(frame);
       gutterEl.removeEventListener("wheel", wheel);
+      window.removeEventListener("keydown", modifiers);
+      window.removeEventListener("keyup", modifiers);
+      window.removeEventListener("blur", modifiers);
       gapEl.removeEventListener("wheel", wheel);
       subs.forEach((s) => s.dispose());
       differ.dispose();
@@ -345,8 +368,9 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     if (i >= 0) goTo(i);
   }
 
-  // Replace the right side of a block with the left side's lines (one undo step).
-  function apply(i: number) {
+  // Replace the right side of a block with the left side's lines, or with
+  // `append` insert them below it, keeping the right lines (one undo step).
+  function apply(i: number, append = false) {
     const s = sides.current;
     const c = chunks.current[i];
     const from = s?.left.getModel();
@@ -354,25 +378,27 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     if (!s || !c || !from || !to) return;
     const eol = to.getEOL();
     const text = c.a0 < c.a1 ? from.getValueInRange(new monaco.Range(c.a0 + 1, 1, c.a1, from.getLineMaxColumn(c.a1))) : null;
+    if (append && text === null) return;
     const n = to.getLineCount();
+    const b0 = append ? c.b1 : c.b0;
     let range: monaco.Range;
     let insert: string;
-    if (c.b0 < c.b1) {
+    if (b0 < c.b1) {
       if (text !== null) {
-        range = new monaco.Range(c.b0 + 1, 1, c.b1, to.getLineMaxColumn(c.b1));
+        range = new monaco.Range(b0 + 1, 1, c.b1, to.getLineMaxColumn(c.b1));
         insert = text;
       } else if (c.b1 < n) {
-        range = new monaco.Range(c.b0 + 1, 1, c.b1 + 1, 1);
+        range = new monaco.Range(b0 + 1, 1, c.b1 + 1, 1);
         insert = "";
       } else {
         // Removing the last lines also removes the line break before them.
-        range = c.b0 > 0 ? new monaco.Range(c.b0, to.getLineMaxColumn(c.b0), n, to.getLineMaxColumn(n)) : to.getFullModelRange();
+        range = b0 > 0 ? new monaco.Range(b0, to.getLineMaxColumn(b0), n, to.getLineMaxColumn(n)) : to.getFullModelRange();
         insert = "";
       }
     } else {
       if (text === null) return;
-      if (c.b0 < n) {
-        range = new monaco.Range(c.b0 + 1, 1, c.b0 + 1, 1);
+      if (b0 < n) {
+        range = new monaco.Range(b0 + 1, 1, b0 + 1, 1);
         insert = text + eol;
       } else {
         range = new monaco.Range(n, to.getLineMaxColumn(n), n, to.getLineMaxColumn(n));
@@ -406,7 +432,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
           onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
             const b = (e.target as HTMLElement).closest<HTMLElement>("[data-chunk]");
-            if (b) apply(Number(b.dataset.chunk));
+            if (b) apply(Number(b.dataset.chunk), b.dataset.append !== undefined);
           }}
         />
         <div ref={gap} className="diff-gap" style={{ width: GAP }} />
