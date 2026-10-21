@@ -39,8 +39,9 @@ const USAGE: &str = "Usage:
 
 /// `argv[1]` is a subcommand, not a folder or file of that name.
 pub fn is_subcommand(argv: &[String], cwd: &Path) -> bool {
-    argv.get(1)
-        .is_some_and(|a| COMMANDS.contains(&a.as_str()) && !cwd.join(a).exists())
+    argv.get(1).is_some_and(|a| {
+        a == "--help" || a == "-h" || (COMMANDS.contains(&a.as_str()) && !cwd.join(a).exists())
+    })
 }
 
 /// Runs a subcommand; returns the process exit code.
@@ -167,6 +168,9 @@ fn start(args: &[String], agent: bool) -> Result<i32> {
         o.title.get_or_insert_with(|| name.clone());
         agent_command(&name, prompt.as_deref())
     } else {
+        if !o.words.is_empty() {
+            o.title.get_or_insert_with(|| o.words.join(" "));
+        }
         o.words.clone()
     };
     let cwd = std::env::current_dir()?;
@@ -258,11 +262,23 @@ fn worktree(dir: &Path, branch: &str, from: Option<&str>) -> Result<PathBuf> {
         return Ok(path);
     }
     let p = path.to_string_lossy().into_owned();
-    let mut new_branch = vec!["worktree", "add", "-b", branch, &p];
-    new_branch.extend(from);
-    if git(Path::new(&root), &new_branch).is_err() {
-        // The branch exists already: check it out there.
-        git(Path::new(&root), &["worktree", "add", &p, branch])?;
+    let root = Path::new(&root);
+    let exists = git(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_ok();
+    if exists {
+        git(root, &["worktree", "add", &p, branch])?;
+    } else {
+        let mut args = vec!["worktree", "add", "-b", branch, &p];
+        args.extend(from);
+        git(root, &args)?;
     }
     eprintln!("haze: created worktree {p} ({branch})");
     Ok(path)
@@ -545,6 +561,7 @@ mod tests {
     fn tells_subcommands_from_folders() {
         let dir = tempfile::tempdir().unwrap();
         assert!(is_subcommand(&s(&["haze", "agent", "claude"]), dir.path()));
+        assert!(is_subcommand(&s(&["haze", "--help"]), dir.path()));
         assert!(!is_subcommand(&s(&["haze", "src"]), dir.path()));
         std::fs::create_dir(dir.path().join("run")).unwrap();
         assert!(!is_subcommand(&s(&["haze", "run"]), dir.path()));

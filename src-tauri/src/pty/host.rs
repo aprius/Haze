@@ -14,7 +14,7 @@ use interprocess::local_socket::{prelude::*, ListenerOptions, Stream};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 
-use super::osc::{OscScanner, Signal};
+use super::osc::{next_status, OscScanner, Signal};
 use super::protocol::*;
 use super::{now_ms, socket_name};
 
@@ -41,6 +41,8 @@ struct Session {
     osc: OscScanner,
     /// The agent state came from a hook; then the output's sequences are ignored.
     agent_from_hook: bool,
+    /// Foreground process group when the output last named the agent (Unix).
+    osc_group: Option<i32>,
 }
 
 #[derive(Default)]
@@ -253,18 +255,19 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
     }
 }
 
-/// Sets a session's agent state and tells every client: a tab not attached
-/// right now still shows it.
+/// Sets a session's agent state and, when it changed, tells every client: a
+/// tab not attached right now still shows it. A repeated state is still
+/// kept, with its time: `haze wait` looks for one reported after it started.
 fn set_agent(host: &Host, id: &str, s: &mut Session, status: Option<AgentStatus>) {
-    if s.info
-        .agent
-        .as_ref()
-        .map(|a| (&a.agent, &a.state, &a.message))
-        == status.as_ref().map(|a| (&a.agent, &a.state, &a.message))
-    {
+    let key = |a: &Option<AgentStatus>| {
+        a.as_ref()
+            .map(|a| (a.agent.clone(), a.state.clone(), a.message.clone()))
+    };
+    let changed = key(&s.info.agent) != key(&status);
+    s.info.agent = status.clone();
+    if !changed {
         return;
     }
-    s.info.agent = status.clone();
     for tx in host.clients.lock().values() {
         let _ = tx.send(ServerMsg::Event {
             body: Event::Agent {
@@ -276,38 +279,36 @@ fn set_agent(host: &Host, id: &str, s: &mut Session, status: Option<AgentStatus>
 }
 
 /// Applies what the output's escape sequences say, unless a hook reports
-/// this terminal's agent (hooks know better).
+/// this terminal's agent (hooks know better). Haze's sequence always counts;
+/// a notification counts when it names an agent; otherwise notifications and
+/// progress bars only update the agent the output named, while that program
+/// is still in front: `dotnet build` run after the agent exited draws a
+/// progress bar too.
 fn apply_signals(host: &Host, id: &str, s: &mut Session, signals: Vec<Signal>) {
     for signal in signals {
         if s.agent_from_hook {
             return;
         }
-        let cur = s.info.agent.clone();
-        let next = match signal {
-            Signal::Clear => None,
-            Signal::ProgressEnd => match cur {
-                Some(a) if a.state == "working" => Some(AgentStatus {
-                    state: "done".into(),
-                    message: None,
-                    at: now_ms(),
-                    ..a
-                }),
-                _ => continue,
-            },
-            Signal::State {
-                state,
-                agent,
-                message,
-            } => Some(AgentStatus {
-                agent: agent
-                    .or(cur.map(|a| a.agent))
-                    .unwrap_or_else(|| "agent".into()),
-                state: state.into(),
-                message,
-                at: now_ms(),
-            }),
+        let group = foreground_group(s);
+        let known = s.info.agent.clone().filter(|_| s.osc_group == group);
+        let Some(next) = next_status(signal, known, now_ms()) else {
+            continue;
         };
+        s.osc_group = group;
         set_agent(host, id, s, next);
+    }
+}
+
+/// The program in front of the terminal, as its process group (Unix only).
+fn foreground_group(s: &Session) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        s.master.process_group_leader()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = s;
+        None
     }
 }
 
@@ -436,6 +437,7 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
         subscribers: HashSet::new(),
         osc: OscScanner::default(),
         agent_from_hook: false,
+        osc_group: None,
     }));
     host.sessions.lock().insert(id.clone(), session.clone());
 

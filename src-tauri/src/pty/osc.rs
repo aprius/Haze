@@ -1,29 +1,83 @@
 //! Agent state from the escape sequences agents print, so a terminal shows
 //! it without any hook installed:
 //!
-//! - `OSC 9 ; 4 ; <st> ; <pr>` progress (ConEmu / Windows Terminal, which
-//!   some agents print for a progress bar): 1 or 3 = working, 2 = error,
-//!   0 = cleared (done if it was working).
-//! - `OSC 9 ; <text>` (iTerm2) and `OSC 777 ; notify ; <title> ; <body>`
-//!   notifications: waiting when they ask for a permission or approval, else done.
 //! - `OSC 6973 ; <state> [; <agent> [; <message>]]`, Haze's own, for any tool
 //!   or script: state is idle, working, waiting, done, error or clear.
+//! - `OSC 9 ; <text>` (iTerm2) and `OSC 777 ; notify ; <title> ; <body>`
+//!   notifications: waiting when they ask for a permission or approval, else
+//!   done.
+//! - `OSC 9 ; 4 ; <st> ; <pr>` progress (ConEmu / Windows Terminal): 1 or 3 =
+//!   working, 2 = error, 0 = cleared (done if it was working).
+//!
+//! Notifications and progress bars also come from other programs (`dotnet
+//! build`'s terminal logger draws one), so the host only lets them update an
+//! agent it already knows of (see `next_status`).
 //!
 //! Sequences end with BEL or ST (`ESC \`) and may be split across reads.
+
+use super::protocol::AgentStatus;
 
 /// What a sequence says about the agent.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Signal {
-    /// A state, from an agent named by the sequence if it says.
-    State {
+    /// Haze's own sequence: a state, from an agent it may name.
+    Haze {
         state: &'static str,
         agent: Option<String>,
         message: Option<String>,
     },
-    /// Progress cleared: done, if the agent was working.
-    ProgressEnd,
     /// Haze's sequence asked to clear the agent.
     Clear,
+    /// A desktop notification; `agent` when it names a known one.
+    Notification {
+        state: &'static str,
+        agent: Option<String>,
+        message: Option<String>,
+    },
+    /// A progress bar running (working) or failed (error).
+    Progress(&'static str),
+    /// Progress cleared: done, if the agent was working.
+    ProgressEnd,
+}
+
+/// The agent state after `signal`, given the agent the output named while
+/// the same program is in front (`known`); `None` when the signal changes
+/// nothing (it cannot be told from another program's).
+pub fn next_status(
+    signal: Signal,
+    known: Option<AgentStatus>,
+    at: u64,
+) -> Option<Option<AgentStatus>> {
+    let status = |agent: String, state: &str, message: Option<String>| AgentStatus {
+        agent,
+        state: state.into(),
+        message,
+        at,
+    };
+    Some(match signal {
+        Signal::Clear => None,
+        Signal::Haze {
+            state,
+            agent,
+            message,
+        } => Some(status(
+            agent
+                .or(known.map(|a| a.agent))
+                .unwrap_or_else(|| "agent".into()),
+            state,
+            message,
+        )),
+        Signal::Notification {
+            state,
+            agent,
+            message,
+        } => Some(status(agent.or(known.map(|a| a.agent))?, state, message)),
+        Signal::Progress(state) => Some(status(known?.agent, state, None)),
+        Signal::ProgressEnd => match known {
+            Some(a) if a.state == "working" => Some(status(a.agent, "done", None)),
+            _ => return None,
+        },
+    })
 }
 
 /// A started sequence longer than this is not one of ours; it is dropped.
@@ -87,8 +141,8 @@ fn parse(body: &[u8]) -> Option<Signal> {
         "9" => {
             if let Some(progress) = rest.strip_prefix("4;") {
                 return match progress.split(';').next()? {
-                    "1" | "3" => Some(state("working", None, None)),
-                    "2" => Some(state("error", None, None)),
+                    "1" | "3" => Some(Signal::Progress("working")),
+                    "2" => Some(Signal::Progress("error")),
                     "0" => Some(Signal::ProgressEnd),
                     _ => None,
                 };
@@ -123,26 +177,26 @@ fn parse(body: &[u8]) -> Option<Signal> {
                 .next()
                 .filter(|a| !a.is_empty())
                 .map(|a| a.chars().take(32).collect());
-            let message = parts.next().filter(|m| !m.is_empty()).map(str::to_string);
-            Some(state(st, agent, message))
+            let message = parts.next().filter(|m| !m.is_empty()).map(clip);
+            Some(Signal::Haze {
+                state: st,
+                agent,
+                message,
+            })
         }
         _ => None,
     }
 }
 
-fn state(state: &'static str, agent: Option<String>, message: Option<String>) -> Signal {
-    Signal::State {
-        state,
-        agent,
-        message: message.map(|m| m.chars().take(200).collect()),
-    }
+fn clip(message: &str) -> String {
+    message.chars().take(200).collect()
 }
 
 /// A notification asks for the user when it mentions a permission or an
 /// approval; otherwise the agent finished its turn.
 fn notification(text: &str) -> Signal {
     let lower = text.to_lowercase();
-    let st = if lower.contains("permission") || lower.contains("approv") {
+    let state = if lower.contains("permission") || lower.contains("approv") {
         "waiting"
     } else {
         "done"
@@ -151,11 +205,12 @@ fn notification(text: &str) -> Signal {
         .into_iter()
         .find(|a| lower.contains(a))
         .map(str::to_string);
-    state(
-        st,
+    let text = text.trim();
+    Signal::Notification {
+        state,
         agent,
-        Some(text.trim().to_string()).filter(|t| !t.is_empty()),
-    )
+        message: (!text.is_empty()).then(|| clip(text)),
+    }
 }
 
 #[cfg(test)]
@@ -164,7 +219,9 @@ mod tests {
 
     fn st(s: &Signal) -> (&str, Option<&str>) {
         match s {
-            Signal::State { state, agent, .. } => (state, agent.as_deref()),
+            Signal::Haze { state, agent, .. } => (state, agent.as_deref()),
+            Signal::Notification { state, agent, .. } => (state, agent.as_deref()),
+            Signal::Progress(state) => (state, None),
             Signal::ProgressEnd => ("progress-end", None),
             Signal::Clear => ("clear", None),
         }
@@ -189,7 +246,9 @@ mod tests {
                 ("clear", None),
             ]
         );
-        let Signal::State { message, .. } = &got[4] else {
+        assert!(matches!(got[0], Signal::Progress(_)));
+        assert!(matches!(got[2], Signal::Notification { .. }));
+        let Signal::Haze { message, .. } = &got[4] else {
             panic!()
         };
         assert_eq!(message.as_deref(), Some("Reading files"));
@@ -215,6 +274,66 @@ mod tests {
             b"\x1b]0;title\x07\x1b]7;file:///tmp\x07\x1b]9;9;C:\\x\x07\x1b]8;;http://a\x1b\\link\x1b]8;;\x1b\\\x1b]11;?\x07\x1b]6973;bogus\x07",
         );
         assert!(got.is_empty(), "{got:?}");
+    }
+
+    #[test]
+    fn only_lets_known_agents_be_updated_by_progress_and_plain_notifications() {
+        let agent = |state: &str| AgentStatus {
+            agent: "claude".into(),
+            state: state.into(),
+            message: None,
+            at: 1,
+        };
+        let state = |r: Option<Option<AgentStatus>>| r.map(|s| s.map(|a| (a.agent, a.state)));
+        let pair = |a: &str, s: &str| Some(Some((a.to_string(), s.to_string())));
+        let notify = |agent: Option<&str>| Signal::Notification {
+            state: "done",
+            agent: agent.map(str::to_string),
+            message: None,
+        };
+        // A progress bar or an unnamed notification alone (`dotnet build`) changes nothing.
+        assert_eq!(
+            state(next_status(Signal::Progress("working"), None, 2)),
+            None
+        );
+        assert_eq!(state(next_status(Signal::ProgressEnd, None, 2)), None);
+        assert_eq!(state(next_status(notify(None), None, 2)), None);
+        // A notification naming an agent, or Haze's sequence, starts one.
+        assert_eq!(
+            state(next_status(notify(Some("codex")), None, 2)),
+            pair("codex", "done")
+        );
+        let haze = Signal::Haze {
+            state: "working",
+            agent: None,
+            message: None,
+        };
+        assert_eq!(state(next_status(haze, None, 2)), pair("agent", "working"));
+        // Then progress updates it, and ending progress finishes a working agent only.
+        assert_eq!(
+            state(next_status(
+                Signal::Progress("working"),
+                Some(agent("done")),
+                2
+            )),
+            pair("claude", "working")
+        );
+        assert_eq!(
+            state(next_status(Signal::ProgressEnd, Some(agent("working")), 2)),
+            pair("claude", "done")
+        );
+        assert_eq!(
+            state(next_status(Signal::ProgressEnd, Some(agent("waiting")), 2)),
+            None
+        );
+        assert_eq!(
+            state(next_status(notify(None), Some(agent("working")), 2)),
+            pair("claude", "done")
+        );
+        assert_eq!(
+            state(next_status(Signal::Clear, Some(agent("done")), 2)),
+            Some(None)
+        );
     }
 
     #[test]

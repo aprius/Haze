@@ -468,25 +468,30 @@ export const HazeStatus = async () => {{
     }} catch {{}}
   }});
   report("idle");
+  // Sessions at work; a subagent's session finishing must not mark its parent done.
+  const busy = new Set();
   return {{
     event: async ({{ event }}) => {{
       const p = event.properties ?? {{}};
       switch (event.type) {{
         case "session.status": {{
           const type = p.status?.type;
-          if (type === "busy" || type === "retry") report("working");
-          else if (type === "idle") report("done");
+          if (type === "busy" || type === "retry") busy.add(p.sessionID);
+          else if (type === "idle") busy.delete(p.sessionID);
+          else break;
+          report(busy.size ? "working" : "done");
           break;
         }}
         case "session.idle":
-          report("done");
+          busy.delete(p.sessionID);
+          if (!busy.size) report("done");
           break;
         case "permission.asked":
         case "permission.updated":
           report("waiting", "Waiting for permission");
           break;
         case "permission.replied":
-          report("working");
+          report(busy.size ? "working" : "done");
           break;
         case "session.error":
           report("error", p.error?.data?.message ?? p.error?.name);
