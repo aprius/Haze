@@ -10,6 +10,7 @@ mod nesting;
 mod procinfo;
 pub mod pty;
 mod search;
+mod shell_env;
 mod state;
 mod syntax;
 mod text;
@@ -588,6 +589,7 @@ fn forward_pty_event(app: &AppHandle, event: Option<PtyEvent>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    shell_env::load_login_path();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
