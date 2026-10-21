@@ -11,7 +11,7 @@ import { api } from "../lib/ipc";
 import { matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
 import { TERMINAL_THEMES, useTheme } from "../lib/theme";
-import { agentName, busyTerminals, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
+import { agentBadge, agentName, busyTerminals, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { confirmAction, openMenu } from "./Overlays";
@@ -424,7 +424,7 @@ export function TerminalPanel({ project }: { project: Project }) {
                     className={"agent-state " + s.agent.state + (attention[id] ? " attention" : "")}
                     title={`${agentName(s.agent.agent)}: ${s.agent.state}${s.agent.message ? ` — ${s.agent.message}` : ""}`}
                   >
-                    {s.agent.agent === "codex" ? "CX" : "CC"}
+                    {agentBadge(s.agent.agent)}
                   </span>
                 ) : (
                   <span className={"dot" + (s?.running ? " running" : "")} />

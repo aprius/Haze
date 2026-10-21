@@ -14,6 +14,7 @@ use interprocess::local_socket::{prelude::*, ListenerOptions, Stream};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 
+use super::osc::{OscScanner, Signal};
 use super::protocol::*;
 use super::{now_ms, socket_name};
 
@@ -36,6 +37,10 @@ struct Session {
     shell: bool,
     scrollback: Scrollback,
     subscribers: HashSet<ClientId>,
+    /// Reads agent states from the output (see `osc`).
+    osc: OscScanner,
+    /// The agent state came from a hook; then the output's sequences are ignored.
+    agent_from_hook: bool,
 }
 
 #[derive(Default)]
@@ -235,19 +240,9 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
             Ok(())
         }
         Request::Agent { id, status } => with_session(host, &id, |s| {
-            s.info.agent = status.clone();
+            s.agent_from_hook = status.is_some();
+            set_agent(host, &id, s, status);
             Ok(())
-        })
-        .map(|()| {
-            // Every client gets it: a tab not attached right now still shows the state.
-            for tx in host.clients.lock().values() {
-                let _ = tx.send(ServerMsg::Event {
-                    body: Event::Agent {
-                        id: id.clone(),
-                        status: status.clone(),
-                    },
-                });
-            }
         }),
     };
     match result {
@@ -255,6 +250,64 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
         Err(e) => Reply::Error {
             message: format!("{e:#}"),
         },
+    }
+}
+
+/// Sets a session's agent state and tells every client: a tab not attached
+/// right now still shows it.
+fn set_agent(host: &Host, id: &str, s: &mut Session, status: Option<AgentStatus>) {
+    if s.info
+        .agent
+        .as_ref()
+        .map(|a| (&a.agent, &a.state, &a.message))
+        == status.as_ref().map(|a| (&a.agent, &a.state, &a.message))
+    {
+        return;
+    }
+    s.info.agent = status.clone();
+    for tx in host.clients.lock().values() {
+        let _ = tx.send(ServerMsg::Event {
+            body: Event::Agent {
+                id: id.to_string(),
+                status: status.clone(),
+            },
+        });
+    }
+}
+
+/// Applies what the output's escape sequences say, unless a hook reports
+/// this terminal's agent (hooks know better).
+fn apply_signals(host: &Host, id: &str, s: &mut Session, signals: Vec<Signal>) {
+    for signal in signals {
+        if s.agent_from_hook {
+            return;
+        }
+        let cur = s.info.agent.clone();
+        let next = match signal {
+            Signal::Clear => None,
+            Signal::ProgressEnd => match cur {
+                Some(a) if a.state == "working" => Some(AgentStatus {
+                    state: "done".into(),
+                    message: None,
+                    at: now_ms(),
+                    ..a
+                }),
+                _ => continue,
+            },
+            Signal::State {
+                state,
+                agent,
+                message,
+            } => Some(AgentStatus {
+                agent: agent
+                    .or(cur.map(|a| a.agent))
+                    .unwrap_or_else(|| "agent".into()),
+                state: state.into(),
+                message,
+                at: now_ms(),
+            }),
+        };
+        set_agent(host, id, s, next);
     }
 }
 
@@ -381,6 +434,8 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
         shell: !spec.command.as_ref().is_some_and(|argv| !argv.is_empty()),
         scrollback: Scrollback::default(),
         subscribers: HashSet::new(),
+        osc: OscScanner::default(),
+        agent_from_hook: false,
     }));
     host.sessions.lock().insert(id.clone(), session.clone());
 
@@ -397,6 +452,10 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
             let chunk = &buf[..n];
             let mut s = out_session.lock();
             s.scrollback.push(chunk);
+            let signals = s.osc.feed(chunk);
+            if !signals.is_empty() {
+                apply_signals(&out_host, &out_id, &mut s, signals);
+            }
             broadcast(
                 &out_host,
                 &s.subscribers,

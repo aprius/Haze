@@ -79,7 +79,7 @@ export interface SessionInfo {
 export type AgentState = "idle" | "working" | "waiting" | "done" | "error";
 
 export interface AgentStatus {
-  agent: "claude" | "codex" | string;
+  agent: HookAgent | string;
   state: AgentState;
   message: string | null;
   at: number;
@@ -370,11 +370,15 @@ export interface Checkpoint {
 }
 
 /** A project and/or file to open, from the command line (see cli_open.rs). */
+export type HookAgent = "claude" | "codex" | "gemini" | "opencode";
+
 export interface OpenRequest {
   project: string | null;
   file: string | null;
   line: number | null;
   column: number | null;
+  /** A terminal `haze agent` / `haze run` started in `project`, to show. */
+  terminal: string | null;
 }
 
 export const api = {
@@ -411,9 +415,9 @@ export const api = {
 
   readLines: (requests: { path: string; lines: number[] }[]) => invoke<string[][]>("read_lines", { requests }),
 
-  agentHooksStatus: (agent: "claude" | "codex") => invoke<HookStatus>("agent_hooks_status", { agent }),
-  agentHooksInstall: (agent: "claude" | "codex") => invoke<HookStatus>("agent_hooks_install", { agent }),
-  agentHooksUninstall: (agent: "claude" | "codex") => invoke<HookStatus>("agent_hooks_uninstall", { agent }),
+  agentHooksStatus: (agent: HookAgent) => invoke<HookStatus>("agent_hooks_status", { agent }),
+  agentHooksInstall: (agent: HookAgent) => invoke<HookStatus>("agent_hooks_install", { agent }),
+  agentHooksUninstall: (agent: HookAgent) => invoke<HookStatus>("agent_hooks_uninstall", { agent }),
 
   gitLog: (root: string, query: LogQuery) => invoke<LogPage>("git_log", { root, query }),
   gitToplevel: (root: string) => invoke<string>("git_toplevel", { root }),

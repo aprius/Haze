@@ -7,6 +7,7 @@
 
 pub mod client;
 pub mod host;
+pub mod osc;
 pub mod protocol;
 
 #[cfg(not(windows))]
@@ -68,11 +69,14 @@ pub fn now_ms() -> u64 {
 /// side so it also reaches shells started by a host left over from an older build.
 pub fn add_utf8_locale(env: &mut Vec<(String, String)>) {
     #[cfg(unix)]
-    if !["LC_ALL", "LC_CTYPE", "LANG"]
-        .iter()
-        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()) || env.iter().any(|(n, _)| n == k))
-    {
-        let ctype = if cfg!(target_os = "macos") { "UTF-8" } else { "C.UTF-8" };
+    if !["LC_ALL", "LC_CTYPE", "LANG"].iter().any(|k| {
+        std::env::var_os(k).is_some_and(|v| !v.is_empty()) || env.iter().any(|(n, _)| n == k)
+    }) {
+        let ctype = if cfg!(target_os = "macos") {
+            "UTF-8"
+        } else {
+            "C.UTF-8"
+        };
         env.push(("LC_CTYPE".into(), ctype.into()));
     }
     #[cfg(not(unix))]

@@ -109,11 +109,29 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
 
 ### AI agents
 
-- **Settings** (`Ctrl+Alt+S`) installs status hooks for **Claude Code** (`~/.claude/settings.json`, keeping your other settings and hooks) or **Codex** (`notify` in `~/.codex/config.toml`; never replaces an existing `notify`). Hooks can be removed anytime, and a `.haze-backup` copy is made on the first write.
-- Terminal tabs running an agent show a **CC/CX** badge: pulsing blue = working, yellow = waiting for you (permission, question), green = done, red = error. Projects in the sidebar show a matching dot.
+- **Settings** (`Ctrl+Alt+S`) installs status hooks, keeping your other settings and hooks (a `.haze-backup` copy is made on the first write; remove them anytime):
+  - **Claude Code**: hooks in `~/.claude/settings.json`.
+  - **Codex**: lifecycle hooks in `~/.codex/hooks.json` (Codex may ask you to trust them in `/hooks`), plus `notify` in `config.toml` for older versions unless you use it already.
+  - **Gemini CLI** (0.26+): hooks in `~/.gemini/settings.json`.
+  - **OpenCode**: a `haze.js` plugin in `~/.config/opencode/plugins/`.
+- **No hook needed** for agents that print their state: Haze reads the progress sequence `OSC 9;4` (the progress bar some agents show in Windows Terminal or Ghostty), notifications (`OSC 9`, `OSC 777`), and its own `OSC 6973;<state>[;<agent>[;<message>]]`, which any script can print (`printf '\e]6973;working;mybot\a'`; states: idle, working, waiting, done, error, clear). An installed hook takes precedence.
+- Terminal tabs running an agent show a badge (**CC** Claude Code, **CX** Codex, **GM** Gemini, **OC** OpenCode): pulsing blue = working, yellow = waiting for you (permission, question), green = done, red = error. Projects in the sidebar show a matching dot.
 - **Desktop notifications** when an agent needs you or finishes in a terminal you are not looking at.
 - Status lives in the PTY host, so it survives Haze restarts. Prompts and transcripts are never stored.
 - **Worktrees**: *New Worktree…* in the Branches popup creates `<repo>-<branch>` on a new branch and opens it as a separate project, so each agent gets its own worktree.
+- **Command line** (`haze` on `PATH`), for scripts and for agents that hand work to other agents:
+
+  ```bash
+  haze agent claude --worktree fix/login "Fix the login redirect"   # new worktree, new terminal, prints its id
+  haze agent codex -p "Write tests for OrderService"                # also gemini, opencode, or any command name
+  haze run --dir src/Api -- dotnet watch                            # any command in a new terminal
+  haze list                                                         # terminals and their agent state
+  haze send 3f2a "Also update the docs"                             # type into a terminal and press Enter
+  haze wait 3f2a --timeout 600                                      # until its agent is done, waiting or failed
+  haze read 3f2a --lines 40                                         # the end of its output
+  ```
+
+  `agent` and `run` start your shell in the new terminal and type the command into it, then show the terminal in Haze (`--no-ui` to skip). Ids may be shortened to any unique prefix; inside a Haze terminal, `$HAZE_TERMINAL_ID` is its own.
 
 ![AI agents](docs/agents.png)
 

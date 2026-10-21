@@ -1,4 +1,5 @@
 pub mod agent_hooks;
+pub mod cli;
 mod cli_open;
 mod dotnet;
 mod file_index;
