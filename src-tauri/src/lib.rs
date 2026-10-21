@@ -4,6 +4,7 @@ mod dotnet;
 mod file_index;
 mod fs_ops;
 mod git;
+pub mod git_auth;
 mod git_log;
 mod git_ops;
 mod lsp;
@@ -406,6 +407,40 @@ async fn git_fingerprints(root: String, rels: Vec<String>) -> CmdResult<Vec<Opti
 }
 
 #[tauri::command]
+fn git_accounts() -> git_auth::AccountsInfo {
+    git_auth::info()
+}
+
+#[tauri::command]
+async fn git_account_login(
+    provider: git_auth::Provider,
+    server: String,
+    token: String,
+) -> CmdResult<git_auth::Account> {
+    blocking(move || git_auth::login_with_token(provider, &server, &token)).await
+}
+
+#[tauri::command]
+async fn git_account_remove(id: String) -> CmdResult<()> {
+    blocking(move || git_auth::remove(&id)).await
+}
+
+#[tauri::command]
+async fn git_device_start() -> CmdResult<git_auth::DeviceCode> {
+    blocking(git_auth::device_start).await
+}
+
+#[tauri::command]
+async fn git_device_poll(code: git_auth::DeviceCode) -> CmdResult<git_auth::Account> {
+    blocking(move || git_auth::device_poll(&code)).await
+}
+
+#[tauri::command]
+fn git_device_cancel() {
+    git_auth::device_cancel();
+}
+
+#[tauri::command]
 async fn git_run(root: String, args: Vec<String>) -> CmdResult<git_ops::GitOutput> {
     blocking(move || git_ops::run(root.as_ref(), &args)).await
 }
@@ -656,6 +691,9 @@ pub fn run() {
         .manage(Arc::new(lsp::LspServers::default()))
         .manage(dotnet::Builds::default())
         .setup(|app| {
+            if let Ok(dir) = app.path().app_config_dir() {
+                git_auth::init(git_auth::accounts_path(&dir));
+            }
             let handle = app.handle().clone();
             let client = PtyClient::new(pty::client::batched(Arc::new(move |ev| {
                 forward_pty_event(&handle, ev)
@@ -698,6 +736,12 @@ pub fn run() {
             git_stashes,
             git_blame,
             git_run,
+            git_accounts,
+            git_account_login,
+            git_account_remove,
+            git_device_start,
+            git_device_poll,
+            git_device_cancel,
             git_rebase_interactive,
             git_checkpoint,
             git_checkpoints,
