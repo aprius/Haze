@@ -3,7 +3,7 @@
 // right. Tick files, write a message, Commit or Commit and Push — no staging
 // area to manage. Ctrl+D opens the diff in a floating window of its own.
 import { Camera, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Eye, Folder, FolderTree, RefreshCw, Undo2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { saveAll } from "./EditorArea";
 import { Splitter } from "./Shell";
 import { api, type GitChange } from "../lib/ipc";
@@ -135,6 +135,10 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const byDir = useWorkspace((s) => !!s.ui[project.id]?.commitGroupByDir);
   const checked = useMemo(() => (r ? checkedPaths(r) : new Set<string>()), [r]);
+  // Rows picked with Ctrl/Shift+click; the context menu and Ctrl+Alt+Z act on them.
+  // `selected` (the file whose diff is shown) is always the last one clicked.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const anchor = useRef<string | null>(null);
 
   useEffect(() => refreshRepo(project.id, project.path), [project.id, project.path]);
 
@@ -180,6 +184,41 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
 
   const rollbackChecked = () => void rollback(r.changes.filter((c) => checked.has(c.rel) && c.status !== "untracked"));
 
+  // The file rows in display order, for Shift ranges and arrow keys.
+  const shownFiles = () =>
+    GROUPS.flatMap((g) =>
+      collapsed[g.id] ? [] : changeRows(g.id, r.changes.filter(g.match), byDir, collapsed).flatMap((row) => (row.kind === "file" ? [row.change] : [])),
+    );
+  const pickedChanges = () => r.changes.filter((c) => picked.has(c.rel));
+  // Picks of files that were since committed or rolled back no longer count.
+  const anyPicked = r.changes.some((c) => picked.has(c.rel));
+  const isPicked = (rel: string) => (anyPicked ? picked.has(rel) : selected === rel);
+
+  const select = (c: GitChange, e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
+    setSelected(c.rel);
+    const shown = shownFiles();
+    const a = shown.findIndex((x) => x.rel === anchor.current);
+    if (e.shiftKey && a >= 0) {
+      const i = shown.findIndex((x) => x.rel === c.rel);
+      setPicked(new Set(shown.slice(Math.min(a, i), Math.max(a, i) + 1).map((x) => x.rel)));
+      return;
+    }
+    anchor.current = c.rel;
+    if (e.ctrlKey || e.metaKey) {
+      const next = new Set(picked.size ? picked : selected ? [selected] : []);
+      if (next.has(c.rel)) next.delete(c.rel);
+      else next.add(c.rel);
+      setPicked(next);
+    } else setPicked(new Set([c.rel]));
+  };
+
+  // Several picked rows: roll those back; otherwise the checked ones, as before.
+  const rollbackSelected = () => {
+    const list = pickedChanges();
+    if (list.length > 1) void rollback(list.filter((c) => c.status !== "untracked"));
+    else rollbackChecked();
+  };
+
   // The shortcuts shown in the menu and tooltips.
   const onListKey = (e: React.KeyboardEvent) => {
     // Keys on a focused checkbox are the checkbox's own.
@@ -187,16 +226,22 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     const mod = e.ctrlKey || e.metaKey;
     const c = r.changes.find((x) => x.rel === selected);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      const shown = GROUPS.flatMap((g) =>
-        collapsed[g.id] ? [] : changeRows(g.id, r.changes.filter(g.match), byDir, collapsed).flatMap((row) => (row.kind === "file" ? [row.change] : [])),
-      );
+      const shown = shownFiles();
       const i = shown.findIndex((x) => x.rel === selected);
       const next = shown[Math.max(0, Math.min(shown.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
-      if (next) setSelected(next.rel);
+      if (next) select(next, { shiftKey: e.shiftKey, ctrlKey: false, metaKey: false });
     } else if (c && e.key === "Enter") showChangeDiff(project, root, c);
     else if (c && e.key === "F4" && c.status !== "deleted") openChangedFile(project, root, c);
-    else if (c && e.key === " ") toggle(c.rel);
-    else if (mod && e.altKey && e.code === "KeyZ") rollbackChecked();
+    else if (c && e.key === " ") {
+      // Space ticks every picked row, like the checkbox of one.
+      const list = pickedChanges();
+      if (list.length > 1) {
+        const next = new Set(checked);
+        const on = !list.every((x) => checked.has(x.rel));
+        list.forEach((x) => (on ? next.add(x.rel) : next.delete(x.rel)));
+        setChecked(next);
+      } else toggle(c.rel);
+    } else if (mod && e.altKey && e.code === "KeyZ") rollbackSelected();
     else if (mod && e.altKey && e.code === "KeyK") void commitChanges(project, true);
     else return;
     e.preventDefault();
@@ -208,6 +253,31 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     // The file may not exist on that side (deleted there): resolve by removing it.
     if (out && !out.ok) await runGit(project.id, ["rm", "-q", "--", c.rel], { quiet: true });
     else await runGit(project.id, ["add", "--", c.rel], { quiet: true });
+  };
+
+  /** Menu for several picked rows. */
+  const multiMenu = (list: GitChange[]) => {
+    const tracked = list.filter((c) => c.status !== "untracked");
+    return [
+      { label: "Show Diff", shortcut: "Ctrl+D", action: () => list.forEach((c) => showChangeDiff(project, root, c)) },
+      { separator: true },
+      {
+        label: `Rollback ${tracked.length} Files…`,
+        shortcut: "Ctrl+Alt+Z",
+        disabled: !tracked.length,
+        action: () => void rollback(tracked),
+      },
+      {
+        label: "Check Selected",
+        action: () => setChecked(new Set([...checked, ...list.map((c) => c.rel)])),
+      },
+      {
+        label: "Uncheck Selected",
+        action: () => setChecked(new Set([...checked].filter((rel) => !picked.has(rel)))),
+      },
+      { separator: true },
+      { label: "Copy Paths", action: () => void navigator.clipboard.writeText(list.map((c) => absPath(root, c.rel)).join("\n")) },
+    ];
   };
 
   const menu = (c: GitChange) => [
@@ -285,8 +355,8 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
           </button>
           <button
             className="icon-btn"
-            title="Rollback checked changes (Ctrl+Alt+Z)"
-            onClick={rollbackChecked}
+            title="Rollback selected changes, or the checked ones (Ctrl+Alt+Z)"
+            onClick={rollbackSelected}
           >
             <Undo2 size={14} />
           </button>
@@ -415,13 +485,15 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                   return (
                     <div
                       key={c.rel}
-                      className={"change-row git-" + c.status + (selected === c.rel ? " selected" : "")}
+                      className={"change-row git-" + c.status + (isPicked(c.rel) ? " selected" : "")}
                       style={indent(row.depth)}
-                      onClick={() => setSelected(c.rel)}
+                      onClick={(e) => select(c, e)}
                       onDoubleClick={() => showChangeDiff(project, root, c)}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        setSelected(c.rel);
+                        const list = pickedChanges();
+                        if (picked.has(c.rel) && list.length > 1) return openMenu(e, multiMenu(list));
+                        select(c, { shiftKey: false, ctrlKey: false, metaKey: false });
                         openMenu(e, menu(c));
                       }}
                       title={c.oldRel ? `${c.oldRel} → ${c.rel}` : c.rel}
