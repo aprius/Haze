@@ -110,8 +110,16 @@ pub struct SearchResults {
     pub cancelled: bool,
 }
 
+/// fancy-regex hands easy patterns to the `regex` crate, but runs word
+/// boundaries on its backtracking VM, which made "Words" searches about 10x
+/// slower. Patterns the `regex` crate accepts run on it directly.
+enum Engine {
+    Plain(regex::Regex),
+    Fancy(fancy_regex::Regex),
+}
+
 pub struct Compiled {
-    regex: fancy_regex::Regex,
+    engine: Engine,
     query: SearchQuery,
 }
 
@@ -125,7 +133,24 @@ pub fn compile(q: &SearchQuery) -> Result<Compiled> {
         fancy_regex::escape(&q.query).into_owned()
     };
     if q.whole_word {
-        pat = format!(r"(?<!\w)(?:{pat})(?!\w)");
+        pat = if q.is_regex {
+            format!(r"(?<!\w)(?:{pat})(?!\w)")
+        } else {
+            // Next to a known character, `\b`/`\B` mean exactly the lookarounds
+            // above, and need no fancy features.
+            let edge = |c: Option<char>| {
+                if c.is_some_and(is_word_char) {
+                    r"\b"
+                } else {
+                    r"\B"
+                }
+            };
+            format!(
+                "{}{pat}{}",
+                edge(q.query.chars().next()),
+                edge(q.query.chars().last())
+            )
+        };
     }
     let mut flags = String::new();
     if !q.match_case {
@@ -137,14 +162,64 @@ pub fn compile(q: &SearchQuery) -> Result<Compiled> {
     if !flags.is_empty() {
         pat = format!("(?{flags}){pat}");
     }
-    let regex = fancy_regex::RegexBuilder::new(&pat)
-        .backtrack_limit(1_000_000)
-        .build()
-        .map_err(|e| anyhow::anyhow!("invalid pattern: {e}"))?;
+    // Replacing with groups stays on fancy-regex, whose `$name` expansion differs slightly.
+    let groups = q.is_regex && q.replacement.is_some();
+    let engine = match regex::Regex::new(&pat) {
+        Ok(re) if !groups => Engine::Plain(re),
+        _ => Engine::Fancy(
+            fancy_regex::RegexBuilder::new(&pat)
+                .backtrack_limit(1_000_000)
+                .build()
+                .map_err(|e| anyhow::anyhow!("invalid pattern: {e}"))?,
+        ),
+    };
     Ok(Compiled {
-        regex,
+        engine,
         query: q.clone(),
     })
+}
+
+/// Byte range of a match and its replacement text (when replacing).
+type Hit = (usize, usize, Option<String>);
+
+impl Compiled {
+    fn replacement(&self, matched: &str, expand: impl FnOnce(&str, &mut String)) -> Option<String> {
+        self.query.replacement.as_ref().map(|r| {
+            let mut s = String::new();
+            if self.query.is_regex {
+                expand(r, &mut s);
+            } else {
+                s.push_str(r);
+            }
+            if self.query.preserve_case {
+                s = preserve_case(matched, &s);
+            }
+            s
+        })
+    }
+
+    /// Byte ranges of all matches, with their replacement when replacing.
+    fn matches<'a>(&'a self, text: &'a str) -> Box<dyn Iterator<Item = Result<Hit>> + 'a> {
+        match &self.engine {
+            Engine::Plain(re) => Box::new(
+                re.find_iter(text)
+                    .map(|m| Ok((m.start(), m.end(), self.replacement(m.as_str(), |_, _| {})))),
+            ),
+            Engine::Fancy(re) => Box::new(re.captures_iter(text).map(|caps| {
+                let caps = caps.map_err(|e| anyhow::anyhow!("search failed: {e}"))?;
+                let m = caps.get(0).expect("group 0");
+                let replacement = self.replacement(m.as_str(), |r, s| caps.expand(r, s));
+                Ok((m.start(), m.end(), replacement))
+            })),
+        }
+    }
+}
+
+/// `\w` as the regex engine defines it (Unicode).
+fn is_word_char(c: char) -> bool {
+    static WORD: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^\w$").expect("valid regex"));
+    WORD.is_match(c.encode_utf8(&mut [0; 4]))
 }
 
 /// Applies the case shape of `matched` to `replacement` (Rider's "Preserve case").
@@ -231,6 +306,11 @@ fn context_ok(ctx: SearchContext, regions: &syntax::Regions, start: usize, end: 
 
 /// All matches in `text`, at most `limit`.
 pub fn find_in_text(c: &Compiled, text: &str, path: &Path, limit: usize) -> Result<Vec<Match>> {
+    let mut all = c.matches(text).peekable();
+    // Most files have no match: skip the line index and the syntax tree for them.
+    if all.peek().is_none() {
+        return Ok(Vec::new());
+    }
     let regions = if c.query.context == SearchContext::Anywhere {
         syntax::Regions::default()
     } else {
@@ -238,46 +318,32 @@ pub fn find_in_text(c: &Compiled, text: &str, path: &Path, limit: usize) -> Resu
     };
     let lines = Lines::new(text);
     let mut out = Vec::new();
-    for caps in c.regex.captures_iter(text) {
-        let caps = caps.map_err(|e| anyhow::anyhow!("search failed: {e}"))?;
-        let m = caps.get(0).expect("group 0");
-        if m.start() == m.end() || !context_ok(c.query.context, &regions, m.start(), m.end()) {
+    for m in all {
+        let (start, end, replacement) = m?;
+        if start == end || !context_ok(c.query.context, &regions, start, end) {
             continue;
         }
-        let replacement = c.query.replacement.as_ref().map(|r| {
-            let mut s = String::new();
-            if c.query.is_regex {
-                caps.expand(r, &mut s);
-            } else {
-                s.push_str(r);
-            }
-            if c.query.preserve_case {
-                s = preserve_case(m.as_str(), &s);
-            }
-            s
-        });
-
-        let (line, line_start) = lines.locate(m.start());
-        let (end_line, end_line_start) = lines.locate(m.end());
+        let (line, line_start) = lines.locate(start);
+        let (end_line, end_line_start) = lines.locate(end);
         let line_end = lines.line_end(text, line);
         // A window around the match keeps very long lines (minified files) readable.
         let from = floor_char(
             text,
-            m.start().saturating_sub(PREVIEW_CHARS / 3).max(line_start),
+            start.saturating_sub(PREVIEW_CHARS / 3).max(line_start),
         );
-        let to = ceil_char(text, (m.start() + PREVIEW_CHARS).min(line_end).max(from));
+        let to = ceil_char(text, (start + PREVIEW_CHARS).min(line_end).max(from));
         let line_text = &text[from..to];
-        let hl_end = m.end().min(to);
+        let hl_end = end.min(to);
         out.push(Match {
-            start: m.start(),
-            end: m.end(),
+            start,
+            end,
             line: line as u32 + 1,
-            column: utf16_len(&text[line_start..m.start()]) + 1,
+            column: utf16_len(&text[line_start..start]) + 1,
             end_line: end_line as u32 + 1,
-            end_column: utf16_len(&text[end_line_start..m.end()]) + 1,
+            end_column: utf16_len(&text[end_line_start..end]) + 1,
             line_text: line_text.to_string(),
-            preview_start: utf16_len(&text[from..m.start()]),
-            preview_end: utf16_len(&text[from..hl_end.max(m.start())]),
+            preview_start: utf16_len(&text[from..start]),
+            preview_end: utf16_len(&text[from..hl_end.max(start)]),
             replacement,
         });
         if out.len() >= limit {
@@ -693,6 +759,32 @@ mod tests {
     }
 
     #[test]
+    fn whole_word_literals_match_like_lookarounds() {
+        let text = "x.Foo .Foo Foo. Foo.x _Foo Foo_ chào chàoa ách a-b a-bc (a) ((a)) Ωmega";
+        for word in [
+            "Foo", ".Foo", "Foo.", "chào", "ách", "a-b", "(a)", "a", "Ωmega",
+        ] {
+            let fast = find(
+                &SearchQuery {
+                    whole_word: true,
+                    ..q(word)
+                },
+                text,
+            );
+            let lookaround = find(
+                &SearchQuery {
+                    whole_word: true,
+                    is_regex: true,
+                    ..q(&fancy_regex::escape(word))
+                },
+                text,
+            );
+            let spans = |m: &[Match]| m.iter().map(|m| (m.start, m.end)).collect::<Vec<_>>();
+            assert_eq!(spans(&fast), spans(&lookaround), "{word:?}");
+        }
+    }
+
+    #[test]
     fn regex_with_lookaround_and_groups() {
         let rq = SearchQuery {
             is_regex: true,
@@ -702,6 +794,19 @@ mod tests {
         let m = find(&rq, "var x = Get(1);");
         assert_eq!(m.len(), 1);
         assert_eq!(m[0].replacement.as_deref(), Some("GetAsync("));
+
+        let plain = SearchQuery {
+            is_regex: true,
+            replacement: Some("${1}Repo".into()),
+            ..q(r"\b(\w+)Service\b")
+        };
+        let m = find(&plain, "OrderService orderservice Services");
+        assert_eq!(
+            m.iter()
+                .map(|m| m.replacement.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("OrderRepo"), Some("orderRepo")]
+        );
     }
 
     #[test]

@@ -560,7 +560,9 @@ pub fn run() {
         .manage(dotnet::Builds::default())
         .setup(|app| {
             let handle = app.handle().clone();
-            let client = PtyClient::new(Arc::new(move |ev| forward_pty_event(&handle, ev)));
+            let client = PtyClient::new(pty::client::batched(Arc::new(move |ev| {
+                forward_pty_event(&handle, ev)
+            })));
             app.manage(Pty(Arc::new(client)));
             Ok(())
         })

@@ -351,6 +351,8 @@ pub struct Branch {
 pub struct Branches {
     pub current: Option<String>,
     pub detached: bool,
+    /// Commit HEAD points to (`None` before the first commit).
+    pub head: Option<String>,
     pub branches: Vec<Branch>,
     pub remotes: Vec<String>,
     /// A merge, rebase, cherry-pick or revert is in progress.
@@ -406,9 +408,15 @@ pub fn branches(root: &Path) -> Result<Branches> {
             kind: kind.into(),
         });
     }
-    let current = list.iter().find(|b| b.current).map(|b| b.name.clone());
-    let detached =
-        current.is_none() && run_ok(root, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok();
+    let current_branch = list.iter().find(|b| b.current);
+    let current = current_branch.map(|b| b.name.clone());
+    let head = match current_branch {
+        Some(b) => Some(b.hash.clone()),
+        None => run_ok(root, &["rev-parse", "--verify", "-q", "HEAD"])
+            .ok()
+            .map(|h| h.trim().to_string()),
+    };
+    let detached = current.is_none() && head.is_some();
     let remotes = run_ok(root, &["remote"])?
         .lines()
         .map(str::to_string)
@@ -429,6 +437,7 @@ pub fn branches(root: &Path) -> Result<Branches> {
     Ok(Branches {
         current,
         detached,
+        head,
         branches: list,
         remotes,
         operation,
@@ -889,6 +898,13 @@ mod tests {
         assert_eq!(b.current.as_deref(), Some("main"));
         assert_eq!(b.branches.iter().filter(|x| x.kind == "local").count(), 2);
         assert_eq!(b.operation, None);
+        let main = r.git(&["rev-parse", "HEAD"]).trim().to_string();
+        assert_eq!(b.head.as_deref(), Some(main.as_str()));
+        r.git(&["checkout", "-q", "--detach"]);
+        let b = branches(r.path()).unwrap();
+        assert!(b.detached);
+        assert_eq!(b.head.as_deref(), Some(main.as_str()));
+        r.git(&["checkout", "-q", "main"]);
 
         r.write("a.cs", "changed\n");
         r.git(&["stash", "push", "-q", "-m", "wip"]);

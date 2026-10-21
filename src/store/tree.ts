@@ -10,6 +10,7 @@ export interface GitView {
   status: GitStatus;
   /** Directories containing changes, colored like Rider does. */
   changedDirs: Set<string>;
+  /** Ignored paths, `/`-separated without a trailing slash. */
   ignored: string[];
 }
 
@@ -92,7 +93,7 @@ export function refreshGit(projectId: string, root: string, delay = 0): void {
         const ignored: string[] = [];
         for (const [path, st] of Object.entries(status.files)) {
           if (st === "ignored") {
-            ignored.push(path);
+            ignored.push(slashes(path));
             continue;
           }
           for (const a of ancestors(path, root)) changedDirs.add(a);
@@ -105,15 +106,29 @@ export function refreshGit(projectId: string, root: string, delay = 0): void {
   );
 }
 
+const slashes = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+
 export function isIgnored(view: GitView | undefined, path: string): boolean {
   if (!view) return false;
   if (view.status.files[path] === "ignored") return true;
-  return view.ignored.some((i) => isWithin(path, i));
+  const p = slashes(path);
+  return view.ignored.some((i) => p === i || p.startsWith(i + "/"));
+}
+
+/**
+ * Whether a change can show up in `git status`. Build output and packages
+ * (`bin/`, `obj/`, `node_modules/`) change constantly during a build or an
+ * install, and each git refresh runs several git processes.
+ */
+export function affectsGit(projectId: string, change: FsChange): boolean {
+  if (change.git || change.overflow) return true;
+  const view = useTree.getState().git[projectId];
+  return change.files.some((f) => !isIgnored(view, f));
 }
 
 export function handleFsChange(projectId: string, change: FsChange, nest: boolean): void {
-  void refreshDirs(change.root, change.overflow ? "all" : change.dirs, nest);
-  if (change.git) refreshGit(projectId, change.root, 300);
+  if (change.overflow || change.dirs.length) void refreshDirs(change.root, change.overflow ? "all" : change.dirs, nest);
+  if (affectsGit(projectId, change)) refreshGit(projectId, change.root, 300);
 }
 
 export function setSelection(projectId: string, paths: string[], anchor?: string | null): void {

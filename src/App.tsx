@@ -23,7 +23,7 @@ import { api, onFsChange } from "./lib/ipc";
 import { basename } from "./lib/path";
 import { restore } from "./store/persist";
 import { startTerminals } from "./store/terminals";
-import { handleFsChange, refreshGit, useTree } from "./store/tree";
+import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
 import { openFindInFiles, openSearchEverywhere, useUi } from "./store/ui";
 import { useWorkspace, type Project } from "./store/workspace";
 
@@ -259,7 +259,7 @@ export default function App() {
       const project = ws.projects.find((p) => p.path === change.root);
       if (!project) return;
       handleFsChange(project.id, change, ws.nestFiles);
-      if (change.git) refreshRepo(project.id, project.path, 400);
+      if (affectsGit(project.id, change)) refreshRepo(project.id, project.path, 400, true);
       void handleDiskChanges(change.overflow ? "all" : change.files);
       notifyFileChanges(change);
       if (change.overflow || change.files.some((f) => /\.(csproj|fsproj|sln|slnx)$|launchSettings\.json$/i.test(f))) {

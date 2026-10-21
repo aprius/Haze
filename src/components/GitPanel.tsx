@@ -380,7 +380,8 @@ export function GitPanel({ project }: { project: Project }) {
 
   const commits = page?.commits ?? [];
   const graph = page?.graph ?? [];
-  const lanes = graph.reduce((m, g) => Math.max(m, g.lane + 1, ...g.edges.map((e) => Math.max(e.from, e.to) + 1)), 1);
+  // Scrolling re-renders on every frame; this walks every loaded commit.
+  const lanes = useMemo(() => graph.reduce((m, g) => Math.max(m, g.lane + 1, ...g.edges.map((e) => Math.max(e.from, e.to) + 1)), 1), [graph]);
   const graphWidth = Math.min(lanes, 12) * LANE_W + 10;
   const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 10);
   const last = Math.min(commits.length, Math.ceil((scrollTop + height) / ROW_H) + 10);

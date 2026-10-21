@@ -30,7 +30,8 @@ pub struct FsChange {
     /// Paths that disappeared (deleted, or renamed from).
     pub removed: Vec<String>,
     pub overflow: bool,
-    /// Git metadata (index, HEAD, refs) changed.
+    /// Git metadata (index, HEAD, refs) changed. Edits in the working tree are
+    /// only in `files`: the UI knows which of them git ignores.
     pub git: bool,
 }
 
@@ -161,8 +162,12 @@ fn debounce_loop(
                     Kind::Git => git = true,
                     Kind::GitInternal => {}
                     Kind::Work => {
-                        if let Some(parent) = p.parent() {
-                            dirs.insert(parent.to_string_lossy().into_owned());
+                        // Editing a file leaves its directory listing (and the
+                        // Go to File index) as it was.
+                        if changes_entries(&ev.kind) {
+                            if let Some(parent) = p.parent() {
+                                dirs.insert(parent.to_string_lossy().into_owned());
+                            }
                         }
                         let key = p.to_string_lossy().into_owned();
                         match lifecycle(&ev.kind, i, n) {
@@ -181,12 +186,10 @@ fn debounce_loop(
                 }
             }
         }
-        if dirs.is_empty() && !git && !overflow {
+        if files.is_empty() && !git && !overflow {
             continue;
         }
         overflow |= dirs.len() > MAX_DIRS;
-        // Working tree edits change `git status` too.
-        let git = git || overflow || !dirs.is_empty();
         let change = FsChange {
             root: root.clone(),
             dirs: if overflow {
@@ -222,6 +225,20 @@ fn changes_content(kind: &EventKind) -> bool {
     match kind {
         EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
         EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
+/// Whether the event can add, remove or rename directory entries (anything
+/// but a content or metadata change of an existing path).
+fn changes_entries(kind: &EventKind) -> bool {
+    match kind {
+        EventKind::Access(_) | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {
+            false
+        }
+        // Windows reports content edits this way (adds, removals and renames have
+        // their own kinds); kqueue uses it for a directory whose entries changed.
+        EventKind::Modify(ModifyKind::Any) => !cfg!(windows),
         _ => true,
     }
 }
@@ -283,6 +300,26 @@ mod tests {
     }
 
     #[test]
+    fn only_entry_changes_relist_directories() {
+        use notify::event::{CreateKind, DataChange, MetadataKind, RemoveKind};
+        assert!(changes_entries(&EventKind::Create(CreateKind::File)));
+        assert!(changes_entries(&EventKind::Remove(RemoveKind::Any)));
+        assert!(changes_entries(&EventKind::Modify(ModifyKind::Name(
+            RenameMode::Both
+        ))));
+        assert!(changes_entries(&EventKind::Any));
+        assert!(!changes_entries(&EventKind::Modify(ModifyKind::Data(
+            DataChange::Content
+        ))));
+        assert!(!changes_entries(&EventKind::Modify(ModifyKind::Metadata(
+            MetadataKind::Any
+        ))));
+        assert!(!changes_entries(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+    }
+
+    #[test]
     fn finds_git_dir_of_linked_worktrees() {
         let tmp = tempfile::tempdir().unwrap();
         let main = tmp.path().join("app");
@@ -298,6 +335,10 @@ mod tests {
         let dir = outside_git_dir(&wt).expect("worktree git dir");
         assert!(dir.ends_with("worktrees/app-task"), "{dir:?}");
         assert!(matches!(classify_git(Path::new("index")), Kind::Git));
+        assert!(matches!(
+            classify_git(Path::new("refs/heads/task")),
+            Kind::Git
+        ));
         assert!(matches!(
             classify_git(Path::new("logs/HEAD")),
             Kind::GitInternal

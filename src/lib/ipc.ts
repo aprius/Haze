@@ -296,6 +296,8 @@ export interface Branch {
 export interface BranchesInfo {
   current: string | null;
   detached: boolean;
+  /** Commit HEAD points to (null before the first commit). */
+  head: string | null;
   branches: Branch[];
   remotes: string[];
   operation: string | null;
