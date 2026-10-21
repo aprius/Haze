@@ -74,6 +74,14 @@ function sameDir(a: string, b: string): boolean {
 }
 
 const gitTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const statusListeners = new Set<(projectId: string, status: GitStatus) => void>();
+
+/** Every fresh `git status` of a project (the Commit window takes its changes from it). */
+export function onGitStatus(cb: (projectId: string, status: GitStatus) => void): () => void {
+  statusListeners.add(cb);
+  return () => statusListeners.delete(cb);
+}
+
 // Latest request per project; slower, older answers are dropped.
 const gitSeq = new Map<string, number>();
 
@@ -99,6 +107,7 @@ export function refreshGit(projectId: string, root: string, delay = 0): void {
           for (const a of ancestors(path, root)) changedDirs.add(a);
         }
         useTree.setState((s) => ({ git: { ...s.git, [projectId]: { status, changedDirs, ignored } } }));
+        statusListeners.forEach((l) => l(projectId, status));
       } catch (e) {
         console.warn("git status failed", e);
       }

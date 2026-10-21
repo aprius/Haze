@@ -4,9 +4,12 @@ import * as monaco from "monaco-editor";
 // its imports, so the worker (diff computation, word suggestions) would fail.
 // Vite's `?worker` import bundles it properly.
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
+import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker";
 
+// JSON is the one language service Haze keeps (see vite.config.ts); it needs
+// its own worker, or every request fails with "Missing requestHandler".
 (self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
-  getWorker: () => new EditorWorker(),
+  getWorker: (_id, label) => (label === "json" ? new JsonWorker() : new EditorWorker()),
 };
 
 monaco.editor.defineTheme("haze-dark", {

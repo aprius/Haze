@@ -25,6 +25,22 @@ pub struct LogQuery {
     pub path: Option<String>,
     #[serde(default)]
     pub first_parent: bool,
+    /// Commits of git's list to skip ("load more" continues where the last
+    /// page stopped instead of listing everything again).
+    #[serde(default)]
+    pub skip: usize,
+    /// Lanes after the previous page, which this one continues.
+    #[serde(default)]
+    pub lanes: LaneState,
+}
+
+/// Lanes open after the last laid-out commit: each slot holds the hash it
+/// expects next, with the lane's color.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LaneState {
+    lanes: Vec<Option<(String, u16)>>,
+    next_color: u16,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -64,6 +80,9 @@ pub struct LogPage {
     pub graph: Vec<GraphRow>,
     /// More commits exist beyond `limit`.
     pub has_more: bool,
+    /// `skip` for the next page, and the lanes it continues.
+    pub next: usize,
+    pub lanes: LaneState,
 }
 
 const FIELD: char = '\u{1f}';
@@ -96,10 +115,20 @@ pub fn parse_log(out: &str) -> Vec<Commit> {
 }
 
 /// Lays out lanes for commits in topological order (children before parents).
-pub fn layout(commits: &[Commit]) -> Vec<GraphRow> {
-    // Each slot holds the hash expected next in that lane, with the lane's color.
-    let mut lanes: Vec<Option<(String, u16)>> = Vec::new();
-    let mut next_color: u16 = 0;
+#[cfg(test)]
+fn layout(commits: &[Commit]) -> Vec<GraphRow> {
+    layout_from(&mut LaneState::default(), commits, None)
+}
+
+/// Lays out lanes for commits in topological order (children before parents),
+/// continuing from `state`. `after` is the commit following the last
+/// one (the next page's first), which the last row's lanes converge into.
+pub fn layout_from(
+    state: &mut LaneState,
+    commits: &[Commit],
+    after: Option<&Commit>,
+) -> Vec<GraphRow> {
+    let LaneState { lanes, next_color } = state;
     let mut rows = Vec::with_capacity(commits.len());
     let expects = |l: &Option<(String, u16)>, h: &str| l.as_ref().is_some_and(|(x, _)| x == h);
 
@@ -115,8 +144,8 @@ pub fn layout(commits: &[Commit]) -> Vec<GraphRow> {
                 if p == lanes.len() {
                     lanes.push(None);
                 }
-                next_color = next_color.wrapping_add(1);
-                (p, next_color - 1)
+                *next_color = next_color.wrapping_add(1);
+                (p, *next_color - 1)
             }
         };
         // Every lane waiting for this commit ends here.
@@ -148,8 +177,8 @@ pub fn layout(commits: &[Commit]) -> Vec<GraphRow> {
                     let col = if k == lane {
                         color
                     } else {
-                        next_color = next_color.wrapping_add(1);
-                        next_color - 1
+                        *next_color = next_color.wrapping_add(1);
+                        *next_color - 1
                     };
                     lanes[k] = Some((p.clone(), col));
                     k
@@ -171,7 +200,10 @@ pub fn layout(commits: &[Commit]) -> Vec<GraphRow> {
         }
 
         // Lanes carrying the next commit converge into the lane it will occupy.
-        if let Some(next) = commits.get(i + 1) {
+        let next = commits
+            .get(i + 1)
+            .or(if i + 1 == commits.len() { after } else { None });
+        if let Some(next) = next {
             if let Some(nl) = lanes.iter().position(|l| expects(l, &next.hash)) {
                 for e in edges.iter_mut() {
                     if expects(&lanes[e.to as usize], &next.hash) {
@@ -230,6 +262,7 @@ pub fn log(root: &Path, q: &LogQuery) -> Result<LogPage> {
         "--topo-order",
         "--date-order",
         "-z",
+        &format!("--skip={}", q.skip),
         &format!("--max-count={}", limit + 1),
         FORMAT,
     ]);
@@ -260,29 +293,37 @@ pub fn log(root: &Path, q: &LogQuery) -> Result<LogPage> {
                 commits: vec![],
                 graph: vec![],
                 has_more: false,
+                next: 0,
+                lanes: LaneState::default(),
             });
         }
         bail!("{}", err.trim());
     }
     let text = String::from_utf8_lossy(&out.stdout).replace('\0', "");
     let mut commits = parse_log(&text);
-    let has_more = commits.len() > limit;
-    commits.truncate(limit);
-    // `--grep` only searches messages; a hash typed in the filter shows that commit too.
+    let after = (commits.len() > limit).then(|| commits.remove(limit));
+    let next = q.skip + commits.len();
+    // `--grep` only searches messages; a hash typed in the filter shows that
+    // commit too, at the top (later pages leave it out).
     if let Some(c) = q
         .text
         .as_deref()
         .and_then(|t| commit_named_by(root, t.trim()))
     {
-        if !commits.iter().any(|x| x.hash == c.hash) {
+        if q.skip > 0 {
+            commits.retain(|x| x.hash != c.hash);
+        } else if !commits.iter().any(|x| x.hash == c.hash) {
             commits.insert(0, c);
         }
     }
-    let graph = layout(&commits);
+    let mut lanes = q.lanes.clone();
+    let graph = layout_from(&mut lanes, &commits, after.as_ref());
     Ok(LogPage {
         commits,
         graph,
-        has_more,
+        has_more: after.is_some(),
+        next,
+        lanes,
     })
 }
 
@@ -420,5 +461,39 @@ mod tests {
         .unwrap();
         assert_eq!(by_hash.commits.len(), 1);
         assert_eq!(by_hash.commits[0].subject, "first");
+
+        // More branches and merges, then pages of any size must add up to one full load.
+        for i in 0..6 {
+            git(&["checkout", "-q", "-b", &format!("b{i}")]);
+            for j in 0..=i % 3 {
+                git(&["commit", "-q", "--allow-empty", "-m", &format!("b{i} {j}")]);
+            }
+            git(&["checkout", "-q", "main"]);
+            git(&["commit", "-q", "--allow-empty", "-m", &format!("main {i}")]);
+            if i % 2 == 0 {
+                git(&["merge", "-q", "--no-ff", &format!("b{i}"), "-m", "merge"]);
+            }
+        }
+        let all = |limit| LogQuery {
+            limit,
+            ..Default::default()
+        };
+        let full = log(root, &all(1000)).unwrap();
+        for size in [1, 2, 3, 7] {
+            let (mut commits, mut graph) = (Vec::new(), Vec::new());
+            let mut q = all(size);
+            loop {
+                let page = log(root, &q).unwrap();
+                commits.extend(page.commits);
+                graph.extend(page.graph);
+                if !page.has_more {
+                    break;
+                }
+                q.skip = page.next;
+                q.lanes = page.lanes;
+            }
+            assert_eq!(commits, full.commits, "page size {size}");
+            assert_eq!(graph, full.graph, "page size {size}");
+        }
     }
 }

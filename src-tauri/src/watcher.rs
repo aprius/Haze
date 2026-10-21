@@ -160,7 +160,7 @@ fn debounce_loop(
                 };
                 match kind {
                     Kind::Git => git = true,
-                    Kind::GitInternal => {}
+                    Kind::GitInternal | Kind::Package => {}
                     Kind::Work => {
                         // Editing a file leaves its directory listing (and the
                         // Go to File index) as it was.
@@ -261,6 +261,12 @@ enum Kind {
     Git,
     /// Other noise inside `.git` (objects, logs, lock files).
     GitInternal,
+    /// Inside an installed package (`node_modules/<pkg>/…`), like VS Code's
+    /// default watcher exclude: an install touches tens of thousands of files,
+    /// and past `MAX_DIRS` the UI re-lists every directory, refreshes git and
+    /// rereads every open file, again for each batch. Adding or removing a
+    /// package (`node_modules/<pkg>`) still shows.
+    Package,
     Work,
 }
 
@@ -269,8 +275,17 @@ fn classify(root: &Path, p: &Path) -> Kind {
     let mut comps = rel.components();
     match comps.next() {
         Some(Component::Normal(first)) if first == ".git" => classify_git(comps.as_path()),
+        _ if in_package(rel) => Kind::Package,
         _ => Kind::Work,
     }
+}
+
+fn in_package(rel: &Path) -> bool {
+    let parts: Vec<_> = rel.components().collect();
+    parts
+        .iter()
+        .position(|c| matches!(c, Component::Normal(n) if *n == "node_modules"))
+        .is_some_and(|i| parts.len() > i + 2)
 }
 
 /// `rel` is relative to the git dir.
@@ -297,6 +312,24 @@ mod tests {
             .unwrap()
             .success();
         assert!(ok, "{args:?}");
+    }
+
+    #[test]
+    fn skips_files_inside_packages() {
+        let root = Path::new("/r");
+        let kind = |p: &str| classify(root, &root.join(p));
+        assert!(matches!(kind("node_modules/react/index.js"), Kind::Package));
+        assert!(matches!(
+            kind("web/node_modules/@types/node/fs.d.ts"),
+            Kind::Package
+        ));
+        assert!(matches!(kind("node_modules/react"), Kind::Work));
+        assert!(matches!(
+            kind("node_modules/.package-lock.json"),
+            Kind::Work
+        ));
+        assert!(matches!(kind("src/node_modules.cs"), Kind::Work));
+        assert!(matches!(kind("bin/Debug/App.dll"), Kind::Work));
     }
 
     #[test]

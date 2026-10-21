@@ -35,6 +35,8 @@ export interface GitStatus {
   root: string | null;
   branch: string | null;
   files: Record<string, GitFileStatus>;
+  /** The same status as the Commit window lists it. */
+  changes: GitChange[];
 }
 
 export interface FsChange {
@@ -221,6 +223,9 @@ export interface LogQuery {
   author: string | null;
   path: string | null;
   firstParent: boolean;
+  /** Continue after this many commits, from `lanes` (a page's `next` and `lanes`). */
+  skip?: number;
+  lanes?: unknown;
 }
 
 export interface Commit {
@@ -249,6 +254,8 @@ export interface LogPage {
   commits: Commit[];
   graph: GraphRow[];
   hasMore: boolean;
+  next: number;
+  lanes: unknown;
 }
 
 export type ChangeStatus = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflict";
@@ -367,7 +374,6 @@ export const api = {
   agentHooksUninstall: (agent: "claude" | "codex") => invoke<HookStatus>("agent_hooks_uninstall", { agent }),
 
   gitLog: (root: string, query: LogQuery) => invoke<LogPage>("git_log", { root, query }),
-  gitChanges: (root: string) => invoke<GitChange[]>("git_changes", { root }),
   gitToplevel: (root: string) => invoke<string>("git_toplevel", { root }),
   gitCommit: (root: string, message: string, paths: string[], amend: boolean) =>
     invoke<GitOutput>("git_commit", { root, message, paths, amend }),

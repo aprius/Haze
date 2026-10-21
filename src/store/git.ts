@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { toast } from "../components/Overlays";
 import { api, errorMessage, type BranchesInfo, type ChangedFile, type Checkpoint, type GitChange, type GitOutput, type StashEntry } from "../lib/ipc";
-import { refreshGit as refreshTreeGit } from "./tree";
+import { onGitStatus, refreshGit as refreshTreeGit } from "./tree";
 import { useWorkspace } from "./workspace";
 
 export interface ConsoleEntry {
@@ -71,9 +71,21 @@ export function absPath(root: string, rel: string): string {
   return root.replace(/[\\/]+$/, "") + sep + (sep === "\\" ? rel.replace(/\//g, "\\") : rel);
 }
 
+// Changes come from the file tree's `git status` (one run serves both).
+onGitStatus((projectId, status) => {
+  if (status.isRepo) patchRepo(projectId, { changes: status.changes });
+});
+
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 /** Projects with a refresh requested by an operation (not the watcher) still to run. */
 const explicit = new Set<string>();
+
+function commitWindowShown(projectId: string): boolean {
+  const ws = useWorkspace.getState();
+  const ui = ws.ui[projectId];
+  return ws.activeProjectId === projectId && !!ui?.sidebarVisible && ui.sidebarTab === "commit";
+}
+
 /** What `git log --all` shows depends only on these; editing files changes none of them. */
 const historyKeys = new Map<string, string>();
 
@@ -93,6 +105,7 @@ function historyKey(branches: BranchesInfo | null, stashes: StashEntry[], checkp
  */
 export function refreshRepo(projectId: string, projectPath: string, delay = 0, fromWatcher = false): void {
   if (!fromWatcher) explicit.add(projectId);
+  refreshTreeGit(projectId, projectPath, delay);
   const t = timers.get(projectId);
   if (t) clearTimeout(t);
   timers.set(
@@ -108,15 +121,16 @@ export function refreshRepo(projectId: string, projectPath: string, delay = 0, f
       }
       const cur = repo(projectId);
       const reviewedRels = Object.keys(cur.reviewed);
-      const [changes, branches, stashes, checkpoints, prints] = await Promise.all([
-        api.gitChanges(root).catch(() => cur.changes),
+      const [branches, stashes, checkpoints, prints] = await Promise.all([
         api.gitBranches(root).catch(() => cur.branches),
         api.gitStashes(root).catch(() => cur.stashes),
         api.gitCheckpoints(root).catch(() => cur.checkpoints),
         reviewedRels.length ? api.gitFingerprints(root, reviewedRels).catch(() => []) : Promise.resolve([]),
       ]);
       const checkpoint = cur.checkpoint && checkpoints.some((c) => c.hash === cur.checkpoint) ? cur.checkpoint : (checkpoints[0]?.hash ?? null);
-      const since = checkpoint ? await api.gitChangesSince(root, checkpoint).catch(() => []) : [];
+      // Diffing against a checkpoint snapshots the whole working tree (`git add -A`
+      // into a scratch index); only the Commit window shows it, and opening it refreshes.
+      const since = !checkpoint ? [] : commitWindowShown(projectId) ? await api.gitChangesSince(root, checkpoint).catch(() => []) : cur.since;
       // A reviewed mark only holds while the file is unchanged since marking it.
       const reviewed: Record<string, string> = {};
       reviewedRels.forEach((rel, i) => {
@@ -126,7 +140,6 @@ export function refreshRepo(projectId: string, projectPath: string, delay = 0, f
       const moved = historyKeys.get(projectId) !== key;
       historyKeys.set(projectId, key);
       patchRepo(projectId, (r) => ({
-        changes,
         branches,
         stashes,
         checkpoints,
