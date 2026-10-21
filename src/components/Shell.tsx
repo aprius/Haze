@@ -32,6 +32,8 @@ function hue(s: string): number {
   return h;
 }
 
+const AVATAR_COLORS = ["cyan", "orange", "green", "purple", "red", "yellow"].map((c) => `var(--mk-${c})`);
+
 function initials(name: string): string {
   const words = name.split(/[\s._-]+/).filter(Boolean);
   if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
@@ -42,7 +44,7 @@ export function ProjectAvatar({ project, size = 30 }: { project: Project; size?:
   return (
     <span
       className="avatar"
-      style={{ width: size, height: size, background: `hsl(${hue(project.path)} 45% 42%)`, fontSize: size * 0.4 }}
+      style={{ width: size, height: size, background: AVATAR_COLORS[hue(project.path) % AVATAR_COLORS.length], fontSize: size * 0.4 }}
     >
       {initials(project.name)}
     </span>

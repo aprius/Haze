@@ -15,7 +15,8 @@ import { ToolTabs } from "./BuildPanel";
 const ROW_H = 22;
 const LANE_W = 14;
 const PAGE = 1000;
-const COLORS = ["#3574f0", "#e5a03a", "#5fb865", "#c75ad6", "#e8615a", "#3fb0b8", "#a88e5a", "#8c96a6"];
+// Monokai Pro accents from styles.css, so the graph follows the light / dark filter.
+const COLORS = ["cyan", "orange", "green", "purple", "red", "yellow"].map((c) => `var(--mk-${c})`);
 const colorOf = (c: number) => COLORS[c % COLORS.length];
 
 function formatDate(t: number): string {
@@ -41,10 +42,10 @@ function Graph({ rows, first, last, width }: { rows: GraphRow[]; first: number; 
       const y1 = y(i);
       const y2 = y(i + 1);
       const d = x1 === x2 ? `M${x1},${y1}L${x2},${y2}` : `M${x1},${y1}C${x1},${y1 + ROW_H * 0.6} ${x2},${y2 - ROW_H * 0.6} ${x2},${y2}`;
-      paths.push(<path key={`${i}-${e.from}-${e.to}`} d={d} stroke={colorOf(e.color)} strokeWidth={1.6} fill="none" />);
+      paths.push(<path key={`${i}-${e.from}-${e.to}`} d={d} style={{ stroke: colorOf(e.color) }} strokeWidth={1.6} fill="none" />);
     }
     if (i >= first && i < last) {
-      nodes.push(<circle key={`n${i}`} cx={x(r.lane)} cy={y(i)} r={3.6} fill={colorOf(r.color)} stroke="var(--editor-bg)" strokeWidth={1.2} />);
+      nodes.push(<circle key={`n${i}`} cx={x(r.lane)} cy={y(i)} r={3.6} style={{ fill: colorOf(r.color) }} stroke="var(--editor-bg)" strokeWidth={1.2} />);
     }
   }
   return (

@@ -35,6 +35,15 @@
   /* Same as editorLineNumber in src/lib/monaco.ts, for the diff's own left gutter. */
   --line-number: #bfb9ba;
   --line-number-active: #706b6e;
+  /* Monokai Pro accents, for anything that needs a colour of its own. */
+  --mk-red: #e14775;
+  --mk-orange: #e16032;
+  --mk-yellow: #cc7a0a;
+  --mk-green: #269d69;
+  --mk-cyan: #1c8ca8;
+  --mk-purple: #7058be;
+  --mk-grey: #918c8e;
+  --find-match: #cc7a0a;
   color-scheme: light;
 }
 
@@ -72,6 +81,14 @@
   --diff-edge: 60%;
   --line-number: #5b595c;
   --line-number-active: #c1c0c0;
+  --mk-red: #ff6188;
+  --mk-orange: #fc9867;
+  --mk-yellow: #ffd866;
+  --mk-green: #a9dc76;
+  --mk-cyan: #78dce8;
+  --mk-purple: #ab9df2;
+  --mk-grey: #939293;
+  --find-match: #ffd866;
   color-scheme: dark;
 }
 
@@ -282,7 +299,7 @@ kbd {
 .btn.danger {
   background: var(--danger);
   border-color: var(--danger);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .btn:disabled {
@@ -353,8 +370,8 @@ kbd {
   position: absolute;
   right: 2px;
   top: 2px;
-  color: #e5b93a;
-  fill: #e5b93a;
+  color: var(--mk-yellow);
+  fill: var(--mk-yellow);
 }
 
 .rail-spacer {
@@ -366,7 +383,7 @@ kbd {
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  color: #fff;
+  color: var(--accent-fg);
   font-weight: 600;
   flex: none;
 }
@@ -435,8 +452,8 @@ kbd {
 }
 
 .inline-star {
-  color: #e5b93a;
-  fill: #e5b93a;
+  color: var(--mk-yellow);
+  fill: var(--mk-yellow);
 }
 
 /* ------------------------------------------------------------ file tree */
@@ -500,28 +517,28 @@ kbd {
 }
 
 .ico-folder {
-  color: #87939a;
+  color: var(--mk-grey);
 }
 
 .ico-code {
-  color: #8e7cc3;
+  color: var(--mk-purple);
 }
 
 .ico.ext-cs {
-  color: #9b72cf;
+  color: var(--mk-green);
 }
 
 .ico.ext-ts,
 .ico.ext-tsx {
-  color: #4b8fde;
+  color: var(--mk-cyan);
 }
 
 .ico-json {
-  color: #c9a24b;
+  color: var(--mk-yellow);
 }
 
 .ico-image {
-  color: #4ea683;
+  color: var(--mk-orange);
 }
 
 .tree-name {
@@ -1334,17 +1351,17 @@ kbd {
 }
 
 .find-hl {
-  background: rgba(255, 196, 0, 0.35);
+  background: color-mix(in srgb, var(--find-match) 35%, transparent);
   border-radius: 2px;
 }
 
 .find-old {
-  background: rgba(219, 59, 75, 0.25);
+  background: color-mix(in srgb, var(--diff-deleted) 25%, transparent);
   text-decoration: line-through;
 }
 
 .find-new {
-  background: rgba(103, 189, 112, 0.3);
+  background: color-mix(in srgb, var(--diff-added) 30%, transparent);
 }
 
 .find-preview {
@@ -1354,7 +1371,7 @@ kbd {
 }
 
 .find-hit {
-  background: rgba(255, 196, 0, 0.4);
+  background: color-mix(in srgb, var(--find-match) 40%, transparent);
 }
 
 .find-footer {
@@ -1495,7 +1512,7 @@ kbd {
 }
 
 .csharp-status.busy::before {
-  background: #e5b93a;
+  background: var(--mk-yellow);
 }
 
 .csharp-status.warn::before {
@@ -1548,7 +1565,7 @@ kbd {
 }
 
 .sev-warning {
-  color: #d9a53a;
+  color: var(--mk-yellow);
   flex: none;
 }
 
@@ -1891,7 +1908,7 @@ kbd {
   padding: 0 5px;
   border-radius: 3px;
   font-size: calc(var(--ui-font-size) * 11 / 13);
-  border: 1px solid #5fb86588;
+  border: 1px solid color-mix(in srgb, var(--git-added) 55%, transparent);
   color: var(--git-added);
 }
 
@@ -1902,13 +1919,13 @@ kbd {
 }
 
 .ref-badge.remote {
-  border-color: #c75ad688;
-  color: #c75ad6;
+  border-color: color-mix(in srgb, var(--mk-purple) 55%, transparent);
+  color: var(--mk-purple);
 }
 
 .ref-badge.tag {
-  border-color: #e5a03a88;
-  color: #d9922b;
+  border-color: color-mix(in srgb, var(--mk-orange) 55%, transparent);
+  color: var(--mk-orange);
 }
 
 .log-details {
@@ -2445,26 +2462,26 @@ kbd {
   border: 1px solid var(--border);
 }
 .agent-state.working {
-  color: #4a9eff;
-  border-color: #4a9eff;
+  color: var(--mk-cyan);
+  border-color: var(--mk-cyan);
   animation: agent-pulse 1.4s ease-in-out infinite;
 }
 .agent-state.waiting {
-  color: #000;
-  background: #e5b93a;
-  border-color: #e5b93a;
+  color: var(--accent-fg);
+  background: var(--mk-yellow);
+  border-color: var(--mk-yellow);
 }
 .agent-state.done {
-  color: #3fb950;
-  border-color: #3fb950;
+  color: var(--mk-green);
+  border-color: var(--mk-green);
 }
 .agent-state.error {
-  color: #fff;
-  background: #e5534b;
-  border-color: #e5534b;
+  color: var(--accent-fg);
+  background: var(--danger);
+  border-color: var(--danger);
 }
 .agent-state.attention {
-  box-shadow: 0 0 0 2px rgba(229, 185, 58, 0.45);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mk-yellow) 45%, transparent);
 }
 @keyframes agent-pulse {
   50% {
@@ -2482,14 +2499,14 @@ kbd {
   border: 1px solid var(--bg);
 }
 .rail-agent.working {
-  background: #4a9eff;
+  background: var(--mk-cyan);
   animation: agent-pulse 1.4s ease-in-out infinite;
 }
 .rail-agent.waiting {
-  background: #e5b93a;
+  background: var(--mk-yellow);
 }
 .rail-agent.done {
-  background: #3fb950;
+  background: var(--mk-green);
 }
 
 .settings-dialog {
