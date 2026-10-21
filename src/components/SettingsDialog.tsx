@@ -1,5 +1,6 @@
 // Settings: fonts, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting.
-import { useEffect, useState } from "react";
+import { Bot, FolderTree, GitBranch, type LucideIcon, Type, X } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 import { create } from "zustand";
 import {
   CODE_FONT_SUGGESTIONS,
@@ -19,7 +20,10 @@ import { useWorkspace } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
 import { toast } from "./Overlays";
 
-const useSettings = create<{ open: boolean }>(() => ({ open: false }));
+type Page = "appearance" | "agents" | "vcs" | "project";
+
+// The page stays selected between openings.
+const useSettings = create<{ open: boolean; page: Page }>(() => ({ open: false, page: "appearance" }));
 
 export function openSettings(): void {
   useSettings.setState({ open: true });
@@ -86,7 +90,11 @@ function AgentRow({ id, name, what }: (typeof AGENTS)[number]) {
         )}
       </div>
       <div className="muted small">{what}</div>
-      {status && <div className="muted small">Config: {status.configPath}</div>}
+      {status && (
+        <div className="muted small settings-path" title={status.configPath}>
+          {status.configPath}
+        </div>
+      )}
       {status?.conflict && <div className="modal-error">{status.conflict}. Haze will not overwrite it.</div>}
       {error && <div className="modal-error">{error}</div>}
     </div>
@@ -139,19 +147,30 @@ function FontSettingsSection() {
   const isDefault = useFonts((s) => (Object.keys(DEFAULT_FONTS) as (keyof FontSettings)[]).every((k) => s[k] === DEFAULT_FONTS[k]));
   return (
     <>
-      <div className="settings-section">Fonts</div>
-      <div className="settings-fonts">
-        <span>Interface</span>
-        <FontInput field="uiFont" list="haze-ui-fonts" />
-        <SizeInput field="uiSize" />
-        <span>Code editor</span>
-        <FontInput field="codeFont" list="haze-code-fonts" />
-        <SizeInput field="codeSize" />
-        <span>Terminal</span>
-        <span className="muted small" title="The terminal uses the code editor's font">
-          {codeFont} (same as code)
-        </span>
-        <SizeInput field="terminalSize" />
+      <PageHeader title="Appearance" desc="Interface covers menus and tool windows (Project, Git, Commit, Build…). Any installed font can be typed.">
+        {!isDefault && (
+          <button className="btn small" onClick={resetFonts}>
+            Reset to Defaults
+          </button>
+        )}
+      </PageHeader>
+      <div className="settings-card">
+        <div className="settings-fonts">
+          <span className="muted small">Fonts</span>
+          <span className="muted small">Family</span>
+          <span className="muted small">Size</span>
+          <span>Interface</span>
+          <FontInput field="uiFont" list="haze-ui-fonts" />
+          <SizeInput field="uiSize" />
+          <span>Code editor</span>
+          <FontInput field="codeFont" list="haze-code-fonts" />
+          <SizeInput field="codeSize" />
+          <span>Terminal</span>
+          <span className="muted small settings-ellipsis" title="The terminal uses the code editor's font">
+            {codeFont} (same as code)
+          </span>
+          <SizeInput field="terminalSize" />
+        </div>
       </div>
       <datalist id="haze-ui-fonts">
         {UI_FONT_SUGGESTIONS.map((f) => (
@@ -163,22 +182,101 @@ function FontSettingsSection() {
           <option key={f} value={f} />
         ))}
       </datalist>
-      <div className="muted small settings-fonts-hint">
-        Interface covers menus and tool windows (Project, Git, Commit, Build…). Any installed font can be typed.
-        {!isDefault && (
-          <button className="btn small" onClick={resetFonts}>
-            Reset to defaults
-          </button>
-        )}
+    </>
+  );
+}
+
+export function PageHeader({ title, desc, children }: { title: string; desc?: string; children?: ReactNode }) {
+  return (
+    <div className="settings-page-head">
+      <div className="settings-page-title">
+        <h2>{title}</h2>
+        {children}
+      </div>
+      {desc && <div className="muted small">{desc}</div>}
+    </div>
+  );
+}
+
+/** A settings row with a label, a description and a switch on the right. */
+function SwitchRow({ label, desc, checked, onChange }: { label: string; desc?: string; checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <label className="settings-row">
+      <div className="settings-row-text">
+        <div>{label}</div>
+        {desc && <div className="muted small">{desc}</div>}
+      </div>
+      <span className="switch">
+        <input type="checkbox" role="switch" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <span />
+      </span>
+    </label>
+  );
+}
+
+function AgentsSection() {
+  const notifyAgents = useWorkspace((s) => s.notifyAgents);
+  return (
+    <>
+      <PageHeader
+        title="AI Agents"
+        desc="Agents running in Haze terminals report their state through these hooks. Nothing from your prompts or transcripts is stored. Restart running agents after installing."
+      />
+      {AGENTS.map((a) => (
+        <AgentRow key={a.id} {...a} />
+      ))}
+      <div className="settings-card">
+        <SwitchRow
+          label="Desktop notifications"
+          desc="When an agent needs you or finishes, while Haze is in the background."
+          checked={notifyAgents}
+          onChange={async (on) => {
+            useWorkspace.setState({ notifyAgents: on });
+            if (on) {
+              try {
+                const n = await import("@tauri-apps/plugin-notification");
+                if (!(await n.isPermissionGranted()) && (await n.requestPermission()) !== "granted") toast("Notifications are blocked by the system.", "error");
+              } catch {
+                /* not available */
+              }
+            }
+          }}
+        />
       </div>
     </>
   );
 }
 
+function ProjectViewSection() {
+  const nestFiles = useWorkspace((s) => s.nestFiles);
+  return (
+    <>
+      <PageHeader title="Project View" />
+      <div className="settings-card">
+        <SwitchRow
+          label="Nest related files"
+          desc="appsettings.*.json, *.razor.cs, *.Designer.cs… appear under the file they belong to."
+          checked={nestFiles}
+          onChange={(on) => {
+            useWorkspace.setState({ nestFiles: on });
+            useTree.setState({ dirs: {} });
+          }}
+        />
+      </div>
+    </>
+  );
+}
+
+const PAGES: { id: Page; name: string; icon: LucideIcon; body: () => ReactNode }[] = [
+  { id: "appearance", name: "Appearance", icon: Type, body: () => <FontSettingsSection /> },
+  { id: "agents", name: "AI Agents", icon: Bot, body: () => <AgentsSection /> },
+  { id: "vcs", name: "Version Control", icon: GitBranch, body: () => <GitAccountsSection /> },
+  { id: "project", name: "Project View", icon: FolderTree, body: () => <ProjectViewSection /> },
+];
+
 export function SettingsDialog() {
   const open = useSettings((s) => s.open);
-  const notifyAgents = useWorkspace((s) => s.notifyAgents);
-  const nestFiles = useWorkspace((s) => s.nestFiles);
+  const page = useSettings((s) => s.page);
   // Window-level: buttons that disable while busy drop focus out of the dialog.
   useEffect(() => {
     if (!open) return;
@@ -187,55 +285,26 @@ export function SettingsDialog() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
   if (!open) return null;
+  const current = PAGES.find((p) => p.id === page) ?? PAGES[0];
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-      <div className="modal settings-dialog" tabIndex={-1} onKeyDown={(e) => (e.key === "Escape" && close(), e.stopPropagation())}>
-        <div className="modal-title">Settings</div>
-        <FontSettingsSection />
-        <div className="settings-section">AI agents</div>
-        <div className="muted small">
-          Agents running in Haze terminals report their state through these hooks. Nothing from your prompts or transcripts is stored. Restart
-          running agents after installing.
-        </div>
-        {AGENTS.map((a) => (
-          <AgentRow key={a.id} {...a} />
-        ))}
-        <label className="find-check">
-          <input
-            type="checkbox"
-            checked={notifyAgents}
-            onChange={async (e) => {
-              const on = e.target.checked;
-              useWorkspace.setState({ notifyAgents: on });
-              if (on) {
-                try {
-                  const n = await import("@tauri-apps/plugin-notification");
-                  if (!(await n.isPermissionGranted()) && (await n.requestPermission()) !== "granted") toast("Notifications are blocked by the system.", "error");
-                } catch {
-                  /* not available */
-                }
-              }
-            }}
-          />
-          Desktop notification when an agent needs you or finishes (while Haze is in the background)
-        </label>
-        <GitAccountsSection />
-        <div className="settings-section">Project view</div>
-        <label className="find-check">
-          <input
-            type="checkbox"
-            checked={nestFiles}
-            onChange={(e) => {
-              useWorkspace.setState({ nestFiles: e.target.checked });
-              useTree.setState({ dirs: {} });
-            }}
-          />
-          Nest related files (appsettings.*.json, *.razor.cs, *.Designer.cs…)
-        </label>
-        <div className="modal-buttons">
-          <button className="btn primary" onClick={close}>
-            Close
+    <div className="modal-backdrop settings-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div className="settings-dialog" role="dialog" aria-label="Settings" tabIndex={-1} onKeyDown={(e) => (e.key === "Escape" && close(), e.stopPropagation())}>
+        <nav className="settings-nav">
+          <div className="settings-nav-title">Settings</div>
+          {PAGES.map((p) => (
+            <button key={p.id} className={"settings-nav-item" + (p.id === current.id ? " on" : "")} onClick={() => useSettings.setState({ page: p.id })}>
+              <p.icon size={15} />
+              <span>{p.name}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="settings-main">
+          <button className="icon-btn settings-close" title="Close (Esc)" onClick={close}>
+            <X size={16} />
           </button>
+          <div className="settings-content" key={current.id}>
+            {current.body()}
+          </div>
         </div>
       </div>
     </div>
