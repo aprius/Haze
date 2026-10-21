@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage, type DeviceCode, type GitAccount, type GitProvider } from "../lib/ipc";
 import { toast } from "./Overlays";
+import { PageHeader } from "./SettingsDialog";
 
 const PROVIDERS: Record<GitProvider, { name: string; server: string; tokenHelp: string; tokenUrl: (server: string) => string }> = {
   github: {
@@ -192,24 +193,28 @@ export function GitAccountsSection() {
 
   return (
     <>
-      <div className="settings-section">Version Control: GitHub / GitLab</div>
-      <div className="muted small">
-        Push, pull and fetch over HTTPS use these accounts for their servers. Tokens are kept in the system keychain. One account per server.
-      </div>
-      {accounts?.map((a) => (
-        <div key={a.id} className="settings-agent-head git-account">
-          {a.avatarUrl ? <img className="git-avatar" src={a.avatarUrl} alt="" /> : <span className="git-avatar" />}
-          <b>{a.login}</b>
-          {a.name && <span className="muted">{a.name}</span>}
-          <span className="tag">{PROVIDERS[a.provider].name}</span>
-          <span className="muted small">{a.server.replace(/^https:\/\//, "")}</span>
-          <span className="run-spacer" />
-          <button className="btn small" onClick={() => void remove(a)}>
-            Remove
-          </button>
+      <PageHeader
+        title="Version Control"
+        desc="GitHub / GitLab accounts. Push, pull and fetch over HTTPS use them for their servers. Tokens are kept in the system keychain. One account per server."
+      />
+      {accounts && accounts.length > 0 && (
+        <div className="settings-card">
+          {accounts.map((a) => (
+            <div key={a.id} className="settings-agent-head git-account">
+              {a.avatarUrl ? <img className="git-avatar" src={a.avatarUrl} alt="" /> : <span className="git-avatar" />}
+              <b>{a.login}</b>
+              {a.name && <span className="muted">{a.name}</span>}
+              <span className="tag">{PROVIDERS[a.provider].name}</span>
+              <span className="muted small">{a.server.replace(/^https:\/\//, "")}</span>
+              <span className="run-spacer" />
+              <button className="btn small" onClick={() => void remove(a)}>
+                Remove
+              </button>
+            </div>
+          ))}
         </div>
-      ))}
-      {accounts?.length === 0 && !adding && <div className="muted small">No accounts.</div>}
+      )}
+      {accounts?.length === 0 && !adding && <div className="settings-empty muted small">No accounts yet.</div>}
       {adding ? (
         <LoginForm
           key={adding}
