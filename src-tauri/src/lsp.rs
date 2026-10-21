@@ -25,6 +25,8 @@ pub enum LspEvent {
     Exit {
         server: u64,
         code: Option<i32>,
+        /// The end of the server's stderr: why it stopped, when it says.
+        reason: Option<String>,
     },
 }
 
@@ -76,10 +78,62 @@ fn dotnet_tool(name: &str) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
+/// Where Roslyn writes its logs (useful when it fails to load a project).
+pub fn roslyn_log_dir() -> Option<PathBuf> {
+    let dir = dirs::cache_dir()?.join("dev.haze.app").join("roslyn-logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// The .NET install that `dotnet` on PATH belongs to. .NET tools (like the
+/// language server) find the runtime only through `DOTNET_ROOT` or the
+/// default install location, which a Homebrew or user-local .NET is not in.
+fn dotnet_root() -> Option<PathBuf> {
+    let dotnet = find_in_path("dotnet")?.canonicalize().ok()?;
+    let root = dotnet.parent()?;
+    root.join("host")
+        .join("fxr")
+        .is_dir()
+        .then(|| root.to_path_buf())
+}
+
+/// The last lines of a server's stderr, for the "server stopped" message.
+fn stderr_tail(bytes: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let tail = lines[lines.len().saturating_sub(8)..].join("\n");
+    let tail = if tail.len() > 1500 {
+        let cut = tail
+            .char_indices()
+            .map(|(i, _)| i)
+            .find(|&i| i >= tail.len() - 1500)
+            .unwrap_or(0);
+        format!("…{}", &tail[cut..])
+    } else {
+        tail
+    };
+    (!tail.is_empty()).then_some(tail)
+}
+
 /// Roslyn's `roslyn-language-server` .NET tool first, then `csharp-ls`.
 /// `HAZE_CSHARP_SERVER` overrides the program (Roslyn arguments are used).
 pub fn find_csharp_server() -> Option<ServerCommand> {
-    let roslyn_args = || vec!["--stdio".to_string(), "--autoLoadProjects".to_string()];
+    let roslyn_args = || {
+        let mut args = vec!["--stdio".to_string(), "--autoLoadProjects".to_string()];
+        if let Some(dir) = roslyn_log_dir() {
+            args.extend([
+                "--logLevel".to_string(),
+                "Information".to_string(),
+                "--extensionLogDirectory".to_string(),
+                dir.to_string_lossy().into_owned(),
+            ]);
+        }
+        args
+    };
     if let Ok(p) = std::env::var("HAZE_CSHARP_SERVER") {
         return Some(ServerCommand {
             kind: "roslyn",
@@ -150,6 +204,11 @@ impl LspServers {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
+        if std::env::var_os("DOTNET_ROOT").is_none() {
+            if let Some(root) = dotnet_root() {
+                command.env("DOTNET_ROOT", root);
+            }
+        }
         let mut child = command
             .spawn()
             .with_context(|| format!("starting {}", cmd.program))?;
@@ -174,10 +233,19 @@ impl LspServers {
             }
         });
 
-        // Drain stderr so the server never blocks on a full pipe.
-        thread::spawn(move || {
-            let mut sink_buf = Vec::new();
-            let _ = BufReader::new(stderr).read_to_end(&mut sink_buf);
+        // Drain stderr so the server never blocks on a full pipe; keep its end.
+        let stderr_reader = thread::spawn(move || {
+            const KEEP: usize = 16 * 1024;
+            let mut reader = BufReader::new(stderr);
+            let mut kept = Vec::new();
+            let mut buf = [0u8; 4096];
+            while let Ok(n @ 1..) = reader.read(&mut buf) {
+                kept.extend_from_slice(&buf[..n]);
+                if kept.len() > 2 * KEEP {
+                    kept.drain(..kept.len() - KEEP);
+                }
+            }
+            stderr_tail(&kept)
         });
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -190,6 +258,7 @@ impl LspServers {
             sink(LspEvent::Exit {
                 server: id,
                 code: None,
+                reason: stderr_reader.join().ok().flatten(),
             });
         });
         Ok(id)
@@ -224,6 +293,43 @@ impl LspServers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_the_end_of_stderr() {
+        let mut err = b"\n".repeat(3);
+        for i in 0..20 {
+            err.extend(format!("line {i}\n").bytes());
+        }
+        let tail = stderr_tail(&err).unwrap();
+        assert!(tail.starts_with("line 12") && tail.ends_with("line 19"));
+        assert_eq!(stderr_tail(b"  \n"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_why_a_server_exited() {
+        let servers = LspServers::default();
+        let cmd = ServerCommand {
+            kind: "roslyn",
+            program: "sh".into(),
+            args: vec![
+                "-c".into(),
+                "echo 'You must install .NET' >&2; exit 1".into(),
+            ],
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        let sink: MessageSink = Arc::new(move |e| {
+            let _ = tx.lock().unwrap().send(e);
+        });
+        servers.start(&cmd, Path::new("."), sink).unwrap();
+        match rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap() {
+            LspEvent::Exit { reason, .. } => {
+                assert_eq!(reason.as_deref(), Some("You must install .NET"))
+            }
+            e => panic!("unexpected {e:?}"),
+        }
+    }
 
     #[test]
     fn frames_round_trip() {
@@ -270,7 +376,7 @@ mod tests {
                 {
                     break message
                 }
-                LspEvent::Exit { .. } => panic!("server exited"),
+                LspEvent::Exit { reason, .. } => panic!("server exited: {reason:?}"),
                 _ => continue,
             }
         };

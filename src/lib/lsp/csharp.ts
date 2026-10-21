@@ -125,11 +125,11 @@ export class CsharpSession {
       const m = p as { type: number; message: string };
       if (m.type === 1) setCsharpStatus(this.projectId, { state: this.ready ? "ready" : "loading", kind: this.kind, message: m.message });
     });
-    c.onExit(() => {
+    c.onExit((reason) => {
       this.ready = false;
       this.synced.forEach((d) => d.dispose());
       this.synced.clear();
-      if (!this.disposed) setCsharpStatus(this.projectId, { state: "stopped", kind: this.kind, message: "C# server stopped" });
+      if (!this.disposed) setCsharpStatus(this.projectId, { state: "stopped", kind: this.kind, message: exitMessage(reason) });
     });
   }
 
@@ -210,6 +210,16 @@ export class CsharpSession {
   }
 }
 
+/** Why the server stopped, with the fix for the usual cause. */
+export function exitMessage(reason: string | null): string {
+  if (!reason) return "C# server stopped";
+  // roslyn-language-server runs on .NET 10; an older runtime makes it exit at once.
+  if (/install or update \.NET|framework .* was not found|Microsoft\.NETCore\.App/i.test(reason))
+    return `C# server needs the .NET 10 runtime (or newer): install it from https://dot.net, then restart C#. ${reason}`;
+  if (/install \.NET|DOTNET_ROOT/i.test(reason)) return `C# server could not find .NET: ${reason}`;
+  return `C# server stopped: ${reason}`;
+}
+
 // ------------------------------------------------------------------ sessions
 
 const sessions = new Map<string, CsharpSession>();
@@ -234,7 +244,8 @@ export async function startCsharp(projectId: string, root: string): Promise<void
     if (!s.client) sessions.delete(projectId);
   } catch (e) {
     sessions.delete(projectId);
-    setCsharpStatus(projectId, { state: "error", message: errorMessage(e) });
+    // A server that died while starting has already reported why (see onExit).
+    if (!s.client || s.client.alive) setCsharpStatus(projectId, { state: "error", message: errorMessage(e) });
   }
 }
 
