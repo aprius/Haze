@@ -4,7 +4,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ensureBuffer, getModel } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
-import { languageFor, monaco } from "../lib/monaco";
+import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
 import { absPath } from "../store/git";
@@ -64,8 +64,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       renderSideBySide: true,
       originalEditable: false,
       readOnly: spec.right !== "working",
-      fontFamily: 'JetBrains Mono, "Cascadia Code", Menlo, Consolas, monospace',
-      fontSize: 13,
+      ...codeFontOptions(),
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
       ignoreTrimWhitespace: false,

@@ -1,6 +1,17 @@
-// Settings: AI agent hooks (opt-in, per agent), notifications, file nesting.
+// Settings: fonts, AI agent hooks (opt-in, per agent), notifications, file nesting.
 import { useEffect, useState } from "react";
 import { create } from "zustand";
+import {
+  CODE_FONT_SUGGESTIONS,
+  DEFAULT_FONTS,
+  MAX_SIZE,
+  MIN_SIZE,
+  resetFonts,
+  setFonts,
+  UI_FONT_SUGGESTIONS,
+  useFonts,
+  type FontSettings,
+} from "../lib/fonts";
 import { api, errorMessage, type HookStatus } from "../lib/ipc";
 import { useTree } from "../store/tree";
 import { popupClosed } from "../store/ui";
@@ -81,6 +92,88 @@ function AgentRow({ id, name, what }: (typeof AGENTS)[number]) {
   );
 }
 
+/** A font name, applied on Enter or blur rather than per keystroke (editors re-measure on each change). */
+function FontInput({ field, list }: { field: "uiFont" | "codeFont"; list: string }) {
+  const value = useFonts((s) => s[field]);
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => (draft.trim() ? setFonts({ [field]: draft }) : setDraft(value));
+  return (
+    <input
+      className="modal-input settings-font-name"
+      list={list}
+      value={draft}
+      spellCheck={false}
+      placeholder={DEFAULT_FONTS[field]}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === "Enter" && commit()}
+    />
+  );
+}
+
+function SizeInput({ field }: { field: "uiSize" | "codeSize" | "terminalSize" }) {
+  const value = useFonts((s) => s[field]);
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  return (
+    <input
+      className="modal-input settings-font-size"
+      type="number"
+      min={MIN_SIZE}
+      max={MAX_SIZE}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = Number(e.target.value);
+        if (e.target.value && n >= MIN_SIZE && n <= MAX_SIZE) setFonts({ [field]: n });
+      }}
+      onBlur={() => setDraft(String(value))}
+    />
+  );
+}
+
+function FontSettingsSection() {
+  const codeFont = useFonts((s) => s.codeFont);
+  const isDefault = useFonts((s) => (Object.keys(DEFAULT_FONTS) as (keyof FontSettings)[]).every((k) => s[k] === DEFAULT_FONTS[k]));
+  return (
+    <>
+      <div className="settings-section">Fonts</div>
+      <div className="settings-fonts">
+        <span>Interface</span>
+        <FontInput field="uiFont" list="haze-ui-fonts" />
+        <SizeInput field="uiSize" />
+        <span>Code editor</span>
+        <FontInput field="codeFont" list="haze-code-fonts" />
+        <SizeInput field="codeSize" />
+        <span>Terminal</span>
+        <span className="muted small" title="The terminal uses the code editor's font">
+          {codeFont} (same as code)
+        </span>
+        <SizeInput field="terminalSize" />
+      </div>
+      <datalist id="haze-ui-fonts">
+        {UI_FONT_SUGGESTIONS.map((f) => (
+          <option key={f} value={f} />
+        ))}
+      </datalist>
+      <datalist id="haze-code-fonts">
+        {CODE_FONT_SUGGESTIONS.map((f) => (
+          <option key={f} value={f} />
+        ))}
+      </datalist>
+      <div className="muted small settings-fonts-hint">
+        Interface covers menus and tool windows (Project, Git, Commit, Build…). Any installed font can be typed.
+        {!isDefault && (
+          <button className="btn small" onClick={resetFonts}>
+            Reset to defaults
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
 export function SettingsDialog() {
   const open = useSettings((s) => s.open);
   const notifyAgents = useWorkspace((s) => s.notifyAgents);
@@ -97,6 +190,7 @@ export function SettingsDialog() {
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="modal settings-dialog" tabIndex={-1} onKeyDown={(e) => (e.key === "Escape" && close(), e.stopPropagation())}>
         <div className="modal-title">Settings</div>
+        <FontSettingsSection />
         <div className="settings-section">AI agents</div>
         <div className="muted small">
           Agents running in Haze terminals report their state through these hooks. Nothing from your prompts or transcripts is stored. Restart

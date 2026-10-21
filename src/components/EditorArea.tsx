@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers, type BufferMeta } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
-import { languageFor, monaco } from "../lib/monaco";
+import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, relative } from "../lib/path";
 import { findImplementations, findUsages, prepareRename, renameSymbol } from "../lib/lsp/csharp";
@@ -497,9 +497,7 @@ export function EditorArea({ project }: { project: Project }) {
     const editor = monaco.editor.create(host.current, {
       model: null,
       automaticLayout: true,
-      fontFamily: 'JetBrains Mono, "Cascadia Code", Menlo, Consolas, monospace',
-      fontSize: 13,
-      lineHeight: 20,
+      ...codeFontOptions(),
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
       renderWhitespace: "selection",

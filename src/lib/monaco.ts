@@ -5,6 +5,7 @@ import * as monaco from "monaco-editor";
 // Vite's `?worker` import bundles it properly.
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker";
+import { codeFontFamily, codeLineHeight, loadCodeFont, useFonts } from "./fonts";
 import { monacoTheme, useTheme } from "./theme";
 
 // JSON is the one language service Haze keeps (see vite.config.ts); it needs
@@ -103,6 +104,21 @@ defineMonokai("haze-light", "vs", MONOKAI.light);
 
 // Theme names are global in Monaco: one setTheme repaints every editor.
 useTheme.subscribe((s) => monaco.editor.setTheme(monacoTheme(s.mode)));
+
+/** Font options for a new editor; open editors follow later changes below. */
+export const codeFontOptions = () => {
+  const f = useFonts.getState();
+  return { fontFamily: codeFontFamily(f), fontSize: f.codeSize, lineHeight: codeLineHeight(f.codeSize) };
+};
+
+// Fonts are per editor, so update every open one (diff editors list their two sides).
+useFonts.subscribe((f, prev) => {
+  if (f.codeFont === prev.codeFont && f.codeSize === prev.codeSize) return;
+  void loadCodeFont(f).then(() => {
+    monaco.editor.remeasureFonts();
+    for (const ed of monaco.editor.getEditors()) ed.updateOptions(codeFontOptions());
+  });
+});
 
 export function languageFor(path: string): string {
   const lower = path.toLowerCase();

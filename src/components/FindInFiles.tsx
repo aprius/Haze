@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { getModel, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type FileMatches, type ReplaceTarget, type SearchContext, type SearchMatch, type SearchQuery, type SearchResults } from "../lib/ipc";
-import { languageFor, monaco } from "../lib/monaco";
+import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, isWithin, relative } from "../lib/path";
 import { closeFindInFiles, useUi } from "../store/ui";
@@ -98,8 +98,7 @@ function Preview({ path, hash, match }: { path: string | null; hash: string | nu
       readOnly: true,
       automaticLayout: true,
       minimap: { enabled: false },
-      fontSize: 12,
-      lineHeight: 18,
+      ...codeFontOptions(),
       scrollBeyondLastLine: false,
       renderLineHighlight: "none",
       theme: monacoTheme(),
