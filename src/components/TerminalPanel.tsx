@@ -4,7 +4,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ILink } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ChevronDown, ChevronUp, Plus, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, PanelBottom, PanelRight, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/ipc";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
@@ -339,6 +339,7 @@ export function TerminalPanel({ project }: { project: Project }) {
   const [searching, setSearching] = useState(false);
   const order = ui?.terminalOrder ?? [];
   const active = ui?.activeTerminal ?? null;
+  const right = ui?.terminalDock !== "bottom";
 
   useEffect(() => {
     if (ui?.terminalVisible && ui.bottomTab === "terminal" && order.length === 0 && connected) void newTerminal(project.id, project.path);
@@ -363,7 +364,7 @@ export function TerminalPanel({ project }: { project: Project }) {
   };
 
   return (
-    <div className="terminal-panel">
+    <div className={"terminal-panel" + (right ? " docked-right" : "")}>
       <div className="panel-header">
         <ToolTabs project={project} />
         <div className="panel-actions">
@@ -373,8 +374,15 @@ export function TerminalPanel({ project }: { project: Project }) {
           <button className="icon-btn" title="Find (Ctrl+F)" onClick={() => setSearching((v) => !v)}>
             <Search size={14} />
           </button>
+          <button
+            className="icon-btn"
+            title={right ? "Move to Bottom" : "Move to Right"}
+            onClick={() => updateUi(project.id, { terminalDock: right ? "bottom" : "right" })}
+          >
+            {right ? <PanelBottom size={14} /> : <PanelRight size={14} />}
+          </button>
           <button className="icon-btn" title="Hide (Alt+F12)" onClick={() => updateUi(project.id, { terminalVisible: false })}>
-            <ChevronDown size={14} />
+            {right ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
           </button>
         </div>
       </div>
@@ -403,7 +411,7 @@ export function TerminalPanel({ project }: { project: Project }) {
             <TerminalView key={id} id={id} project={project} active={id === active} />
           ))}
         </div>
-        {/* One shell needs no list; more stack vertically beside the screen, like VS Code. */}
+        {/* One shell needs no list; more get one beside the screen (above it when docked right). */}
         {order.length > 1 && (
           <div className="term-list">
             {order.map((id) => {

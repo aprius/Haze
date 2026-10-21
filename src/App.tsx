@@ -54,8 +54,23 @@ function ProjectView({ project }: { project: Project }) {
         <div className="center">
           <EditorArea project={project} />
         </div>
+        {ui.terminalVisible && ui.terminalDock === "right" && (
+          <>
+            <Splitter
+              vertical
+              value={ui.terminalWidth}
+              min={280}
+              max={Math.max(400, window.innerWidth - 360)}
+              invert
+              onChange={(v) => updateUi(project.id, { terminalWidth: v })}
+            />
+            <div className="bottom docked-right" style={{ width: ui.terminalWidth }}>
+              <ToolPanel project={project} />
+            </div>
+          </>
+        )}
       </div>
-      {ui.terminalVisible && (
+      {ui.terminalVisible && ui.terminalDock === "bottom" && (
         <>
           <Splitter
             vertical={false}
@@ -66,16 +81,26 @@ function ProjectView({ project }: { project: Project }) {
             onChange={(v) => updateUi(project.id, { terminalHeight: v })}
           />
           <div className="bottom" style={{ height: ui.terminalHeight }}>
-            {/* The terminal stays mounted so xterm keeps its screen while Build is shown. */}
-            <div className="bottom-slot" style={{ display: ui.bottomTab === "terminal" ? "flex" : "none" }}>
-              <TerminalPanel project={project} />
-            </div>
-            {ui.bottomTab === "build" && <BuildPanel project={project} />}
-            {ui.bottomTab === "git" && <GitPanel project={project} />}
+            <ToolPanel project={project} />
           </div>
         </>
       )}
     </div>
+  );
+}
+
+/** Terminal, Build and Git, docked below or beside the editor. */
+function ToolPanel({ project }: { project: Project }) {
+  const tab = useWorkspace((s) => s.ui[project.id]?.bottomTab ?? "terminal");
+  return (
+    <>
+      {/* The terminal stays mounted so xterm keeps its screen while Build is shown. */}
+      <div className="bottom-slot" style={{ display: tab === "terminal" ? "flex" : "none" }}>
+        <TerminalPanel project={project} />
+      </div>
+      {tab === "build" && <BuildPanel project={project} />}
+      {tab === "git" && <GitPanel project={project} />}
+    </>
   );
 }
 

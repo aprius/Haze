@@ -305,16 +305,6 @@ fn build_command(spec: &SessionSpec, id: &str) -> CommandBuilder {
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "Haze");
     cmd.env("HAZE_TERMINAL_ID", id);
-    // Apps started from Finder/Dock get no locale, so the shell runs in the C
-    // locale and edits UTF-8 input byte by byte: Vietnamese shows as <0303>
-    // and IME backspaces split characters. Terminal.app sets one too.
-    #[cfg(unix)]
-    if !["LC_ALL", "LC_CTYPE", "LANG"]
-        .iter()
-        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()) || spec.env.iter().any(|(n, _)| n == k))
-    {
-        cmd.env("LC_CTYPE", if cfg!(target_os = "macos") { "UTF-8" } else { "C.UTF-8" });
-    }
     for (k, v) in &spec.env {
         cmd.env(k, v);
     }

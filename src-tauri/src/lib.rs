@@ -542,7 +542,8 @@ async fn pty_list(pty: State<'_, Pty>) -> CmdResult<Vec<SessionInfo>> {
 }
 
 #[tauri::command]
-async fn pty_create(pty: State<'_, Pty>, spec: SessionSpec) -> CmdResult<SessionInfo> {
+async fn pty_create(pty: State<'_, Pty>, mut spec: SessionSpec) -> CmdResult<SessionInfo> {
+    pty::add_utf8_locale(&mut spec.env);
     let client = pty.client.clone();
     blocking(move || match client.request(Request::Create { spec })? {
         Reply::Created { session } => Ok(session),

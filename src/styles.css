@@ -693,6 +693,18 @@ kbd {
   scrollbar-width: thin;
 }
 
+.docked-right .terminal-main {
+  flex-direction: column;
+}
+
+.docked-right .term-list {
+  order: -1;
+  width: auto;
+  max-height: 35%;
+  border-left: 0;
+  border-bottom: 1px solid var(--border);
+}
+
 .term-item {
   display: flex;
   align-items: center;

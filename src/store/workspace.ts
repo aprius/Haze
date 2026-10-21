@@ -28,6 +28,9 @@ export interface ProjectUi {
   sidebarWidth: number;
   terminalVisible: boolean;
   terminalHeight: number;
+  terminalWidth: number;
+  /** Where the tool panel (Terminal, Build, Git) sits beside the editor. */
+  terminalDock: "right" | "bottom";
   terminalOrder: string[];
   activeTerminal: string | null;
   /** Most recently opened files, newest first (Ctrl+E). */
@@ -55,6 +58,8 @@ export const defaultUi = (): ProjectUi => ({
   sidebarWidth: 300,
   terminalVisible: false,
   terminalHeight: 280,
+  terminalWidth: 560,
+  terminalDock: "right",
   terminalOrder: [],
   activeTerminal: null,
   recentFiles: [],
