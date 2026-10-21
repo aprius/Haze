@@ -126,6 +126,16 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       return lo + (h > 0 ? Math.min(1, Math.max(0, (y - y0) / h)) : 0);
     };
 
+    // Like Rider: centred on the block's first left line (or on the marker of an
+    // empty block), and kept inside the block while its top is scrolled away.
+    const BUTTON = 16;
+    const applyTop = (l0: number, l1: number) => {
+      if (l0 === l1) return l0 - BUTTON / 2;
+      const line = left.getOption(monaco.editor.EditorOption.lineHeight);
+      const top = l0 + (line - BUTTON) / 2;
+      return Math.max(top, Math.min((line - BUTTON) / 2, l1 - line + (line - BUTTON) / 2));
+    };
+
     let frame = 0;
     const draw = () => {
       frame = 0;
@@ -147,7 +157,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
         paths +=
           `<path class="rd-link rd-${kind}" d="${connectorPath(width, l0, l1, r0, r1)}"/>` +
           `<path class="rd-edge rd-${kind}" d="${connectorCurve(width, lt, rt)} ${connectorCurve(width, lb, rb)}"/>`;
-        if (editable) buttons += `<button class="rd-apply" data-chunk="${i}" title="Replace with the left side" style="top:${Math.round(l0)}px">»</button>`;
+        if (editable) buttons += `<button class="rd-apply" data-chunk="${i}" title="Replace with the left side" style="top:${Math.round(applyTop(l0, l1))}px">»</button>`;
       });
       gapEl.innerHTML = `<svg width="${width}" height="${height}">${paths}</svg>${buttons}`;
     };
