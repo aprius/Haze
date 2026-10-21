@@ -92,7 +92,8 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
 - **Stashes**: view, apply, pop, drop, unstash as branch, stash including untracked files.
 - **AI checkpoints**: snapshot the whole working tree (including new files, without touching index or branches) before letting an agent run; *Since checkpoint* lists every file it changed, with diffs.
 - **Reviewed marks** per file, cleared automatically when the file changes again.
-- Never blocks on a password prompt (`GIT_TERMINAL_PROMPT=0`); use a credential helper or SSH agent.
+- **GitHub / GitLab accounts** (Settings), like Rider: log in with a token (GitHub, GitHub Enterprise, GitLab.com or self-hosted GitLab; *Generate…* opens the token page with the right scopes) or *Log In via GitHub…* in the browser. Tokens are kept in the system keychain, and push/pull/fetch to that server use the account through Haze's own credential helper, ahead of any stored credential (other hosts keep your git setup). A push rejected for credentials offers *Log In…*.
+- Never blocks on a password prompt (`GIT_TERMINAL_PROMPT=0`); other hosts use your credential helper or SSH agent.
 
 ![Git](docs/git.png)
 ![3-way merge](docs/merge.png)
@@ -150,6 +151,8 @@ npm install
 npm run tauri dev        # run in development mode
 npm run tauri build      # build installers for the current platform
 ```
+
+*Log In via GitHub…* needs a GitHub OAuth App with Device Flow enabled: build with `HAZE_GITHUB_CLIENT_ID=<client id>`. Without it, Settings offers token login only.
 
 ### Tests
 

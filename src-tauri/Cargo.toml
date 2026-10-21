@@ -22,6 +22,7 @@ fancy-regex = "0.19.2"
 globset = "0.4.20"
 ignore = "0.4.33"
 interprocess = "2.4.6"
+keyring = "4.2.0"
 log = "0.4.34"
 notify = "8.2.0"
 nucleo-matcher = "0.3.1"
@@ -41,6 +42,7 @@ toml_edit = "0.25.17"
 trash = "5.2.9"
 tree-sitter = "0.27.1"
 tree-sitter-c-sharp = "0.23.5"
+ureq = { version = "3.4.2", features = ["json", "platform-verifier"] }
 uuid = { version = "1.28.0", features = ["v4"] }
 
 [target.'cfg(unix)'.dependencies]

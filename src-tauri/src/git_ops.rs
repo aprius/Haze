@@ -1,6 +1,7 @@
 //! Git operations behind the Commit and Git tool windows. Everything goes
 //! through the system git CLI, never prompting (GIT_TERMINAL_PROMPT=0), so a
-//! missing credential fails fast with git's own message.
+//! missing credential fails fast with git's own message. GitHub/GitLab
+//! accounts added in Settings supply their tokens (see git_auth).
 
 use std::io::Write;
 use std::path::Path;
@@ -14,6 +15,7 @@ use crate::text::{self, Decoded};
 
 fn git(root: &Path) -> std::process::Command {
     let mut cmd = git_command();
+    crate::git_auth::configure(&mut cmd);
     cmd.arg("-C")
         .arg(root)
         .env("GIT_TERMINAL_PROMPT", "0")

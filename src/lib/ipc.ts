@@ -85,6 +85,32 @@ export interface AgentStatus {
   at: number;
 }
 
+export type GitProvider = "github" | "gitlab";
+
+/** A GitHub/GitLab account from Settings; its token stays in the OS keychain. */
+export interface GitAccount {
+  id: string;
+  provider: GitProvider;
+  server: string;
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
+export interface GitAccountsInfo {
+  accounts: GitAccount[];
+  /** "Log In via GitHub…" (browser) is available in this build. */
+  githubOauth: boolean;
+}
+
+export interface DeviceCode {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  interval: number;
+  expiresIn: number;
+}
+
 export interface HookStatus {
   installed: boolean;
   stale: boolean;
@@ -401,6 +427,13 @@ export const api = {
   gitBlame: (root: string, rel: string, contents: string | null, encoding: TextEncoding | null) =>
     invoke<BlameLine[]>("git_blame", { root, rel, contents, encoding }),
   gitRun: (root: string, args: string[]) => invoke<GitOutput>("git_run", { root, args }),
+  gitAccounts: () => invoke<GitAccountsInfo>("git_accounts"),
+  gitAccountLogin: (provider: GitProvider, server: string, token: string) =>
+    invoke<GitAccount>("git_account_login", { provider, server, token }),
+  gitAccountRemove: (id: string) => invoke<void>("git_account_remove", { id }),
+  gitDeviceStart: () => invoke<DeviceCode>("git_device_start"),
+  gitDevicePoll: (code: DeviceCode) => invoke<GitAccount>("git_device_poll", { code }),
+  gitDeviceCancel: () => invoke<void>("git_device_cancel"),
   gitRebaseInteractive: (root: string, base: string | null, steps: RebaseStep[]) =>
     invoke<GitOutput>("git_rebase_interactive", { root, base, steps }),
   gitCheckpoint: (root: string, label: string) => invoke<string>("git_checkpoint", { root, label }),
