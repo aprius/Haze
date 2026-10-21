@@ -14,7 +14,6 @@ import { useWorkspace } from "../store/workspace";
 import { FloatWindow } from "./Overlays";
 
 export interface DiffSpec {
-  /** Repository root. */
   root: string;
   rel: string;
   /** Path on the left side when the file was renamed. */

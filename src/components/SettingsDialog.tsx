@@ -14,7 +14,6 @@ import {
   type FontSettings,
 } from "../lib/fonts";
 import { api, errorMessage, type HookStatus } from "../lib/ipc";
-import { useTree } from "../store/tree";
 import { popupClosed } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
@@ -198,7 +197,6 @@ export function PageHeader({ title, desc, children }: { title: string; desc?: st
   );
 }
 
-/** A settings row with a label, a description and a switch on the right. */
 function SwitchRow({ label, desc, checked, onChange }: { label: string; desc?: string; checked: boolean; onChange: (on: boolean) => void }) {
   return (
     <label className="settings-row">
@@ -257,10 +255,7 @@ function ProjectViewSection() {
           label="Nest related files"
           desc="appsettings.*.json, *.razor.cs, *.Designer.cs… appear under the file they belong to."
           checked={nestFiles}
-          onChange={(on) => {
-            useWorkspace.setState({ nestFiles: on });
-            useTree.setState({ dirs: {} });
-          }}
+          onChange={(on) => useWorkspace.setState({ nestFiles: on })}
         />
       </div>
     </>

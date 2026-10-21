@@ -1,4 +1,4 @@
-# Homebrew cask cho Haze. Tự cập nhật version/sha256 bởi .github/workflows/release.yml.
+# Homebrew cask for Haze. version/sha256 are updated by .github/workflows/release.yml.
 #   brew tap aprius/haze https://github.com/aprius/Haze
 #   brew install --cask haze
 cask "haze" do

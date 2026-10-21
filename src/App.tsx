@@ -297,7 +297,6 @@ export default function App() {
     return () => void un.then((f) => f());
   }, []);
 
-  // Re-list directories when nesting is toggled.
   const nest = useWorkspace((s) => s.nestFiles);
   useEffect(() => {
     useTree.setState({ dirs: {} });

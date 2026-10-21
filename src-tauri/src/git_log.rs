@@ -13,7 +13,6 @@ use crate::git::git_command;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogQuery {
-    /// Maximum number of commits.
     pub limit: usize,
     /// Branches/refs to show; empty = all refs (`--all`).
     #[serde(default)]
