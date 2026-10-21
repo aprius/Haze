@@ -52,11 +52,33 @@ fn run(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(out.stdout)
 }
 
+/// The repository root, spelled like `dir`. `--show-toplevel` prints
+/// `C:/x/repo` on Windows and resolves symlinks, so paths built from it would
+/// not match the ones the file tree and the editor use for the same files.
+pub fn toplevel_of(dir: &Path) -> Result<PathBuf> {
+    let cdup = run(dir, &["rev-parse", "--show-cdup"])?;
+    let mut top = dir.to_path_buf();
+    for part in String::from_utf8_lossy(&cdup).trim().split('/') {
+        match part {
+            "" => {}
+            ".." => {
+                top.pop();
+            }
+            p => top.push(p),
+        }
+    }
+    // Walking up a symlinked `dir` can leave the repository; trust git then.
+    let real = PathBuf::from(
+        String::from_utf8_lossy(&run(dir, &["rev-parse", "--show-toplevel"])?).trim(),
+    );
+    let same = matches!((top.canonicalize(), real.canonicalize()), (Ok(a), Ok(b)) if a == b);
+    Ok(if same { top } else { real })
+}
+
 pub fn status(dir: &Path) -> Result<GitStatus> {
-    let Ok(top) = run(dir, &["rev-parse", "--show-toplevel"]) else {
+    let Ok(top) = toplevel_of(dir) else {
         return Ok(GitStatus::default());
     };
-    let top = PathBuf::from(String::from_utf8_lossy(&top).trim());
     let out = run(
         &top,
         &[
@@ -153,6 +175,30 @@ mod tests {
                 ("src/D.cs".into(), FileStatus::Added),
             ]
         );
+    }
+
+    #[test]
+    fn toplevel_is_spelled_like_the_project_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        run(&root, &["init", "-q"]).unwrap();
+        // Compared as text: on Windows git itself would print `C:/…/repo`.
+        let top = toplevel_of(&root.join("src")).unwrap();
+        assert_eq!(top.to_string_lossy(), root.to_string_lossy());
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link");
+            std::os::unix::fs::symlink(&root, &link).unwrap();
+            assert_eq!(toplevel_of(&link.join("src")).unwrap(), link);
+            std::fs::write(root.join("src/A.cs"), "").unwrap();
+            let st = status(&link).unwrap();
+            assert_eq!(
+                st.files
+                    .get(link.join("src").join("A.cs").to_str().unwrap()),
+                Some(&FileStatus::Untracked)
+            );
+        }
     }
 
     #[test]

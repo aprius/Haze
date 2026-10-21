@@ -8,7 +8,7 @@ import { create } from "zustand";
 import { getModel, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type FileMatches, type ReplaceTarget, type SearchContext, type SearchMatch, type SearchQuery, type SearchResults } from "../lib/ipc";
 import { languageFor, monaco } from "../lib/monaco";
-import { basename, dirname, relative } from "../lib/path";
+import { basename, dirname, isWithin, relative } from "../lib/path";
 import { closeFindInFiles, useUi } from "../store/ui";
 import { solutionDirs, useDotnet } from "../store/dotnet";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -82,11 +82,12 @@ function Toggle({ on, title, label, onClick }: { on: boolean; title: string; lab
   );
 }
 
-/** Read-only editor showing the selected match in context. */
-function Preview({ path, match }: { path: string | null; match: SearchMatch | null }) {
+/** Read-only editor showing the selected match in context; `hash` is the searched content's. */
+function Preview({ path, hash, match }: { path: string | null; hash: string | null; match: SearchMatch | null }) {
   const host = useRef<HTMLDivElement>(null);
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const own = useRef<monaco.editor.ITextModel | null>(null);
+  const ownHash = useRef<string | null>(null);
   const decorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
 
   useEffect(() => {
@@ -127,20 +128,22 @@ function Preview({ path, match }: { path: string | null; match: SearchMatch | nu
     const buffer = getModel(path);
     if (buffer) {
       show(buffer);
-    } else if (own.current?.uri.path === monaco.Uri.file(path).path) {
+    } else if (own.current?.uri.path === monaco.Uri.file(path).path && ownHash.current === hash) {
       show(own.current);
     } else {
+      // Read again after a replace changed the file, or the highlight lands on old text.
       void api.readFile(path).then((f) => {
         if (cancelled || f.kind !== "text") return;
         own.current?.dispose();
         own.current = monaco.editor.createModel(f.content, languageFor(path), monaco.Uri.from({ scheme: "preview", path: monaco.Uri.file(path).path }));
+        ownHash.current = hash;
         show(own.current);
       });
     }
     return () => {
       cancelled = true;
     };
-  }, [path, match]);
+  }, [path, hash, match]);
 
   return <div ref={host} className="find-preview" />;
 }
@@ -171,7 +174,8 @@ export function FindInFiles({ project }: { project: Project | null }) {
     if (directory) {
       patch.directory = directory;
       patch.scope = "directory";
-    } else if (!useFindOptions.getState().directory && project) {
+    } else if (project && !isWithin(useFindOptions.getState().directory || "", project.path)) {
+      // Empty, or left over from another project.
       patch.directory = project.path;
     }
     set(patch);
@@ -213,14 +217,15 @@ export function FindInFiles({ project }: { project: Project | null }) {
     }
     const openTabs = Object.values(useWorkspace.getState().ui).flatMap((u) => u.tabs.map((t) => t.path));
     const scope = {
+      // "Solution" without a solution (another project chose it) searches the project.
       dirs:
-        o.scope === "project"
-          ? [project.path]
-          : o.scope === "solution" && solutionDirs(project.id).length
-            ? solutionDirs(project.id)
-            : o.scope === "directory"
-              ? [o.directory || project.path]
-              : [],
+        o.scope === "solution" && solutionDirs(project.id).length
+          ? solutionDirs(project.id)
+          : o.scope === "directory"
+            ? [o.directory || project.path]
+            : o.scope === "openFiles"
+              ? []
+              : [project.path],
       files: o.scope === "openFiles" ? [...new Set(openTabs)] : [],
       fileMask: o.fileMask.trim() || null,
       includeIgnored: o.includeIgnored,
@@ -387,7 +392,9 @@ export function FindInFiles({ project }: { project: Project | null }) {
         else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
       }
     };
+    const toggles: Record<string, "matchCase" | "wholeWord" | "isRegex"> = { KeyC: "matchCase", KeyO: "wholeWord", KeyX: "isRegex" };
     if (e.key === "Escape") closeFindInFiles();
+    else if (e.altKey && !e.ctrlKey && !e.metaKey && toggles[e.code]) set({ [toggles[e.code]]: !opts[toggles[e.code]] });
     else if (e.key === "ArrowDown") move(1);
     else if (e.key === "ArrowUp") move(-1);
     else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -400,6 +407,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
     e.stopPropagation();
   };
 
+  const shownScope = opts.scope === "solution" && !hasSolution ? "project" : opts.scope;
   const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 10);
   const last = Math.min(rows.length, Math.ceil((scrollTop + listHeight) / ROW_H) + 10);
 
@@ -445,7 +453,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
         <div className="find-options">
           <div className="seg">
             {(["project", ...(hasSolution ? ["solution"] : []), "directory", "openFiles"] as ScopeKind[]).map((s) => (
-              <button key={s} className={"seg-btn" + (opts.scope === s ? " on" : "")} onClick={() => set({ scope: s })}>
+              <button key={s} className={"seg-btn" + (shownScope === s ? " on" : "")} onClick={() => set({ scope: s })}>
                 {s === "project" ? "In Project" : s === "solution" ? "Solution" : s === "directory" ? "Directory" : "Open Files"}
               </button>
             ))}
@@ -532,7 +540,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
           </div>
           {results && rows.length === 0 && <div className="se-empty">No matches</div>}
         </div>
-        <Preview path={selMatch?.file.path ?? null} match={selMatch?.match ?? null} />
+        <Preview path={selMatch?.file.path ?? null} hash={selMatch?.file.hash ?? null} match={selMatch?.match ?? null} />
         <div className="find-footer">
           <span className="muted small">Enter: open · Ctrl+Enter: replace · Space: tick/untick · Esc: close</span>
           {replace && (

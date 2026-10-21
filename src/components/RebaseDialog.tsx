@@ -1,7 +1,7 @@
 // Interactive rebase dialog: reorder commits and pick, reword, squash,
 // fixup, edit or drop each, then run it without any text editor.
 import { ArrowDown, ArrowUp } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { api, errorMessage, type RebaseStep } from "../lib/ipc";
 import { saveAll } from "./EditorArea";
@@ -37,6 +37,12 @@ export function RebaseDialog({ project }: { project: Project | null }) {
   const [base, setBase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const root = projectId ? repo(projectId).root : null;
+  const modal = useRef<HTMLDivElement>(null);
+
+  // Focus the dialog so Esc closes it (focus is still on the log behind it).
+  useEffect(() => {
+    if (from) requestAnimationFrame(() => modal.current?.focus());
+  }, [projectId, from]);
 
   useEffect(() => {
     if (!root || !from) return;
@@ -105,7 +111,7 @@ export function RebaseDialog({ project }: { project: Project | null }) {
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-      <div className="modal rebase-dialog" tabIndex={-1} onKeyDown={(e) => (e.key === "Escape" && close(), e.stopPropagation())}>
+      <div ref={modal} className="modal rebase-dialog" tabIndex={-1} onKeyDown={(e) => (e.key === "Escape" && close(), e.stopPropagation())}>
         <div className="modal-title">Interactive Rebase from {from.slice(0, 8)}</div>
         {error && <div className="modal-error">{error}</div>}
         {!rows && !error && <div className="muted small">Loading…</div>}

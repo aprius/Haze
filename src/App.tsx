@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { closeTabsWithPrompt, EditorArea, revealInTree, saveAll, selectedText, triggerEditorAction } from "./components/EditorArea";
 import { FileTree } from "./components/FileTree";
 import { FindInFiles } from "./components/FindInFiles";
@@ -14,7 +14,7 @@ import { RebaseDialog } from "./components/RebaseDialog";
 import { openSettings, SettingsDialog } from "./components/SettingsDialog";
 import { refreshRepo } from "./store/git";
 import { RunBar, runConfig, runConfigs } from "./components/RunBar";
-import { TerminalPanel } from "./components/TerminalPanel";
+import { TerminalPanel, toggleTerminal } from "./components/TerminalPanel";
 import { UsagesPopup } from "./components/UsagesPopup";
 import { notifyFileChanges, startCsharp, stopCsharp } from "./lib/lsp/csharp";
 import { defaultBuildTarget, loadDotnetInfo, startBuild, useDotnet } from "./store/dotnet";
@@ -107,7 +107,10 @@ function useGlobalShortcuts(project: Project | null) {
       else if (e.shiftKey && !mod && !e.altKey && e.key === "F6" && triggerEditorAction("haze.rename")) {
         /* handled */
       }
-      else if (mod && e.shiftKey && k === "k" && project) openPushDialog(project);
+      // Capture phase: Monaco binds Alt+F12 to Peek Definition on Windows and macOS.
+      else if (((e.altKey && !mod && e.key === "F12") || (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "`")) && project) {
+        toggleTerminal(project.id);
+      } else if (mod && e.shiftKey && k === "k" && project) openPushDialog(project);
       else if (mod && !e.shiftKey && !e.altKey && k === "k" && project) {
         useWorkspace.getState().updateUi(project.id, { sidebarVisible: true, sidebarTab: "commit" });
         requestAnimationFrame(() => (document.querySelector(".commit-message") as HTMLElement | null)?.focus());
@@ -178,13 +181,6 @@ function useGlobalShortcuts(project: Project | null) {
       if (!project) return;
       const ui = ws.ui[project.id];
       if (!ui) return;
-      if ((e.altKey && e.key === "F12") || (e.ctrlKey && e.key === "`")) {
-        e.preventDefault();
-        const inTerminal = (document.activeElement as HTMLElement | null)?.closest(".terminal-panel");
-        // Like Rider: Alt+F12 focuses the terminal, pressing it there hides it.
-        ws.updateUi(project.id, { terminalVisible: !(ui.terminalVisible && inTerminal) });
-        return;
-      }
       if (e.altKey && e.key === "1") {
         e.preventDefault();
         const inTree = (document.activeElement as HTMLElement | null)?.closest(".file-tree");
@@ -223,17 +219,24 @@ export default function App() {
 
   // Watch open projects; keep tree, git and buffers in sync with disk.
   const openRoots = projects.filter((p) => p.open).map((p) => p.path).join("\n");
+  const watched = useRef(new Set<string>());
   useEffect(() => {
     if (!loaded) return;
     const open = useWorkspace.getState().projects.filter((p) => p.open);
+    const roots = new Set(open.map((p) => p.path));
+    // Only what changed: re-watching every project would drop their changes meanwhile.
+    for (const root of [...watched.current]) {
+      if (roots.has(root)) continue;
+      watched.current.delete(root);
+      void api.unwatchProject(root).catch(() => {});
+    }
     for (const p of open) {
+      if (watched.current.has(p.path)) continue;
+      watched.current.add(p.path);
       void api.watchProject(p.path).catch((e) => console.warn("watch failed", p.path, e));
       refreshGit(p.id, p.path);
       refreshRepo(p.id, p.path);
     }
-    return () => {
-      for (const p of open) void api.unwatchProject(p.path).catch(() => {});
-    };
   }, [loaded, openRoots]);
 
   // C# support for open .NET projects: discover projects, then start Roslyn.

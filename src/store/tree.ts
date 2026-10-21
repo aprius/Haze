@@ -30,12 +30,25 @@ export const useTree = create<TreeState>(() => ({
 }));
 
 const inflight = new Map<string, Promise<void>>();
+/** Forced reloads asked for while a listing was in flight: it may predate the change. */
+const again = new Map<string, Promise<void>>();
 
 export function loadDir(path: string, nest: boolean, force = false): Promise<void> {
   const cur = useTree.getState().dirs[path];
   if (!force && cur && "entries" in cur) return Promise.resolve();
   const pending = inflight.get(path);
-  if (pending) return pending;
+  if (pending && !force) return pending;
+  if (pending) {
+    let next = again.get(path);
+    if (!next) {
+      next = pending.then(() => {
+        again.delete(path);
+        return loadDir(path, nest, true);
+      });
+      again.set(path, next);
+    }
+    return next;
+  }
   if (!cur) useTree.setState((s) => ({ dirs: { ...s.dirs, [path]: { loading: true } } }));
   const p = api
     .listDir(path, nest)

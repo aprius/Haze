@@ -6,7 +6,7 @@
 // - a dirty buffer is never replaced; it gets a "changed on disk" notice;
 // - saving refuses to overwrite a file that changed since it was loaded.
 import { create } from "zustand";
-import { api, errorMessage, type Eol, type TextEncoding } from "./ipc";
+import { api, errorMessage, type Eol, type FileContent, type TextEncoding } from "./ipc";
 import { languageFor, monaco } from "./monaco";
 
 export type BufferMeta =
@@ -115,6 +115,15 @@ export function ensureBuffer(path: string, draft?: { content: string; baseMtime:
         saving: false,
       });
     } catch (e) {
+      if (draft && !monaco.editor.getModel(uriFor(path))) {
+        // The file is gone (an agent moved or deleted it): keep the unsaved text; saving recreates the file.
+        const model = monaco.editor.createModel(draft.content, languageFor(path), uriFor(path));
+        models.set(path, { model, savedVersion: -1 });
+        trackDirty(path, model);
+        const eol = model.getEOL() === "\r\n" ? "crlf" : "lf";
+        setMeta(path, { status: "text", encoding: "utf8", eol, mtime: 0, dirty: true, diskChanged: true, saving: false });
+        return;
+      }
       setMeta(path, { status: "error", message: errorMessage(e) });
     } finally {
       loading.delete(path);
@@ -146,23 +155,35 @@ export async function saveBuffer(path: string, opts: { force?: boolean } = {}): 
   }
 }
 
-/** Replaces the buffer with the disk content, discarding local edits. */
-export async function reloadBuffer(path: string): Promise<void> {
+let reloading = false;
+
+/** True while a buffer is being replaced by the disk content (not an edit by the user). */
+export function reloadingFromDisk(): boolean {
+  return reloading;
+}
+
+/** Replaces the buffer with the disk content (`file`, when just read), discarding local edits. */
+export async function reloadBuffer(path: string, read?: FileContent): Promise<void> {
   const entry = models.get(path);
   if (!entry) return;
-  const file = await api.readFile(path);
+  const file = read ?? (await api.readFile(path));
   if (file.kind !== "text") {
     disposeBuffer(path);
     setMeta(path, file.kind === "binary" ? { status: "binary", size: file.size } : { status: "tooLarge", size: file.size });
     return;
   }
-  if (entry.model.getValue() !== file.content) {
-    // pushEditOperations keeps undo history, so a reload can be undone.
-    entry.model.pushEditOperations([], [{ range: entry.model.getFullModelRange(), text: file.content }], () => null);
+  reloading = true;
+  try {
+    if (entry.model.getValue() !== file.content) {
+      // pushEditOperations keeps undo history, so a reload can be undone.
+      entry.model.pushEditOperations([], [{ range: entry.model.getFullModelRange(), text: file.content }], () => null);
+    }
+    // Line endings can change on disk too (checkout with autocrlf); saving must keep the new ones.
+    const eol = file.eol === "crlf" ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF;
+    if (entry.model.getEndOfLineSequence() !== eol) entry.model.pushEOL(eol);
+  } finally {
+    reloading = false;
   }
-  // Line endings can change on disk too (checkout with autocrlf); saving must keep the new ones.
-  const eol = file.eol === "crlf" ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF;
-  if (entry.model.getEndOfLineSequence() !== eol) entry.model.pushEOL(eol);
   entry.savedVersion = entry.model.getAlternativeVersionId();
   patchText(path, { mtime: file.mtime, encoding: file.encoding, eol: file.eol, dirty: false, diskChanged: false });
   listeners.forEach((l) => l());
@@ -185,7 +206,8 @@ export async function handleDiskChanges(paths: string[] | "all"): Promise<void> 
     if (isDirty(path)) {
       if (file.content !== models.get(path)?.model.getValue()) patchText(path, { diskChanged: true });
     } else {
-      await reloadBuffer(path);
+      // Applied right away: reading the file again would leave room for a keystroke to be overwritten.
+      await reloadBuffer(path, file);
     }
   }
 }
@@ -206,6 +228,8 @@ export function disposeBuffer(path: string): void {
 
 /** Moves a buffer to a new path after a rename in the tree. */
 export function renameBuffer(from: string, to: string): void {
+  // Moving into the folder it is already in: creating a model for the same URI would throw.
+  if (from === to) return;
   for (const [path, entry] of [...models.entries()]) {
     const target =
       path === from

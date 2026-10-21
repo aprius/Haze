@@ -160,7 +160,9 @@ fn watch_project(
         }
         let _ = app.emit("fs://changed", change);
     });
-    watchers.watch(&root, sink).map_err(err)
+    // Ordered with unwatch_project (both run on the main thread); the slow part runs on its own thread.
+    watchers.watch(&root, sink);
+    Ok(())
 }
 
 #[tauri::command]

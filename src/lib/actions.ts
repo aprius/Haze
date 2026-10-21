@@ -1,6 +1,7 @@
 // Commands shown in Search Everywhere's "Actions" tab (Ctrl+Shift+A).
 import { closeTabsWithPrompt, copyContext, revealInTree, saveAll } from "../components/EditorArea";
 import { openSettings } from "../components/SettingsDialog";
+import { toggleTerminal } from "../components/TerminalPanel";
 import { openFolder } from "../components/Shell";
 import { newTerminal } from "../store/terminals";
 import { useTree } from "../store/tree";
@@ -73,7 +74,7 @@ export const actions: Action[] = [
     label: "Terminal",
     shortcut: "Alt+F12",
     needsProject: true,
-    run: withProject((id) => useWorkspace.getState().updateUi(id, (u) => ({ terminalVisible: !u.terminalVisible }))),
+    run: withProject((id) => toggleTerminal(id, false)),
   },
   { id: "newTerminal", label: "New Terminal", needsProject: true, run: withProject((id, path) => void newTerminal(id, path)) },
   {

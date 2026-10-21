@@ -14,6 +14,7 @@ import { openSettings } from "./SettingsDialog";
 import { useWorkspace, type Project } from "../store/workspace";
 import { closeTabsWithPrompt, useCursor } from "./EditorArea";
 import { openMenu } from "./Overlays";
+import { toggleTerminal } from "./TerminalPanel";
 
 export async function openFolder(): Promise<void> {
   const dir = await open({ directory: true, multiple: false, title: "Open Folder" });
@@ -202,7 +203,6 @@ export function StatusBar({ project }: { project: Project | null }) {
   const ui = useWorkspace((s) => (project ? s.ui[project.id] : undefined));
   const meta = useBuffers((s) => (ui?.activeTab ? s.meta[ui.activeTab] : undefined));
   const cursor = useCursor();
-  const updateUi = useWorkspace((s) => s.updateUi);
   return (
     <div className="status-bar">
       {project && (
@@ -231,13 +231,15 @@ export function StatusBar({ project }: { project: Project | null }) {
             {cursor.selected > 0 && ` (${cursor.selected} chars)`}
           </span>
           <span className="status-item">{meta.eol.toUpperCase()}</span>
-          <span className="status-item">{meta.encoding.toUpperCase().replace("UTF", "UTF-").replace("-BOM", " BOM")}</span>
+          <span className="status-item">
+            {meta.encoding === "windows1252" ? "Windows-1252" : meta.encoding.toUpperCase().replace("UTF", "UTF-").replace("-BOM", " BOM")}
+          </span>
         </>
       )}
       {project && (
         <button
-          className={"status-item status-btn" + (ui?.terminalVisible ? " on" : "")}
-          onClick={() => updateUi(project.id, (u) => ({ terminalVisible: !u.terminalVisible }))}
+          className={"status-item status-btn" + (ui?.terminalVisible && ui.bottomTab === "terminal" ? " on" : "")}
+          onClick={() => toggleTerminal(project.id, false)}
           title="Terminal (Alt+F12)"
         >
           <TerminalSquare size={12} /> Terminal

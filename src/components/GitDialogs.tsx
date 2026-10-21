@@ -145,16 +145,25 @@ function branchMenu(project: Project, b: Branch, current: string | null): MenuIt
 
 // ------------------------------------------------------------------ log filter bridge
 
-type LogFilterPatch = { refs?: string[]; path?: string | null; text?: string };
-const logFilterListeners = new Set<(projectId: string, f: LogFilterPatch) => void>();
+type LogFilterPatch = { refs?: string[]; path?: string | null };
+const logFilterListeners = new Set<(projectId: string) => void>();
+// Kept until the Git window takes it: it often mounts only after the filter is set.
+const pendingLogFilters = new Map<string, LogFilterPatch>();
 
-export function onLogFilter(cb: (projectId: string, f: LogFilterPatch) => void): () => void {
+export function onLogFilter(cb: (projectId: string) => void): () => void {
   logFilterListeners.add(cb);
   return () => logFilterListeners.delete(cb);
 }
 
 export function setLogFilter(projectId: string, f: LogFilterPatch): void {
-  logFilterListeners.forEach((l) => l(projectId, f));
+  pendingLogFilters.set(projectId, { ...pendingLogFilters.get(projectId), ...f });
+  logFilterListeners.forEach((l) => l(projectId));
+}
+
+export function takeLogFilter(projectId: string): LogFilterPatch | undefined {
+  const f = pendingLogFilters.get(projectId);
+  pendingLogFilters.delete(projectId);
+  return f;
 }
 
 // ------------------------------------------------------------------ dialogs store
@@ -383,7 +392,7 @@ export function PushDialog({ project }: { project: Project | null }) {
         tabIndex={-1}
         onKeyDown={(e) => {
           if (e.key === "Escape") closePush();
-          if ((e.ctrlKey || e.metaKey) && e.key === "Enter") void push();
+          if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && (r?.branches?.remotes.length ?? 0) > 0) void push();
           e.stopPropagation();
         }}
       >

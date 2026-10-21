@@ -23,7 +23,7 @@ Trạng thái: **giai đoạn 4** (Git kiểu Rider/Rebased). Lộ trình đầy
 
 **Editor (Monaco)**
 - Tab xem trước (click một lần: tab nghiêng, bị thay bởi file kế tiếp; double-click hoặc sửa thì giữ lại).
-- Giữ nguyên encoding (UTF-8, UTF-8 BOM, UTF-16) và kiểu xuống dòng (LF/CRLF) khi lưu; ghi file an toàn qua file tạm.
+- Giữ nguyên encoding (UTF-8, UTF-8 BOM, UTF-16; file cũ không phải UTF-8 được đọc và ghi theo Windows-1252 nên không mất byte nào) và kiểu xuống dòng (LF/CRLF) khi lưu; ghi file an toàn qua file tạm.
 - **Không ghi đè âm thầm**: file chưa sửa tự tải lại khi AI sửa trên đĩa; file đang sửa dở thì hiện thông báo với "Load disk version" / "Overwrite with mine"; lưu bị chặn nếu file trên đĩa đã đổi.
 - Bản nháp chưa lưu được giữ qua lần tắt/mở app.
 - Ctrl+S lưu tất cả, Ctrl+F4 đóng tab, Ctrl+Tab chuyển tab.

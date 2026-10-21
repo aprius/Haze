@@ -10,7 +10,7 @@ export interface DirEntry {
   nestedUnder: string | null;
 }
 
-export type TextEncoding = "utf8" | "utf8-bom" | "utf16le" | "utf16be";
+export type TextEncoding = "utf8" | "utf8-bom" | "utf16le" | "utf16be" | "windows1252";
 export type Eol = "lf" | "crlf";
 
 export type FileContent =

@@ -180,7 +180,7 @@ pub fn write_file(
             return Ok(WriteResult::Conflict { mtime: current });
         }
     }
-    let bytes = text::encode(content, encoding);
+    let bytes = text::encode(content, encoding)?;
     atomic_write(path, &bytes, existing.as_ref())?;
     Ok(WriteResult::Saved {
         mtime: mtime_ms(&fs::metadata(path)?),

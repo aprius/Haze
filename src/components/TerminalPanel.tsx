@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/ipc";
 import { findPathCandidates } from "../lib/termLinks";
 import { agentName, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
+import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { confirmAction, openMenu } from "./Overlays";
 
@@ -89,8 +90,8 @@ function createView(id: string, project: Project): View {
       window.dispatchEvent(new CustomEvent("haze:terminal-find"));
       return false;
     }
-    // Leave app shortcuts (Alt+F12, Alt+1, Ctrl+Tab...) to the window handler.
-    if ((e.altKey && (e.key === "F12" || e.key === "1")) || (e.ctrlKey && e.key === "Tab")) return false;
+    // Leave app shortcuts (Alt+1, Ctrl+Tab...) to the window handler.
+    if ((e.altKey && e.key === "1") || (e.ctrlKey && e.key === "Tab")) return false;
     return true;
   });
 
@@ -143,6 +144,28 @@ function createView(id: string, project: Project): View {
   });
   void terminalsListening.then(() => api.ptyAttach(id)).catch(() => {});
   return view;
+}
+
+/**
+ * Alt+F12, like Rider: shows the Terminal tool window and focuses it; pressed
+ * inside the terminal it hides it. `hideOnlyWhenFocused: false` (the status
+ * bar button) hides it whenever it is showing.
+ */
+export function toggleTerminal(projectId: string, hideOnlyWhenFocused = true): void {
+  const ws = useWorkspace.getState();
+  const ui = ws.ui[projectId];
+  const shown = !!ui?.terminalVisible && ui.bottomTab === "terminal";
+  const focused = !!(document.activeElement as HTMLElement | null)?.closest(".terminal-panel");
+  if (shown && (focused || !hideOnlyWhenFocused)) {
+    ws.updateUi(projectId, { terminalVisible: false });
+    popupClosed();
+    return;
+  }
+  ws.updateUi(projectId, { terminalVisible: true, bottomTab: "terminal" });
+  requestAnimationFrame(() => {
+    const id = useWorkspace.getState().ui[projectId]?.activeTerminal;
+    if (id) views.get(id)?.term.focus();
+  });
 }
 
 export function disposeView(id: string): void {

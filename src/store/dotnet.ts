@@ -2,7 +2,7 @@
 // server status, and the last build with its diagnostics (shown as editor
 // markers — the only errors Haze shows, so they are always real).
 import { create } from "zustand";
-import { api, errorMessage, onBuildEvent, type BuildDiagnostic, type BuildVerb, type DotnetInfo } from "../lib/ipc";
+import { api, errorMessage, onBuildEvent, type BuildDiagnostic, type BuildEvent, type BuildVerb, type DotnetInfo } from "../lib/ipc";
 import { monaco } from "../lib/monaco";
 import { useWorkspace } from "./workspace";
 
@@ -104,6 +104,11 @@ function patchBuild(projectId: string, f: (b: BuildState) => Partial<BuildState>
   });
 }
 
+/** Events of builds whose id is not known yet, replayed once it is. */
+const early = new Map<number, BuildEvent[]>();
+const superseded = new Set<number>();
+let handleEvent: (e: BuildEvent) => void = () => {};
+
 function listen() {
   if (listening) return;
   listening = true;
@@ -120,9 +125,18 @@ function listen() {
     setTimeout(applyMarkers, 0);
   });
   let pending = false;
-  void onBuildEvent((e) => {
+  handleEvent = (e) => {
+    if (superseded.has(e.id)) {
+      // A build replaced by a newer one: its output and "cancelled" end are not the new build's.
+      if (e.t === "done") superseded.delete(e.id);
+      return;
+    }
     const projectId = buildProject.get(e.id);
-    if (!projectId) return;
+    if (!projectId) {
+      // Output can arrive before build_start has returned the id.
+      if (early.size < 50 || early.has(e.id)) early.set(e.id, [...(early.get(e.id) ?? []), e]);
+      return;
+    }
     if (e.t === "line") {
       patchBuild(projectId, (b) => {
         const lines = b.lines.length >= MAX_LINES ? [...b.lines.slice(-MAX_LINES / 2), e.text] : [...b.lines, e.text];
@@ -142,13 +156,18 @@ function listen() {
       patchBuild(projectId, () => ({ running: false, result: { code: e.code, cancelled: e.cancelled, millis: e.millis } }));
       applyMarkers();
     }
-  });
+  };
+  void onBuildEvent((e) => handleEvent(e));
 }
 
 export async function startBuild(projectId: string, root: string, verb: BuildVerb, target: string | null): Promise<void> {
   listen();
   const cur = useDotnet.getState().builds[projectId];
-  if (cur?.running && cur.id !== null) await api.buildCancel(cur.id).catch(() => {});
+  if (cur?.running && cur.id !== null) {
+    superseded.add(cur.id);
+    buildProject.delete(cur.id);
+    await api.buildCancel(cur.id).catch(() => {});
+  }
   useDotnet.setState((s) => ({
     builds: {
       ...s.builds,
@@ -162,6 +181,9 @@ export async function startBuild(projectId: string, root: string, verb: BuildVer
     const id = await api.buildStart(verb, target, root);
     buildProject.set(id, projectId);
     patchBuild(projectId, () => ({ id }));
+    const missed = early.get(id) ?? [];
+    early.delete(id);
+    missed.forEach(handleEvent);
   } catch (e) {
     patchBuild(projectId, (b) => ({ running: false, lines: [...b.lines, errorMessage(e)], result: { code: null, cancelled: false, millis: 0 } }));
   }

@@ -2,7 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -35,36 +36,67 @@ pub struct FsChange {
 
 pub type ChangeSink = std::sync::Arc<dyn Fn(FsChange) + Send + Sync>;
 
+struct Watch {
+    /// Tells a watch apart from a later one of the same root.
+    id: u64,
+    /// `None` while it is being set up.
+    watcher: Option<RecommendedWatcher>,
+}
+
 #[derive(Default)]
 pub struct Watchers {
-    active: Mutex<HashMap<String, RecommendedWatcher>>,
+    active: Arc<Mutex<HashMap<String, Watch>>>,
+    next: AtomicU64,
 }
 
 impl Watchers {
-    pub fn watch(&self, root: &str, sink: ChangeSink) -> Result<()> {
-        let mut active = self.active.lock();
-        if active.contains_key(root) {
-            return Ok(());
+    /// Returns at once: watching recursively walks the whole tree (seconds for
+    /// a large repository on Linux), which must not hold up the caller.
+    pub fn watch(&self, root: &str, sink: ChangeSink) {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut active = self.active.lock();
+            if active.contains_key(root) {
+                return;
+            }
+            active.insert(root.to_string(), Watch { id, watcher: None });
         }
-        let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
-        let mut watcher = notify::recommended_watcher(tx)?;
-        watcher.watch(Path::new(root), RecursiveMode::Recursive)?;
-        // A linked worktree (or a project inside a repository) keeps its git
-        // metadata outside the root; commits made in a terminal show up there.
-        let git_dir = outside_git_dir(Path::new(root));
-        if let Some(dir) = &git_dir {
-            let _ = watcher.watch(dir, RecursiveMode::Recursive);
-        }
-        let root_owned = root.to_string();
-        thread::spawn(move || debounce_loop(root_owned, git_dir, rx, sink));
-        active.insert(root.to_string(), watcher);
-        Ok(())
+        let active = self.active.clone();
+        let root = root.to_string();
+        thread::spawn(move || {
+            let watcher = start(&root, sink);
+            let mut active = active.lock();
+            match (active.get_mut(&root), watcher) {
+                // Unwatched (and maybe watched again) meanwhile: drop this one.
+                (Some(w), Ok(watcher)) if w.id == id => w.watcher = Some(watcher),
+                (Some(w), Err(e)) if w.id == id => {
+                    eprintln!("watching {root} failed: {e:#}");
+                    active.remove(&root);
+                }
+                _ => {}
+            }
+        });
     }
 
     pub fn unwatch(&self, root: &str) {
         // Dropping the watcher closes the channel, which ends the debounce thread.
         self.active.lock().remove(root);
     }
+}
+
+fn start(root: &str, sink: ChangeSink) -> Result<RecommendedWatcher> {
+    let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
+    let mut watcher = notify::recommended_watcher(tx)?;
+    watcher.watch(Path::new(root), RecursiveMode::Recursive)?;
+    // A linked worktree (or a project inside a repository) keeps its git
+    // metadata outside the root; commits made in a terminal show up there.
+    let git_dir = outside_git_dir(Path::new(root));
+    if let Some(dir) = &git_dir {
+        let _ = watcher.watch(dir, RecursiveMode::Recursive);
+    }
+    let root = root.to_string();
+    thread::spawn(move || debounce_loop(root, git_dir, rx, sink));
+    Ok(watcher)
 }
 
 /// The repository's git dir when it is not `<root>/.git`.

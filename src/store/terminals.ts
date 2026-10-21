@@ -156,6 +156,8 @@ export async function newTerminal(
       terminalOrder: [...ui.terminalOrder, info.id],
       activeTerminal: info.id,
       terminalVisible: true,
+      // Opened from the tree or a run configuration while Build or Git is showing.
+      bottomTab: "terminal",
     }));
     return info.id;
   } catch (e) {

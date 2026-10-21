@@ -52,9 +52,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<GitOutput> {
 }
 
 pub fn toplevel(root: &Path) -> Result<std::path::PathBuf> {
-    Ok(run_ok(root, &["rev-parse", "--show-toplevel"])?
-        .trim()
-        .into())
+    crate::git::toplevel_of(root)
 }
 
 // ---------------------------------------------------------------- local changes
