@@ -1,60 +1,65 @@
-/* Palette modelled on the IntelliJ "New UI" themes. */
-:root {
-  --bg: #f7f8fa;
-  --panel: #f7f8fa;
-  --editor-bg: #ffffff;
-  --rail: #ebecf0;
-  --border: #dfe1e5;
-  --fg: #1e1f22;
-  --muted: #6c707e;
-  --hover: #dfe1e5;
-  --selected: #d5e1ff;
-  --selected-inactive: #dfe1e5;
-  --accent: #3574f0;
-  --danger: #db3b4b;
-  --warn-bg: #fdf3d9;
-  --warn-fg: #6e4e00;
-  --term-bg: #ffffff;
-  --term-fg: #1e1f22;
-  --term-selection: #a6d2ff;
-  --git-modified: #0a5fd8;
-  --git-added: #067d17;
-  --git-untracked: #c4372e;
-  --git-ignored: #8c8c00;
-  --git-deleted: #6c707e;
-  --git-conflict: #d1242f;
-  --font-ui: Inter, -apple-system, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+/* Palette from Monokai Pro for JetBrains: Filter "Light" and Filter "Pro".
+   The mode is set on <html data-theme> by src/lib/theme.ts. */
+:root[data-theme="light"] {
+  --bg: #faf4f2;
+  --panel: #ede7e5;
+  --editor-bg: #faf4f2;
+  --rail: #e0dad8;
+  --border: #d3cdcc;
+  --fg: #29242a;
+  --muted: #706b6e;
+  --hover: #e0dad8;
+  --selected: #d3cdcc;
+  --selected-inactive: #e0dad8;
+  --accent: #1c8ca8;
+  --accent-fg: #faf4f2;
+  --danger: #e14775;
+  --warn-bg: #f6e7cc;
+  --warn-fg: #8a5200;
+  --term-bg: #faf4f2;
+  --term-fg: #29242a;
+  --term-selection: #d3cdcc;
+  --git-modified: #1c8ca8;
+  --git-added: #269d69;
+  --git-untracked: #e16032;
+  --git-ignored: #a59fa0;
+  --git-deleted: #918c8e;
+  --git-conflict: #e14775;
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1e1f22;
-    --panel: #2b2d30;
-    --editor-bg: #1e1f22;
-    --rail: #2b2d30;
-    --border: #393b40;
-    --fg: #dfe1e5;
-    --muted: #868a91;
-    --hover: #393b40;
-    --selected: #2e436e;
-    --selected-inactive: #43454a;
-    --accent: #3574f0;
-    --danger: #f75464;
-    --warn-bg: #3d3223;
-    --warn-fg: #e6c07b;
-    --term-bg: #1e1f22;
-    --term-fg: #dfe1e5;
-    --term-selection: #214283;
-    --git-modified: #70aeff;
-    --git-added: #73bd79;
-    --git-untracked: #e88f89;
-    --git-ignored: #a8a76b;
-    --git-deleted: #868a91;
-    --git-conflict: #f75464;
-    color-scheme: dark;
-  }
+:root,
+:root[data-theme="dark"] {
+  --bg: #2d2a2e;
+  --panel: #221f22;
+  --editor-bg: #2d2a2e;
+  --rail: #19181a;
+  --border: #19181a;
+  --fg: #fcfcfa;
+  --muted: #939293;
+  --hover: #363337;
+  --selected: #4a474b;
+  --selected-inactive: #3a373b;
+  --accent: #ffd866;
+  --accent-fg: #2d2a2e;
+  --danger: #ff6188;
+  --warn-bg: #403a2a;
+  --warn-fg: #ffd866;
+  --term-bg: #2d2a2e;
+  --term-fg: #fcfcfa;
+  --term-selection: #5b595c;
+  --git-modified: #78dce8;
+  --git-added: #a9dc76;
+  --git-untracked: #fc9867;
+  --git-ignored: #727072;
+  --git-deleted: #939293;
+  --git-conflict: #ff6188;
+  color-scheme: dark;
+}
+
+:root {
+  --font-ui: Inter, -apple-system, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 }
 
 * {
@@ -251,7 +256,7 @@ kbd {
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .btn.danger {
@@ -1669,6 +1674,15 @@ kbd {
   background: var(--hover);
 }
 
+.change-dir .tree-hint {
+  color: var(--muted);
+}
+
+.icon-btn.on {
+  background: var(--selected-inactive);
+  color: var(--fg);
+}
+
 .change-row.selected {
   background: var(--selected);
 }
@@ -1774,6 +1788,17 @@ kbd {
 }
 
 .current-branch {
+  font-weight: 600;
+}
+
+.branch-folder {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.branch-folder.top {
+  margin-top: 4px;
+  font-size: 11px;
   font-weight: 600;
 }
 

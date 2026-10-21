@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ensureBuffer, getModel } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
 import { languageFor, monaco } from "../lib/monaco";
+import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
 import { absPath } from "../store/git";
 import { useWorkspace } from "../store/workspace";
@@ -56,7 +57,6 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
 
   useEffect(() => {
     if (!host.current) return;
-    const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const ed = monaco.editor.createDiffEditor(host.current, {
       automaticLayout: true,
       renderSideBySide: true,
@@ -67,7 +67,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
       ignoreTrimWhitespace: false,
-      theme: dark ? "haze-dark" : "haze-light",
+      theme: monacoTheme(),
     });
     editor.current = ed;
     const owned: monaco.editor.ITextModel[] = [];

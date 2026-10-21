@@ -20,6 +20,7 @@ import { UsagesPopup } from "./components/UsagesPopup";
 import { notifyFileChanges, startCsharp, stopCsharp } from "./lib/lsp/csharp";
 import { defaultBuildTarget, loadDotnetInfo, startBuild, useDotnet } from "./store/dotnet";
 import { handleDiskChanges } from "./lib/buffers";
+import { matches, type Command } from "./lib/keymap";
 import { api, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
 import { basename, dirname } from "./lib/path";
 import { restore } from "./store/persist";
@@ -112,41 +113,36 @@ function useGlobalShortcuts(project: Project | null) {
     };
     const onCapture = (e: KeyboardEvent) => {
       if (e.key !== "Shift") otherKey = true;
-      const mod = e.ctrlKey || e.metaKey;
-      const k = e.key.toLowerCase();
+      const is = (cmd: Command) => matches(e, cmd);
       let handled = true;
-      if (mod && e.shiftKey && k === "n") openSearchEverywhere("files");
-      else if (mod && e.altKey && k === "s") openSettings();
+      if (is("searchEverywhere")) openSearchEverywhere("all");
+      else if (is("gotoFile")) openSearchEverywhere("files");
+      else if (is("settings")) openSettings();
       // Monaco does not always receive Shift+F6 (WebKitGTK); route it to Rename ourselves.
-      else if (e.shiftKey && !mod && !e.altKey && e.key === "F6" && triggerEditorAction("haze.rename")) {
+      else if (is("rename") && triggerEditorAction("haze.rename")) {
         /* handled */
       }
       // Capture phase: Monaco binds Alt+F12 to Peek Definition on Windows and macOS.
-      else if (((e.altKey && !mod && e.key === "F12") || (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "`")) && project) {
-        toggleTerminal(project.id);
-      } else if (mod && e.shiftKey && k === "k" && project) openPushDialog(project);
-      else if (mod && !e.shiftKey && !e.altKey && k === "k" && project) {
+      else if (is("terminal") && project) toggleTerminal(project.id);
+      else if (is("push") && project) openPushDialog(project);
+      else if (is("commit") && project) {
         useWorkspace.getState().updateUi(project.id, { sidebarVisible: true, sidebarTab: "commit" });
         requestAnimationFrame(() => (document.querySelector(".commit-message") as HTMLElement | null)?.focus());
-      } else if (mod && !e.shiftKey && !e.altKey && k === "t" && project) void updateProject(project);
-      else if (mod && e.shiftKey && e.code === "Backquote" && project) openBranchesPopup(project);
-      else if (e.altKey && !mod && e.key === "0" && project) {
-        toggleSidebar(project.id, "commit");
-      } else if (e.altKey && !mod && e.key === "9" && project) {
-        toggleBottom(project.id, "git");
-      } else if (mod && e.shiftKey && k === "b" && project) {
-        void startBuild(project.id, project.path, "build", defaultBuildTarget(project.id));
-      } else if (e.shiftKey && !mod && e.key === "F10" && project) {
+      } else if (is("updateProject") && project) void updateProject(project);
+      else if (is("branches") && project) openBranchesPopup(project);
+      else if (is("commitView") && project) toggleSidebar(project.id, "commit");
+      else if (is("gitView") && project) toggleBottom(project.id, "git");
+      else if (is("build") && project) void startBuild(project.id, project.path, "build", defaultBuildTarget(project.id));
+      else if (is("run") && project) {
         const configs = runConfigs(useDotnet.getState().info[project.id]);
         const id = useWorkspace.getState().ui[project.id]?.runConfig;
         const cfg = configs.find((c) => c.id === id) ?? configs[0];
         if (cfg) void runConfig(project, cfg);
-      }
-      else if (mod && e.shiftKey && k === "a") openSearchEverywhere("actions");
-      else if (mod && !e.shiftKey && !e.altKey && k === "e" && project) openSearchEverywhere("files", "");
-      else if (mod && e.shiftKey && (k === "f" || k === "r") && project) {
-        openFindInFiles({ replace: k === "r", query: selectedText(), directory: selectedTreeDir(project) });
-      } else if (e.altKey && e.key === "F1" && project) {
+      } else if (is("findAction")) openSearchEverywhere("actions");
+      else if (is("recentFiles") && project) openSearchEverywhere("files", "");
+      else if ((is("findInFiles") || is("replaceInFiles")) && project) {
+        openFindInFiles({ replace: is("replaceInFiles"), query: selectedText(), directory: selectedTreeDir(project) });
+      } else if (is("selectInProject") && project) {
         const tab = useWorkspace.getState().ui[project.id]?.activeTab;
         if (tab) revealInTree(project, tab);
       } else handled = false;
@@ -181,9 +177,8 @@ function useGlobalShortcuts(project: Project | null) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
       const ws = useWorkspace.getState();
-      if (mod && !e.shiftKey && e.key.toLowerCase() === "s") {
+      if (matches(e, "saveAll")) {
         e.preventDefault();
         void saveAll();
         return;
@@ -191,23 +186,24 @@ function useGlobalShortcuts(project: Project | null) {
       if (!project) return;
       const ui = ws.ui[project.id];
       if (!ui) return;
-      if (e.altKey && e.key === "1") {
+      if (matches(e, "projectView")) {
         e.preventDefault();
         const inTree = (document.activeElement as HTMLElement | null)?.closest(".file-tree");
         ws.updateUi(project.id, { sidebarVisible: !(ui.sidebarVisible && ui.sidebarTab !== "commit" && inTree), sidebarTab: "project" });
         requestAnimationFrame(() => (document.querySelector(".tree-scroll") as HTMLElement | null)?.focus());
         return;
       }
-      if ((mod && e.key === "F4") || (mod && !e.shiftKey && e.key.toLowerCase() === "w" && e.metaKey)) {
+      if (matches(e, "closeTab")) {
         e.preventDefault();
         if (ui.activeTab) void closeTabsWithPrompt(project.id, [ui.activeTab]);
         return;
       }
-      if (e.ctrlKey && e.key === "Tab" && ui.tabs.length > 1) {
+      const step = matches(e, "nextTab") ? 1 : matches(e, "previousTab") ? -1 : 0;
+      if (step && ui.tabs.length > 1) {
         e.preventDefault();
         const i = ui.tabs.findIndex((t) => t.path === ui.activeTab);
         const n = ui.tabs.length;
-        const next = ui.tabs[(i + (e.shiftKey ? n - 1 : 1)) % n];
+        const next = ui.tabs[(i + step + n) % n];
         ws.updateUi(project.id, { activeTab: next.path });
       }
     };

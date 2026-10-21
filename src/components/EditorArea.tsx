@@ -7,6 +7,7 @@ import { create } from "zustand";
 import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers, type BufferMeta } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
 import { languageFor, monaco } from "../lib/monaco";
+import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, relative } from "../lib/path";
 import { findImplementations, findUsages, prepareRename, renameSymbol } from "../lib/lsp/csharp";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
@@ -19,6 +20,7 @@ import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
 import { choose, openMenu, prompt, toast } from "./Overlays";
 import { showLocations } from "./UsagesPopup";
+import { isMac, shortcutLabel } from "../lib/keymap";
 
 export const useCursor = create<{ line: number; column: number; selected: number }>(() => ({
   line: 1,
@@ -87,30 +89,69 @@ window.addEventListener("haze:popup-closed", () =>
 
 let keymapInstalled = false;
 
-/** A few IntelliJ/Rider keys that differ from Monaco's VS Code defaults. */
+/**
+ * IntelliJ/Rider keys that differ from Monaco's VS Code defaults. On macOS
+ * they follow the user's "ReSharper (macOS)" Rider keymap (see lib/keymap).
+ */
 function installRiderKeymap() {
   if (keymapInstalled) return;
   keymapInstalled = true;
   const { KeyMod: M, KeyCode: K } = monaco;
-  monaco.editor.addKeybindingRules([
+  const edit = "editorTextFocus && !editorReadonly";
+  const common = [
     { keybinding: M.CtrlCmd | K.KeyD, command: "-editor.action.addSelectionToNextFindMatch" },
-    { keybinding: M.CtrlCmd | K.KeyD, command: "editor.action.copyLinesDownAction", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.CtrlCmd | K.KeyD, command: "editor.action.copyLinesDownAction", when: edit },
     { keybinding: M.Alt | K.KeyJ, command: "editor.action.addSelectionToNextFindMatch", when: "editorFocus" },
-    { keybinding: M.CtrlCmd | K.KeyY, command: "editor.action.deleteLines", when: "editorTextFocus && !editorReadonly" },
     { keybinding: M.CtrlCmd | K.KeyR, command: "editor.action.startFindReplaceAction", when: "editorFocus" },
-    { keybinding: M.CtrlCmd | K.KeyW, command: "editor.action.smartSelect.expand", when: "editorTextFocus" },
-    { keybinding: M.CtrlCmd | M.Shift | K.KeyW, command: "editor.action.smartSelect.shrink", when: "editorTextFocus" },
-    { keybinding: M.Alt | M.Shift | K.UpArrow, command: "editor.action.moveLinesUpAction", when: "editorTextFocus && !editorReadonly" },
-    { keybinding: M.Alt | M.Shift | K.DownArrow, command: "editor.action.moveLinesDownAction", when: "editorTextFocus && !editorReadonly" },
-    { keybinding: M.CtrlCmd | M.Shift | K.Slash, command: "editor.action.blockComment", when: "editorTextFocus && !editorReadonly" },
-    { keybinding: M.CtrlCmd | M.Shift | K.KeyU, command: "editor.action.transformToUppercase", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.Alt | M.Shift | K.UpArrow, command: "editor.action.moveLinesUpAction", when: edit },
+    { keybinding: M.Alt | M.Shift | K.DownArrow, command: "editor.action.moveLinesDownAction", when: edit },
+    { keybinding: M.CtrlCmd | M.Shift | K.Slash, command: "editor.action.blockComment", when: edit },
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyU, command: "editor.action.transformToUppercase", when: edit },
     // Code navigation (C# via Roslyn).
     { keybinding: M.CtrlCmd | K.KeyB, command: "editor.action.revealDefinition", when: "editorTextFocus" },
-    { keybinding: M.Alt | K.Enter, command: "editor.action.quickFix", when: "editorTextFocus && !editorReadonly" },
-    { keybinding: M.CtrlCmd | M.Alt | K.KeyL, command: "editor.action.formatDocument", when: "editorTextFocus && !editorReadonly" },
+    { keybinding: M.Alt | K.Enter, command: "editor.action.quickFix", when: edit },
+    { keybinding: M.CtrlCmd | M.Alt | K.KeyL, command: "editor.action.formatDocument", when: edit },
     { keybinding: M.CtrlCmd | K.F12, command: "-editor.action.goToImplementation" },
     { keybinding: M.CtrlCmd | K.F12, command: "editor.action.quickOutline", when: "editorTextFocus" },
-  ]);
+  ];
+  // Rider's Windows keys; on macOS Cmd+Y is Redo and Cmd+W closes the tab.
+  const other = [
+    { keybinding: M.CtrlCmd | K.KeyY, command: "editor.action.deleteLines", when: edit },
+    { keybinding: M.CtrlCmd | K.KeyW, command: "editor.action.smartSelect.expand", when: "editorTextFocus" },
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyW, command: "editor.action.smartSelect.shrink", when: "editorTextFocus" },
+  ];
+  // M.CtrlCmd is Cmd here, M.WinCtrl is Ctrl.
+  const mac = [
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyL, command: "-editor.action.selectHighlights" },
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyL, command: "editor.action.deleteLines", when: edit },
+    { keybinding: M.Alt | K.UpArrow, command: "-editor.action.moveLinesUpAction" },
+    { keybinding: M.Alt | K.DownArrow, command: "-editor.action.moveLinesDownAction" },
+    { keybinding: M.Alt | K.UpArrow, command: "editor.action.smartSelect.expand", when: "editorTextFocus" },
+    { keybinding: M.Alt | K.DownArrow, command: "editor.action.smartSelect.shrink", when: "editorTextFocus" },
+    { keybinding: M.WinCtrl | M.Alt | M.Shift | K.UpArrow, command: "editor.action.moveLinesUpAction", when: edit },
+    { keybinding: M.WinCtrl | M.Alt | M.Shift | K.DownArrow, command: "editor.action.moveLinesDownAction", when: edit },
+    { keybinding: M.WinCtrl | K.KeyH, command: "editor.action.startFindReplaceAction", when: "editorFocus" },
+    { keybinding: M.Alt | K.KeyH, command: "editor.action.startFindReplaceAction", when: "editorFocus" },
+    { keybinding: M.Alt | M.Shift | K.Period, command: "editor.action.addSelectionToNextFindMatch", when: "editorFocus" },
+    { keybinding: M.Alt | M.Shift | K.Semicolon, command: "editor.action.selectHighlights", when: "editorFocus" },
+    { keybinding: M.WinCtrl | M.CtrlCmd | K.Slash, command: "editor.action.blockComment", when: edit },
+    { keybinding: M.WinCtrl | M.Shift | K.KeyJ, command: "editor.action.joinLines", when: edit },
+    { keybinding: M.CtrlCmd | M.Shift | K.Space, command: "-editor.action.triggerParameterHints" },
+    { keybinding: M.CtrlCmd | M.Shift | K.Space, command: "editor.action.triggerSuggest", when: edit },
+    { keybinding: M.Shift | K.Space, command: "editor.action.triggerSuggest", when: edit },
+    { keybinding: M.CtrlCmd | K.KeyP, command: "editor.action.triggerParameterHints", when: edit },
+    { keybinding: M.WinCtrl | K.KeyQ, command: "editor.action.showHover", when: "editorTextFocus" },
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyT, command: "editor.action.goToTypeDefinition", when: "editorTextFocus" },
+    { keybinding: M.CtrlCmd | K.KeyG, command: "-editor.action.nextMatchFindAction" },
+    { keybinding: M.CtrlCmd | K.KeyG, command: "editor.action.gotoLine", when: "editorFocus" },
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyM, command: "editor.foldAllMarkerRegions", when: "editorTextFocus" },
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyO, command: "-editor.action.quickOutline" },
+    { keybinding: M.CtrlCmd | M.Shift | K.KeyO, command: "editor.unfoldAllMarkerRegions", when: "editorTextFocus" },
+    { keybinding: M.Alt | K.PageDown, command: "editor.action.marker.nextInFiles", when: "editorFocus" },
+    { keybinding: M.Alt | K.PageUp, command: "editor.action.marker.prevInFiles", when: "editorFocus" },
+    { keybinding: M.Shift | K.F12, command: "editor.action.marker.prevInFiles", when: "editorFocus" },
+  ];
+  monaco.editor.addKeybindingRules([...common, ...(isMac ? mac : other)]);
   // Navigating to another file (Ctrl+click, F12…) opens it in Haze's tabs.
   monaco.editor.registerEditorOpener({
     openCodeEditor(_source, resource, selectionOrPosition) {
@@ -329,7 +370,7 @@ function TabBar({ project }: { project: Project }) {
   const tabs = ui?.tabs ?? [];
 
   const tabMenu = (path: string) => [
-    { label: "Close", shortcut: "Ctrl+F4", action: () => void closeTabsWithPrompt(project.id, [path]) },
+    { label: "Close", shortcut: shortcutLabel("closeTab"), action: () => void closeTabsWithPrompt(project.id, [path]) },
     {
       label: "Close Others",
       action: () => void closeTabsWithPrompt(project.id, tabs.filter((t) => t.path !== path).map((t) => t.path)),
@@ -340,7 +381,7 @@ function TabBar({ project }: { project: Project }) {
     { separator: true },
     { label: "Copy Path", action: () => void navigator.clipboard.writeText(path) },
     { label: "Copy Relative Path", action: () => void navigator.clipboard.writeText(relative(project.path, path)) },
-    { label: "Select in Project View", shortcut: "Alt+F1", action: () => revealInTree(project, path) },
+    { label: "Select in Project View", shortcut: shortcutLabel("selectInProject"), action: () => revealInTree(project, path) },
     { label: "Reveal in File Manager", action: () => void revealItemInDir(path) },
   ];
 
@@ -453,7 +494,6 @@ export function EditorArea({ project }: { project: Project }) {
   useEffect(() => {
     if (!host.current) return;
     installRiderKeymap();
-    const dark = window.matchMedia("(prefers-color-scheme: dark)");
     const editor = monaco.editor.create(host.current, {
       model: null,
       automaticLayout: true,
@@ -466,10 +506,8 @@ export function EditorArea({ project }: { project: Project }) {
       smoothScrolling: true,
       stickyScroll: { enabled: true },
       bracketPairColorization: { enabled: true },
-      theme: dark.matches ? "haze-dark" : "haze-light",
+      theme: monacoTheme(),
     });
-    const onTheme = () => monaco.editor.setTheme(dark.matches ? "haze-dark" : "haze-light");
-    dark.addEventListener("change", onTheme);
     editor.onDidChangeCursorSelection((e) => {
       const model = editor.getModel();
       const sel = e.selection;
@@ -497,7 +535,8 @@ export function EditorArea({ project }: { project: Project }) {
       editor.addAction({ id, label, keybindings: keys, contextMenuGroupId: group, run });
     const { KeyMod: M, KeyCode: K } = monaco;
     const isCs = () => editor.getModel()?.getLanguageId() === "csharp";
-    codeAction("haze.findUsages", "Find Usages", [M.Alt | K.F7, M.Shift | K.F12], () => {
+    // Rider on macOS puts Previous Error on Shift+F12.
+    codeAction("haze.findUsages", "Find Usages", isMac ? [M.Alt | K.F7] : [M.Alt | K.F7, M.Shift | K.F12], () => {
       const model = editor.getModel();
       const pos = editor.getPosition();
       if (!model || !pos || !isCs()) return;
@@ -526,7 +565,6 @@ export function EditorArea({ project }: { project: Project }) {
     currentEditor = editor;
     return () => {
       if (shownPath.current) viewStates.set(shownPath.current, editor.saveViewState());
-      dark.removeEventListener("change", onTheme);
       editor.dispose();
       editorRef.current = null;
       if (currentEditor === editor) {
@@ -613,11 +651,11 @@ export function EditorArea({ project }: { project: Project }) {
               <span>Open file</span>
               <kbd>Click in Project view</kbd>
               <span>Terminal</span>
-              <kbd>Alt+F12</kbd>
+              <kbd>{shortcutLabel("terminal")}</kbd>
               <span>Project view</span>
               <kbd>Alt+1</kbd>
               <span>Save all</span>
-              <kbd>Ctrl+S</kbd>
+              <kbd>{shortcutLabel("saveAll")}</kbd>
             </div>
           </div>
         )}

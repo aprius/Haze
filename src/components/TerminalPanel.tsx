@@ -7,7 +7,9 @@ import "@xterm/xterm/css/xterm.css";
 import { ChevronDown, ChevronRight, ChevronUp, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/ipc";
+import { matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
+import { TERMINAL_THEMES, useTheme } from "../lib/theme";
 import { agentName, busyTerminals, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -27,30 +29,10 @@ interface View {
 }
 const views = new Map<string, View>();
 
-// Monokai Pro (Filter: Pro), as its terminal themes ship it.
-const MONOKAI_PRO = {
-  background: "#2d2a2e",
-  foreground: "#fcfcfa",
-  cursor: "#fcfcfa",
-  cursorAccent: "#2d2a2e",
-  selectionBackground: "#5b595c",
-  black: "#403e41",
-  red: "#ff6188",
-  green: "#a9dc76",
-  yellow: "#ffd866",
-  blue: "#fc9867",
-  magenta: "#ab9df2",
-  cyan: "#78dce8",
-  white: "#fcfcfa",
-  brightBlack: "#727072",
-  brightRed: "#ff6188",
-  brightGreen: "#a9dc76",
-  brightYellow: "#ffd866",
-  brightBlue: "#fc9867",
-  brightMagenta: "#ab9df2",
-  brightCyan: "#78dce8",
-  brightWhite: "#fcfcfa",
-};
+// Recolour every terminal, including ones in hidden projects, on a mode switch.
+useTheme.subscribe((t) => {
+  for (const v of views.values()) v.term.options.theme = TERMINAL_THEMES[t.mode];
+});
 
 /** A keydown that inserts text, as opposed to Enter, arrows, shortcuts or IME composition. */
 function isTextKey(e: KeyboardEvent): boolean {
@@ -77,7 +59,7 @@ function createView(id: string, project: Project): View {
     scrollback: 10000,
     allowProposedApi: true,
     cursorBlink: true,
-    theme: MONOKAI_PRO,
+    theme: TERMINAL_THEMES[useTheme.getState().mode],
   });
   const fit = new FitAddon();
   const search = new SearchAddon();
@@ -164,7 +146,7 @@ function createView(id: string, project: Project): View {
       return false;
     }
     // Leave app shortcuts (Alt+1, Ctrl+Tab...) to the window handler.
-    if ((e.altKey && e.key === "1") || (e.ctrlKey && e.key === "Tab")) return false;
+    if ((["projectView", "closeTab", "nextTab", "previousTab"] as const).some((c) => matches(e, c))) return false;
     typing = isTextKey(e);
     return !typing;
   });
@@ -450,7 +432,7 @@ export function TerminalPanel({ project }: { project: Project }) {
           <button className="icon-btn" title="Find (Ctrl+F)" onClick={() => setSearching((v) => !v)}>
             <Search size={14} />
           </button>
-          <button className="icon-btn" title="Hide (Alt+F12)" onClick={() => updateUi(project.id, { terminalVisible: false })}>
+          <button className="icon-btn" title={`Hide (${shortcutLabel("terminal")})`} onClick={() => updateUi(project.id, { terminalVisible: false })}>
             <ChevronRight size={14} />
           </button>
         </div>
@@ -474,7 +456,7 @@ export function TerminalPanel({ project }: { project: Project }) {
         </div>
       )}
       {searching && active && <SearchBar id={active} onClose={() => setSearching(false)} />}
-      <div className="terminal-body" style={{ background: MONOKAI_PRO.background }}>
+      <div className="terminal-body">
         {order.map((id) => (
           <TerminalView key={id} id={id} project={project} active={id === active} />
         ))}

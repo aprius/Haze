@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { basename, relative } from "../lib/path";
 import { cancelBuild, defaultBuildTarget, startBuild, useDotnet } from "../store/dotnet";
 import { useWorkspace, type Project } from "../store/workspace";
+import { shortcutLabel } from "../lib/keymap";
 
 export function BuildPanel({ project }: { project: Project }) {
   const build = useDotnet((s) => s.builds[project.id]);
@@ -53,7 +54,7 @@ export function BuildPanel({ project }: { project: Project }) {
           ) : (
             <button
               className="icon-btn"
-              title="Build (Ctrl+Shift+B)"
+              title={`Build (${shortcutLabel("build")})`}
               onClick={() => void startBuild(project.id, project.path, "build", build?.target ?? defaultBuildTarget(project.id))}
             >
               <Hammer size={14} />
@@ -66,7 +67,7 @@ export function BuildPanel({ project }: { project: Project }) {
       </div>
       <div className="build-body">
         <div className="problems">
-          {shown.length === 0 && <div className="se-empty">{build?.running ? "Building…" : build ? "No problems" : "Press Ctrl+Shift+B to build"}</div>}
+          {shown.length === 0 && <div className="se-empty">{build?.running ? "Building…" : build ? "No problems" : `Press ${shortcutLabel("build")} to build`}</div>}
           {shown.map((d, i) => (
             <div
               key={i}

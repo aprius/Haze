@@ -1,6 +1,6 @@
 // Commit tool window (Alt+0), like Rider's: tick files, write a message,
 // Commit or Commit and Push — no staging area to manage.
-import { Camera, Check, ChevronDown, ChevronRight, Eye, RefreshCw, Undo2 } from "lucide-react";
+import { Camera, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Eye, Folder, FolderTree, RefreshCw, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { saveAll } from "./EditorArea";
 import { api, type GitChange } from "../lib/ipc";
@@ -18,6 +18,52 @@ const GROUPS: { id: string; label: string; match: (c: GitChange) => boolean }[] 
   { id: "changes", label: "Changes", match: (c) => c.status !== "untracked" && c.status !== "conflict" },
   { id: "unversioned", label: "Unversioned Files", match: (c) => c.status === "untracked" },
 ];
+
+type ChangeRow =
+  | { kind: "dir"; key: string; name: string; depth: number; files: GitChange[] }
+  | { kind: "file"; change: GitChange; depth: number };
+
+interface DirNode {
+  dirs: Map<string, DirNode>;
+  files: GitChange[];
+}
+
+/** The rows of one group: flat, or as a directory tree whose single-child folders are merged (src/components). */
+function changeRows(groupId: string, items: GitChange[], byDir: boolean, collapsed: Record<string, boolean>): ChangeRow[] {
+  if (!byDir) return items.map((change) => ({ kind: "file", change, depth: 0 }));
+  const root: DirNode = { dirs: new Map(), files: [] };
+  for (const c of items) {
+    let node = root;
+    for (const part of c.rel.split("/").slice(0, -1)) {
+      let next = node.dirs.get(part);
+      if (!next) node.dirs.set(part, (next = { dirs: new Map(), files: [] }));
+      node = next;
+    }
+    node.files.push(c);
+  }
+  const all = (n: DirNode): GitChange[] => [...[...n.dirs.values()].flatMap(all), ...n.files];
+  const rows: ChangeRow[] = [];
+  const walk = (node: DirNode, path: string, depth: number) => {
+    for (const [first, start] of [...node.dirs].sort(([a], [b]) => a.localeCompare(b))) {
+      let name = first;
+      let child = start;
+      while (child.files.length === 0 && child.dirs.size === 1) {
+        const [n, c] = [...child.dirs][0];
+        name += "/" + n;
+        child = c;
+      }
+      const dir = path ? `${path}/${name}` : name;
+      const key = `${groupId}:${dir}`;
+      rows.push({ kind: "dir", key, name, depth, files: all(child) });
+      if (!collapsed[key]) walk(child, dir, depth + 1);
+    }
+    for (const change of [...node.files].sort((a, b) => basename(a.rel).localeCompare(basename(b.rel)))) rows.push({ kind: "file", change, depth });
+  };
+  walk(root, "", 0);
+  return rows;
+}
+
+const indent = (depth: number) => ({ paddingLeft: 26 + depth * 20 });
 
 export function showChangeDiff(project: Project, root: string, c: GitChange): void {
   if (c.status === "conflict") {
@@ -73,6 +119,7 @@ function ReviewToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 export function CommitPanel({ project }: { project: Project }) {
   const r = useGit((s) => s.repos[project.id]);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const byDir = useWorkspace((s) => !!s.ui[project.id]?.commitGroupByDir);
   const [selected, setSelected] = useState<string | null>(null);
   const checked = useMemo(() => (r ? checkedPaths(r) : new Set<string>()), [r]);
 
@@ -127,7 +174,9 @@ export function CommitPanel({ project }: { project: Project }) {
     const mod = e.ctrlKey || e.metaKey;
     const c = r.changes.find((x) => x.rel === selected);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      const shown = GROUPS.flatMap((g) => (collapsed[g.id] ? [] : r.changes.filter(g.match)));
+      const shown = GROUPS.flatMap((g) =>
+        collapsed[g.id] ? [] : changeRows(g.id, r.changes.filter(g.match), byDir, collapsed).flatMap((row) => (row.kind === "file" ? [row.change] : [])),
+      );
       const i = shown.findIndex((x) => x.rel === selected);
       const next = shown[Math.max(0, Math.min(shown.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
       if (next) setSelected(next.rel);
@@ -194,6 +243,30 @@ export function CommitPanel({ project }: { project: Project }) {
             onClick={() => void createCheckpoint(project.id, project.path)}
           >
             <Camera size={14} />
+          </button>
+          <button
+            className={"icon-btn" + (byDir ? " on" : "")}
+            title="Group by Directory"
+            onClick={() => useWorkspace.getState().updateUi(project.id, { commitGroupByDir: !byDir })}
+          >
+            <FolderTree size={14} />
+          </button>
+          <button className="icon-btn" title="Expand All" onClick={() => setCollapsed({})}>
+            <ChevronsUpDown size={14} />
+          </button>
+          <button
+            className="icon-btn"
+            title="Collapse All"
+            onClick={() => {
+              const next: Record<string, boolean> = { since: true };
+              for (const g of GROUPS) {
+                next[g.id] = true;
+                for (const row of changeRows(g.id, r.changes.filter(g.match), byDir, {})) if (row.kind === "dir") next[row.key] = true;
+              }
+              setCollapsed(next);
+            }}
+          >
+            <ChevronsDownUp size={14} />
           </button>
           <button className="icon-btn" title="Refresh" onClick={() => refreshRepo(project.id, project.path)}>
             <RefreshCw size={14} />
@@ -300,25 +373,54 @@ export function CommitPanel({ project }: { project: Project }) {
                 <span className="muted small">{items.length}</span>
               </div>
               {!collapsed[g.id] &&
-                items.map((c) => (
-                  <div
-                    key={c.rel}
-                    className={"change-row git-" + c.status + (selected === c.rel ? " selected" : "")}
-                    onClick={() => setSelected(c.rel)}
-                    onDoubleClick={() => showChangeDiff(project, root, c)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setSelected(c.rel);
-                      openMenu(e, menu(c));
-                    }}
-                    title={c.oldRel ? `${c.oldRel} → ${c.rel}` : c.rel}
-                  >
-                    <input type="checkbox" checked={checked.has(c.rel)} onChange={() => toggle(c.rel)} onClick={(e) => e.stopPropagation()} />
-                    <span className={"tree-name" + (r.reviewed[c.rel] ? " reviewed-name" : "")}>{basename(c.rel)}</span>
-                    <span className="tree-hint">{dirname(c.rel)}</span>
-                    <ReviewToggle on={!!r.reviewed[c.rel]} onToggle={() => void toggleReviewed(project.id, c.rel)} />
-                  </div>
-                ))}
+                changeRows(g.id, items, byDir, collapsed).map((row) => {
+                  if (row.kind === "dir") {
+                    const n = row.files.filter((c) => checked.has(c.rel)).length;
+                    return (
+                      <div key={row.key} className="change-row change-dir" style={{ paddingLeft: 6 + row.depth * 20 }} title={row.name}>
+                        <span className="chevron" onClick={() => setCollapsed((c) => ({ ...c, [row.key]: !c[row.key] }))}>
+                          {collapsed[row.key] ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={n > 0}
+                          ref={(el) => {
+                            if (el) el.indeterminate = n > 0 && n < row.files.length;
+                          }}
+                          onChange={() => {
+                            const next = new Set(checked);
+                            row.files.forEach((c) => (n === row.files.length ? next.delete(c.rel) : next.add(c.rel)));
+                            setChecked(next);
+                          }}
+                        />
+                        <Folder size={14} className="ico" />
+                        <span className="tree-name">{row.name}</span>
+                        <span className="tree-hint">{row.files.length}</span>
+                      </div>
+                    );
+                  }
+                  const c = row.change;
+                  return (
+                    <div
+                      key={c.rel}
+                      className={"change-row git-" + c.status + (selected === c.rel ? " selected" : "")}
+                      style={indent(row.depth)}
+                      onClick={() => setSelected(c.rel)}
+                      onDoubleClick={() => showChangeDiff(project, root, c)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setSelected(c.rel);
+                        openMenu(e, menu(c));
+                      }}
+                      title={c.oldRel ? `${c.oldRel} → ${c.rel}` : c.rel}
+                    >
+                      <input type="checkbox" checked={checked.has(c.rel)} onChange={() => toggle(c.rel)} onClick={(e) => e.stopPropagation()} />
+                      <span className={"tree-name" + (r.reviewed[c.rel] ? " reviewed-name" : "")}>{basename(c.rel)}</span>
+                      <span className="tree-hint">{byDir ? "" : dirname(c.rel)}</span>
+                      <ReviewToggle on={!!r.reviewed[c.rel]} onToggle={() => void toggleReviewed(project.id, c.rel)} />
+                    </div>
+                  );
+                })}
             </div>
           );
         })}

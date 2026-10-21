@@ -7,6 +7,7 @@ import { getModel, reloadBuffer } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
 import { buildMerge, resolution, type ConflictBlock } from "../lib/merge";
 import { languageFor, monaco } from "../lib/monaco";
+import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
 import { absPath, refreshRepo, repo, runGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -61,7 +62,6 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
 
   useEffect(() => {
     if (!leftHost.current || !centerHost.current || !rightHost.current) return;
-    const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const opts = (readOnly: boolean): monaco.editor.IStandaloneEditorConstructionOptions => ({
       readOnly,
       automaticLayout: true,
@@ -71,7 +71,7 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
       lineHeight: 20,
       scrollBeyondLastLine: false,
       glyphMargin: false,
-      theme: dark ? "haze-dark" : "haze-light",
+      theme: monacoTheme(),
     });
     const mk = (host: HTMLDivElement, readOnly: boolean): Pane => {
       const editor = monaco.editor.create(host, opts(readOnly));

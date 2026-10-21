@@ -5,6 +5,7 @@ import * as monaco from "monaco-editor";
 // Vite's `?worker` import bundles it properly.
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker";
+import { monacoTheme, useTheme } from "./theme";
 
 // JSON is the one language service Haze keeps (see vite.config.ts); it needs
 // its own worker, or every request fails with "Missing requestHandler".
@@ -12,28 +13,96 @@ import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker
   getWorker: (_id, label) => (label === "json" ? new JsonWorker() : new EditorWorker()),
 };
 
-monaco.editor.defineTheme("haze-dark", {
-  base: "vs-dark",
-  inherit: true,
-  rules: [],
-  colors: {
-    "editor.background": "#1e1f22",
-    "editorGutter.background": "#1e1f22",
-    "editor.lineHighlightBackground": "#26282e",
-    "editorLineNumber.foreground": "#4b5059",
-    "editorLineNumber.activeForeground": "#a1a3ab",
+// Monokai Pro (Filter: Pro for dark, Filter: Light for light). Monarch only
+// emits coarse token classes, so these map the filter's palette onto them.
+const MONOKAI = {
+  dark: {
+    bg: "#2d2a2e", fg: "#fcfcfa", dim: "#939293", comment: "#727072", red: "#ff6188", orange: "#fc9867",
+    yellow: "#ffd866", green: "#a9dc76", blue: "#78dce8", purple: "#ab9df2",
+    gutter: "#5b595c", gutterActive: "#c1c0c0", widget: "#403e41", border: "#221f22",
   },
-});
+  light: {
+    bg: "#faf4f2", fg: "#29242a", dim: "#918c8e", comment: "#a59fa0", red: "#e14775", orange: "#e16032",
+    yellow: "#cc7a0a", green: "#269d69", blue: "#1c8ca8", purple: "#7058be",
+    gutter: "#bfb9ba", gutterActive: "#706b6e", widget: "#ede7e5", border: "#d3cdcc",
+  },
+};
 
-monaco.editor.defineTheme("haze-light", {
-  base: "vs",
-  inherit: true,
-  rules: [],
-  colors: {
-    "editor.background": "#ffffff",
-    "editor.lineHighlightBackground": "#f5f8fe",
-  },
-});
+function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)["dark"]) {
+  const strip = (hex: string) => hex.slice(1);
+  monaco.editor.defineTheme(name, {
+    base,
+    inherit: true,
+    rules: [
+      { token: "", foreground: strip(c.fg) },
+      { token: "comment", foreground: strip(c.comment), fontStyle: "italic" },
+      { token: "keyword", foreground: strip(c.red) },
+      { token: "operator", foreground: strip(c.red) },
+      { token: "delimiter", foreground: strip(c.dim) },
+      { token: "string", foreground: strip(c.yellow) },
+      { token: "string.escape", foreground: strip(c.purple) },
+      { token: "string.key.json", foreground: strip(c.fg) },
+      { token: "string.value.json", foreground: strip(c.yellow) },
+      { token: "number", foreground: strip(c.purple) },
+      { token: "constant", foreground: strip(c.purple) },
+      { token: "regexp", foreground: strip(c.orange) },
+      { token: "type", foreground: strip(c.blue), fontStyle: "italic" },
+      { token: "type.identifier", foreground: strip(c.blue) },
+      { token: "identifier", foreground: strip(c.fg) },
+      { token: "variable", foreground: strip(c.fg) },
+      { token: "variable.predefined", foreground: strip(c.purple) },
+      { token: "predefined", foreground: strip(c.green) },
+      { token: "annotation", foreground: strip(c.green) },
+      { token: "metatag", foreground: strip(c.red) },
+      { token: "tag", foreground: strip(c.red) },
+      { token: "attribute.name", foreground: strip(c.blue), fontStyle: "italic" },
+      { token: "attribute.value", foreground: strip(c.yellow) },
+      { token: "key", foreground: strip(c.fg) },
+      { token: "namespace", foreground: strip(c.fg) },
+    ],
+    colors: {
+      "editor.background": c.bg,
+      "editor.foreground": c.fg,
+      "editorGutter.background": c.bg,
+      "editor.lineHighlightBackground": c.fg + "0c",
+      "editor.lineHighlightBorder": "#00000000",
+      "editor.selectionBackground": c.gutterActive + "33",
+      "editor.inactiveSelectionBackground": c.gutterActive + "1f",
+      "editor.wordHighlightBackground": c.gutterActive + "26",
+      "editor.findMatchBackground": c.yellow + "55",
+      "editor.findMatchHighlightBackground": c.yellow + "26",
+      "editorCursor.foreground": c.fg,
+      "editorLineNumber.foreground": c.gutter,
+      "editorLineNumber.activeForeground": c.gutterActive,
+      "editorIndentGuide.background1": c.widget,
+      "editorIndentGuide.activeBackground1": c.gutter,
+      "editorWhitespace.foreground": c.gutter,
+      "editorBracketMatch.background": c.gutter + "40",
+      "editorBracketMatch.border": "#00000000",
+      "editorWidget.background": c.widget,
+      "editorWidget.border": c.border,
+      "editorSuggestWidget.background": c.widget,
+      "editorSuggestWidget.border": c.border,
+      "editorSuggestWidget.selectedBackground": c.bg,
+      "editorHoverWidget.background": c.widget,
+      "editorHoverWidget.border": c.border,
+      "editorStickyScroll.background": c.bg,
+      "diffEditor.insertedTextBackground": c.green + "26",
+      "diffEditor.removedTextBackground": c.red + "26",
+      "diffEditor.insertedLineBackground": c.green + "14",
+      "diffEditor.removedLineBackground": c.red + "14",
+      "scrollbarSlider.background": c.gutter + "55",
+      "scrollbarSlider.hoverBackground": c.gutter + "88",
+      "scrollbarSlider.activeBackground": c.gutter + "aa",
+    },
+  });
+}
+
+defineMonokai("haze-dark", "vs-dark", MONOKAI.dark);
+defineMonokai("haze-light", "vs", MONOKAI.light);
+
+// Theme names are global in Monaco: one setTheme repaints every editor.
+useTheme.subscribe((s) => monaco.editor.setTheme(monacoTheme(s.mode)));
 
 export function languageFor(path: string): string {
   const lower = path.toLowerCase();

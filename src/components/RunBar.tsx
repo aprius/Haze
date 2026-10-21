@@ -8,6 +8,7 @@ import { cancelBuild, defaultBuildTarget, startBuild, useDotnet, type CsharpStat
 import { closeTerminal, newTerminal, useTerminals } from "../store/terminals";
 import { useWorkspace, type Project } from "../store/workspace";
 import { confirmAction } from "./Overlays";
+import { shortcutLabel } from "../lib/keymap";
 
 export interface RunConfig {
   id: string;
@@ -119,7 +120,7 @@ export function RunBar({ project }: { project: Project }) {
           <Square size={14} />
         </button>
       ) : (
-        <button className="icon-btn" title="Build (Ctrl+Shift+B)" onClick={() => void startBuild(project.id, project.path, "build", target)}>
+        <button className="icon-btn" title={`Build (${shortcutLabel("build")})`} onClick={() => void startBuild(project.id, project.path, "build", target)}>
           <Hammer size={14} />
         </button>
       )}
@@ -136,7 +137,7 @@ export function RunBar({ project }: { project: Project }) {
               </option>
             ))}
           </select>
-          <button className="icon-btn run" title="Run (Shift+F10)" onClick={() => current && void runConfig(project, current)}>
+          <button className="icon-btn run" title={`Run (${shortcutLabel("run")})`} onClick={() => current && void runConfig(project, current)}>
             {current?.id.startsWith("test:") ? <FlaskConical size={14} /> : <Play size={14} />}
           </button>
         </>

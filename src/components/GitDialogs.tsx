@@ -12,6 +12,7 @@ import { repo, runGit, useGit } from "../store/git";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { choose, confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
+import { shortcutLabel } from "../lib/keymap";
 
 const validBranch = (v: string) => (!v.trim() ? "Name cannot be empty" : /^-|[\s~^:?*[\\]|\.\.|@\{|\/$|\.lock$/.test(v.trim()) ? "Not a valid branch name" : null);
 
@@ -238,9 +239,9 @@ export function BranchesPopup({ project }: { project: Project | null }) {
 
   if (!open || !project || project.id !== projectId) return null;
   const actions: { label: string; key?: string; run: () => void }[] = [
-    { label: "Update Project…", key: "Ctrl+T", run: () => void updateProject(project) },
-    { label: "Commit…", key: "Ctrl+K", run: () => useWorkspace.getState().updateUi(project.id, { sidebarVisible: true, sidebarTab: "commit" }) },
-    { label: "Push…", key: "Ctrl+Shift+K", run: () => openPushDialog(project) },
+    { label: "Update Project…", key: shortcutLabel("updateProject"), run: () => void updateProject(project) },
+    { label: "Commit…", key: shortcutLabel("commit"), run: () => useWorkspace.getState().updateUi(project.id, { sidebarVisible: true, sidebarTab: "commit" }) },
+    { label: "Push…", key: shortcutLabel("push"), run: () => openPushDialog(project) },
     { label: "New Branch…", run: () => void newBranch(project, null) },
     { label: "New Worktree… (separate folder for a parallel task)", run: () => void newWorktree(project) },
     { label: "Fetch", run: () => void runGit(project.id, ["fetch", "--all", "--prune"], { label: "Fetch" }) },

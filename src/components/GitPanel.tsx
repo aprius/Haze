@@ -1,6 +1,6 @@
 // Git tool window (Alt+9): branches, log with commit graph, commit details,
 // and a console of the git commands Haze ran.
-import { ChevronDown, Copy, FolderGit2, GitBranch, RefreshCw, Tag, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Folder, FolderGit2, GitBranch, RefreshCw, Tag, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, type Branch, type Commit, type CommitDetails, type GraphRow, type LogPage, type LogQuery } from "../lib/ipc";
 import { basename, dirname } from "../lib/path";
@@ -132,10 +132,44 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
   );
 }
 
+interface BranchFolder {
+  folders: Map<string, BranchFolder>;
+  branches: Branch[];
+}
+
+/** Groups branches into folders by the slashes in their names (feature/x, origin/main). */
+function branchTree(list: Branch[]): BranchFolder {
+  const root: BranchFolder = { folders: new Map(), branches: [] };
+  for (const b of list) {
+    const parts = b.name.split("/");
+    let node = root;
+    for (const part of parts.slice(0, -1)) {
+      let next = node.folders.get(part);
+      if (!next) node.folders.set(part, (next = { folders: new Map(), branches: [] }));
+      node = next;
+    }
+    node.branches.push(b);
+  }
+  return root;
+}
+
+function GroupHeader({ label, count, open, depth, onToggle }: { label: string; count?: number; open: boolean; depth: number; onToggle: () => void }) {
+  return (
+    <div className={"log-branch branch-folder" + (depth === 0 ? " top" : "")} style={{ paddingLeft: 6 + depth * 12 }} onClick={onToggle}>
+      {open ? <ChevronDown size={12} className="ico" /> : <ChevronRight size={12} className="ico" />}
+      {depth > 0 && <Folder size={12} className="ico" />}
+      <span className="tree-name">{label}</span>
+      {count != null && <span className="tree-hint">{count}</span>}
+    </div>
+  );
+}
+
 function BranchList({ project, branches, refs, onSelect }: { project: Project; branches: Branch[]; refs: string[]; onSelect: (refs: string[]) => void }) {
   const current = useGit((s) => s.repos[project.id]?.branches?.current ?? null);
   const [q, setQ] = useState("");
   const revision = useGit((s) => s.repos[project.id]?.revision ?? 0);
+  const collapsedList = useWorkspace((s) => s.ui[project.id]?.gitCollapsed);
+  const collapsed = useMemo(() => new Set(collapsedList ?? []), [collapsedList]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   useEffect(() => {
     void listWorktrees(project.id).then(setWorktrees);
@@ -145,6 +179,49 @@ function BranchList({ project, branches, refs, onSelect }: { project: Project; b
     ["Remote", branches.filter((b) => b.kind === "remote")],
     ["Tags", branches.filter((b) => b.kind === "tag")],
   ];
+  // A filter shows every match, collapsed or not.
+  const isOpen = (key: string) => q !== "" || !collapsed.has(key);
+  const toggle = (key: string) =>
+    useWorkspace.getState().updateUi(project.id, (u) => ({
+      gitCollapsed: u.gitCollapsed.includes(key) ? u.gitCollapsed.filter((k) => k !== key) : [...u.gitCollapsed, key],
+    }));
+
+  const branchRow = (b: Branch, depth: number) => (
+    <div
+      key={b.refname}
+      className={"log-branch" + (refs.length === 1 && refs[0] === b.refname ? " selected" : "") + (b.current ? " current-branch" : "")}
+      style={{ paddingLeft: 6 + depth * 12 }}
+      onClick={() => onSelect([b.refname])}
+      onDoubleClick={() => b.kind !== "tag" && void checkout(project, b.name, { remote: b.kind === "remote" })}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        openMenu(e, branchMenu(project, b, current));
+      }}
+      title={b.upstream ? `${b.name} → ${b.upstream}` : b.name}
+    >
+      {b.kind === "tag" ? <Tag size={12} className="ico" /> : <GitBranch size={12} className="ico" />}
+      <span className="tree-name">{b.name.split("/").pop()}</span>
+      {(b.ahead > 0 || b.behind > 0) && (
+        <span className="tree-hint">
+          {b.ahead > 0 && `↑${b.ahead}`} {b.behind > 0 && `↓${b.behind}`}
+        </span>
+      )}
+    </div>
+  );
+
+  const folderRows = (node: BranchFolder, key: string, depth: number): React.ReactNode[] => [
+    ...[...node.folders].map(([name, child]) => {
+      const k = `${key}/${name}`;
+      return (
+        <div key={k}>
+          <GroupHeader label={name} open={isOpen(k)} depth={depth} onToggle={() => toggle(k)} />
+          {isOpen(k) && folderRows(child, k, depth + 1)}
+        </div>
+      );
+    }),
+    ...node.branches.map((b) => branchRow(b, depth)),
+  ];
+
   return (
     <div className="log-branches">
       <input className="find-input small" placeholder="Filter branches" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -162,38 +239,19 @@ function BranchList({ project, branches, refs, onSelect }: { project: Project; b
           if (!shown.length) return null;
           return (
             <div key={label}>
-              <div className="se-group">{label}</div>
-              {shown.map((b) => (
-                <div
-                  key={b.refname}
-                  className={"log-branch" + (refs.length === 1 && refs[0] === b.refname ? " selected" : "") + (b.current ? " current-branch" : "")}
-                  onClick={() => onSelect([b.refname])}
-                  onDoubleClick={() => b.kind !== "tag" && void checkout(project, b.name, { remote: b.kind === "remote" })}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    openMenu(e, branchMenu(project, b, current));
-                  }}
-                  title={b.upstream ? `${b.name} → ${b.upstream}` : b.name}
-                >
-                  {b.kind === "tag" ? <Tag size={12} className="ico" /> : <GitBranch size={12} className="ico" />}
-                  <span className="tree-name">{b.name}</span>
-                  {(b.ahead > 0 || b.behind > 0) && (
-                    <span className="tree-hint">
-                      {b.ahead > 0 && `↑${b.ahead}`} {b.behind > 0 && `↓${b.behind}`}
-                    </span>
-                  )}
-                </div>
-              ))}
+              <GroupHeader label={label} count={shown.length} open={isOpen(label)} depth={0} onToggle={() => toggle(label)} />
+              {isOpen(label) && folderRows(branchTree(shown), label, 1)}
             </div>
           );
         })}
         {worktrees.length > 1 && (
           <div>
-            <div className="se-group">Worktrees</div>
-            {worktrees.map((w) => (
+            <GroupHeader label="Worktrees" count={worktrees.length} open={isOpen("Worktrees")} depth={0} onToggle={() => toggle("Worktrees")} />
+            {isOpen("Worktrees") && worktrees.map((w) => (
               <div
                 key={w.path}
                 className="log-branch"
+                style={{ paddingLeft: 18 }}
                 title={w.path}
                 onClick={() => w.branch && onSelect([`refs/heads/${w.branch}`])}
                 onDoubleClick={() => openWorktree(w)}

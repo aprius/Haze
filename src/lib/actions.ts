@@ -6,6 +6,8 @@ import { openFolder } from "../components/Shell";
 import { newTerminal } from "../store/terminals";
 import { useTree } from "../store/tree";
 import { openFindInFiles, openSearchEverywhere } from "../store/ui";
+import { shortcutLabel } from "./keymap";
+import { toggleThemeMode } from "./theme";
 import { activeProject, useWorkspace } from "../store/workspace";
 
 export interface Action {
@@ -25,23 +27,24 @@ function withProject(f: (projectId: string, path: string) => void) {
 }
 
 export const actions: Action[] = [
-  { id: "searchEverywhere", label: "Search Everywhere", shortcut: "Double Shift", run: () => openSearchEverywhere("all") },
-  { id: "gotoFile", label: "Go to File…", shortcut: "Ctrl+Shift+N", run: () => openSearchEverywhere("files") },
-  { id: "findInFiles", label: "Find in Files…", shortcut: "Ctrl+Shift+F", needsProject: true, run: () => openFindInFiles() },
+  { id: "searchEverywhere", label: "Search Everywhere", shortcut: shortcutLabel("searchEverywhere"), run: () => openSearchEverywhere("all") },
+  { id: "gotoFile", label: "Go to File…", shortcut: shortcutLabel("gotoFile"), run: () => openSearchEverywhere("files") },
+  { id: "findInFiles", label: "Find in Files…", shortcut: shortcutLabel("findInFiles"), needsProject: true, run: () => openFindInFiles() },
   {
     id: "replaceInFiles",
     label: "Replace in Files…",
-    shortcut: "Ctrl+Shift+R",
+    shortcut: shortcutLabel("replaceInFiles"),
     needsProject: true,
     run: () => openFindInFiles({ replace: true }),
   },
-  { id: "saveAll", label: "Save All", shortcut: "Ctrl+S", run: () => void saveAll() },
+  { id: "saveAll", label: "Save All", shortcut: shortcutLabel("saveAll"), run: () => void saveAll() },
   { id: "openFolder", label: "Open Folder…", run: () => void openFolder() },
-  { id: "settings", label: "Settings (AI agent hooks, notifications)", shortcut: "Ctrl+Alt+S", run: () => openSettings() },
+  { id: "toggleTheme", label: "Toggle Light/Dark Theme", run: toggleThemeMode },
+  { id: "settings", label: "Settings (AI agent hooks, notifications)", shortcut: shortcutLabel("settings"), run: () => openSettings() },
   {
     id: "closeTab",
     label: "Close Tab",
-    shortcut: "Ctrl+F4",
+    shortcut: shortcutLabel("closeTab"),
     needsProject: true,
     run: withProject((id) => {
       const tab = useWorkspace.getState().ui[id]?.activeTab;
@@ -57,11 +60,11 @@ export const actions: Action[] = [
       void closeTabsWithPrompt(id, tabs.map((t) => t.path));
     }),
   },
-  { id: "copyContext", label: "Copy Context (code with path and lines)", shortcut: "Ctrl+Shift+C", needsProject: true, run: () => copyContext() },
+  { id: "copyContext", label: "Copy Context (code with path and lines)", shortcut: shortcutLabel("copyContext"), needsProject: true, run: () => copyContext() },
   {
     id: "selectInProject",
     label: "Select Opened File in Project View",
-    shortcut: "Alt+F1",
+    shortcut: shortcutLabel("selectInProject"),
     needsProject: true,
     run: () => {
       const p = activeProject();
@@ -72,7 +75,7 @@ export const actions: Action[] = [
   {
     id: "toggleTerminal",
     label: "Terminal",
-    shortcut: "Alt+F12",
+    shortcut: shortcutLabel("terminal"),
     needsProject: true,
     run: withProject((id) => toggleTerminal(id, false)),
   },
@@ -80,7 +83,7 @@ export const actions: Action[] = [
   {
     id: "toggleProjectView",
     label: "Project View",
-    shortcut: "Alt+1",
+    shortcut: shortcutLabel("projectView"),
     needsProject: true,
     run: withProject((id) => useWorkspace.getState().updateUi(id, (u) => ({ sidebarVisible: !u.sidebarVisible }))),
   },

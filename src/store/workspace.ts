@@ -40,6 +40,10 @@ export interface ProjectUi {
   bottomTab: "build" | "git";
   /** Tool window shown in the left sidebar. */
   sidebarTab: "project" | "commit";
+  /** Commit view lists changes in a directory tree rather than flat. */
+  commitGroupByDir: boolean;
+  /** Collapsed groups and folders of the Git branch list ("Local", "Remote/origin", …). */
+  gitCollapsed: string[];
   /** Selected run configuration id (see RunBar). */
   runConfig: string | null;
 }
@@ -66,6 +70,8 @@ export const defaultUi = (): ProjectUi => ({
   recentFiles: [],
   bottomTab: "build",
   sidebarTab: "project",
+  commitGroupByDir: false,
+  gitCollapsed: [],
   runConfig: null,
 });
 

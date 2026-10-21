@@ -1,11 +1,12 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, Plus, Settings, Star, TerminalSquare } from "lucide-react";
+import { FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, Moon, Plus, Settings, Star, Sun, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type TextEncoding } from "../lib/ipc";
 import { basename } from "../lib/path";
+import { toggleThemeMode, useTheme } from "../lib/theme";
 import { useGit } from "../store/git";
 import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
 import { useTree } from "../store/tree";
@@ -16,6 +17,7 @@ import { useWorkspace, type Project } from "../store/workspace";
 import { closeTabsWithPrompt, useCursor } from "./EditorArea";
 import { confirmAction, openMenu } from "./Overlays";
 import { disposeView, toggleTerminal } from "./TerminalPanel";
+import { shortcutLabel } from "../lib/keymap";
 
 export async function openFolder(): Promise<void> {
   const dir = await open({ directory: true, multiple: false, title: "Open Folder" });
@@ -93,6 +95,7 @@ export function ProjectRail() {
   const projects = useWorkspace((s) => s.projects);
   const activeId = useWorkspace((s) => s.activeProjectId);
   const ws = useWorkspace.getState;
+  const themeMode = useTheme((s) => s.mode);
   const open = projects.filter((p) => p.open).sort((a, b) => Number(b.favorite) - Number(a.favorite));
 
   return (
@@ -125,7 +128,14 @@ export function ProjectRail() {
         <Plus size={18} />
       </button>
       <div className="rail-spacer" />
-      <button className="rail-item" title="Settings (Ctrl+Alt+S)" onClick={() => openSettings()}>
+      <button
+        className="rail-item"
+        title={themeMode === "dark" ? "Switch to Light Theme" : "Switch to Dark Theme"}
+        onClick={toggleThemeMode}
+      >
+        {themeMode === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+      </button>
+      <button className="rail-item" title={`Settings (${shortcutLabel("settings")})`} onClick={() => openSettings()}>
         <Settings size={17} />
       </button>
       <button
@@ -274,7 +284,7 @@ export function StatusBar({ project }: { project: Project | null }) {
           </button>
           <span className="status-item">{project.name}</span>
           {git?.status.isRepo && (
-            <button className="status-item status-btn" title="Branches (Ctrl+Shift+`)" onClick={() => openBranchesPopup(project)}>
+            <button className="status-item status-btn" title={`Branches (${shortcutLabel("branches")})`} onClick={() => openBranchesPopup(project)}>
               <GitBranch size={12} /> {git.status.branch ?? "detached"}
               {operation && <span className="status-op">({operation} in progress)</span>}
             </button>
@@ -323,7 +333,7 @@ export function StatusBar({ project }: { project: Project | null }) {
         <button
           className={"status-item status-btn" + (ui?.terminalVisible ? " on" : "")}
           onClick={() => toggleTerminal(project.id, false)}
-          title="Terminal (Alt+F12)"
+          title={`Terminal (${shortcutLabel("terminal")})`}
         >
           <TerminalSquare size={12} /> Terminal
         </button>
