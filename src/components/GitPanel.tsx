@@ -391,7 +391,11 @@ export function GitPanel({ project }: { project: Project }) {
   const seq = useRef(0);
   const loadingMore = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  // `selected` is the focused commit shown in Details; `picked` is the multi-selection
+  // (Ctrl/Shift+click) that the context menu acts on, and `anchor` starts Shift ranges.
   const [selected, setSelected] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const anchor = useRef<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(300);
   const listRef = useRef<HTMLDivElement>(null);
@@ -475,6 +479,49 @@ export function GitPanel({ project }: { project: Project }) {
   const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 10);
   const last = Math.min(commits.length, Math.ceil((scrollTop + height) / ROW_H) + 10);
   const head = branches.find((b) => b.current)?.hash ?? null;
+
+  const select = (c: Commit, e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
+    setSelected(c.hash);
+    const a = commits.findIndex((x) => x.hash === anchor.current);
+    if (e.shiftKey && a >= 0) {
+      const i = commits.indexOf(c);
+      setPicked(new Set(commits.slice(Math.min(a, i), Math.max(a, i) + 1).map((x) => x.hash)));
+      return;
+    }
+    anchor.current = c.hash;
+    if (e.ctrlKey || e.metaKey) {
+      setPicked((p) => {
+        const next = new Set(p);
+        if (selected && !next.size) next.add(selected);
+        if (next.has(c.hash)) next.delete(c.hash);
+        else next.add(c.hash);
+        return next;
+      });
+    } else setPicked(new Set([c.hash]));
+  };
+
+  /** Menu for several picked commits; `list` is in log order, newest first. */
+  const commitsMenu = (list: Commit[]) => {
+    const n = list.length;
+    const hashes = list.map((c) => c.hash);
+    return [
+      { label: "Copy Revision Numbers", action: () => void navigator.clipboard.writeText(hashes.join("\n")) },
+      { separator: true },
+      // Oldest first, so each pick lands on top of the one it came after.
+      { label: `Cherry-Pick ${n} Commits`, action: () => void runGit(project.id, ["cherry-pick", ...[...hashes].reverse()], { label: `Cherry-pick ${n} commits` }) },
+      {
+        label: `Revert ${n} Commits…`,
+        action: async () => {
+          const mode = await choose("Revert Commits", `Revert ${n} selected commits? They are undone newest first.`, [
+            { label: "Cancel", value: "cancel" },
+            { label: "Revert into Local Changes", value: "--no-commit" },
+            { label: "Revert (one commit each)", value: "--no-edit", primary: true },
+          ]);
+          if (mode) await runGit(project.id, ["revert", mode, ...hashes], { label: `Revert ${n} commits` });
+        },
+      },
+    ];
+  };
 
   const commitMenu = (c: Commit) => {
     const short = c.hash.slice(0, 8);
@@ -608,7 +655,7 @@ export function GitPanel({ project }: { project: Project }) {
               const go = (j: number) => {
                 const c = commits[Math.max(0, Math.min(commits.length - 1, j))];
                 if (!c) return;
-                setSelected(c.hash);
+                select(c, { shiftKey: e.shiftKey, ctrlKey: false, metaKey: false });
                 const el = listRef.current;
                 const top = Math.max(0, Math.min(commits.length - 1, j)) * ROW_H;
                 if (el && top < el.scrollTop) el.scrollTop = top;
@@ -629,12 +676,14 @@ export function GitPanel({ project }: { project: Project }) {
                 return (
                   <div
                     key={c.hash}
-                    className={"log-row" + (selected === c.hash ? " selected" : "") + (c.hash === head ? " head" : "")}
+                    className={"log-row" + ((picked.size ? picked.has(c.hash) : selected === c.hash) ? " selected" : "") + (c.hash === head ? " head" : "")}
                     style={{ top: i * ROW_H, height: ROW_H, paddingLeft: graphWidth }}
-                    onClick={() => setSelected(c.hash)}
+                    onClick={(e) => select(c, e)}
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      setSelected(c.hash);
+                      const list = commits.filter((x) => picked.has(x.hash));
+                      if (picked.has(c.hash) && list.length > 1) return openMenu(e, commitsMenu(list));
+                      select(c, { shiftKey: false, ctrlKey: false, metaKey: false });
                       openMenu(e, commitMenu(c));
                     }}
                     title={`${c.hash}\n${c.author} <${c.email}>`}
