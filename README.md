@@ -27,7 +27,7 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 - **Never overwrite the agent's work silently**: files changed on disk reload automatically, and conflicting edits are always surfaced.
 - **No phantom errors**: C# errors come only from a real `dotnet build`, not from a language server that is out of sync.
 
-> Status: early development (v0.1.0). See [docs/ROADMAP.md](docs/ROADMAP.md) for the roadmap.
+> Status: early development (v0.1.0).
 
 ## Features
 
@@ -268,7 +268,7 @@ src-tauri/src/               backend (Rust)
   pty/                       PTY host (host.rs), client (client.rs), wire protocol (protocol.rs)
 scripts/                     bump-version.sh
 Casks/                       Homebrew cask (updated by the release workflow)
-docs/                        roadmap and screenshots
+docs/                        screenshots
 ```
 
 ## Contributing
