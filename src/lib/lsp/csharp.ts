@@ -25,6 +25,7 @@ import {
   type LspTextEdit,
 } from "./convert";
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
+import { MIN_PREFIX, pickInline, type LspCompletionItem } from "./inline";
 
 // What Roslyn reloads on: sources, project files and restore output. Other
 // JSON (Unity's Library writes plenty) would only be parsed and dropped.
@@ -574,20 +575,6 @@ export function registerProviders(): void {
     },
   });
 
-  interface LspCompletionItem {
-    label: string;
-    kind?: number;
-    detail?: string;
-    documentation?: unknown;
-    sortText?: string;
-    filterText?: string;
-    insertText?: string;
-    insertTextFormat?: number;
-    textEdit?: { range?: LspRange; insert?: LspRange; newText: string };
-    additionalTextEdits?: LspTextEdit[];
-    commitCharacters?: string[];
-    preselect?: boolean;
-  }
   type HazeCompletion = monaco.languages.CompletionItem & { lsp: LspCompletionItem; path: string };
   L.registerCompletionItemProvider("csharp", {
     triggerCharacters: [".", "<", " ", "(", "[", ":", "\"", "#"],
@@ -639,6 +626,39 @@ export function registerProviders(): void {
         additionalTextEdits: r.additionalTextEdits?.map((e) => ({ range: toMonacoRange(e.range), text: e.newText })) ?? item.additionalTextEdits,
       };
     },
+  });
+
+  // Ghost text: the rest of Roslyn's best completion for the word being typed; Tab accepts it.
+  L.registerInlineCompletionsProvider("csharp", {
+    debounceDelayMs: 100,
+    async provideInlineCompletions(model, position, _context, token) {
+      const s = ready(model);
+      const word = model.getWordUntilPosition(position);
+      // Not in the middle of a word.
+      const next = model.getLineContent(position.lineNumber).charAt(position.column - 1);
+      if (!s || word.word.length < MIN_PREFIX || /\w/.test(next)) return { items: [] };
+      const res = await s
+        .request<{ items: LspCompletionItem[] } | LspCompletionItem[] | null>("textDocument/completion", { ...docParams(model, position), context: { triggerKind: 1 } }, token)
+        .catch(() => null);
+      const items = Array.isArray(res) ? res : (res?.items ?? []);
+      const pick = pickInline(items, word.word, position.lineNumber - 1, word.startColumn - 1, position.column - 1);
+      if (!pick || token.isCancellationRequested) return { items: [] };
+      // Edits such as a `using` for a type from another namespace often come only with the resolved item.
+      const resolved = s.caps.completionProvider?.resolveProvider
+        ? await s.request<LspCompletionItem>("completionItem/resolve", pick.item, token).catch(() => null)
+        : null;
+      const edits = resolved?.additionalTextEdits ?? pick.item.additionalTextEdits;
+      return {
+        items: [
+          {
+            insertText: pick.text,
+            range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, position.column),
+            additionalTextEdits: edits?.map((e) => ({ range: toMonacoRange(e.range), text: e.newText })),
+          },
+        ],
+      };
+    },
+    disposeInlineCompletions() {},
   });
 
   L.registerSignatureHelpProvider("csharp", {
