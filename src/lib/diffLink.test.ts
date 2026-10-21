@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chunkKind, connectorPath, mapBoundary, nextChunk, toChunk } from "./diffLink";
+import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, toChunk } from "./diffLink";
 
 describe("toChunk", () => {
   it("converts modified, added and deleted line changes", () => {
@@ -41,6 +41,7 @@ describe("mapBoundary", () => {
 describe("connectorPath", () => {
   it("draws a closed band between both spans", () => {
     expect(connectorPath(40, 10, 30, 50, 60)).toBe("M0,10 C20,10 20,50 40,50 L40,60 C20,60 20,30 0,30 Z");
+    expect(connectorCurve(40, 10.5, 49.5)).toBe("M0,10.5 C20,10.5 20,49.5 40,49.5");
   });
 });
 

@@ -62,6 +62,13 @@ export function connectorPath(width: number, l0: number, l1: number, r0: number,
   );
 }
 
+/** Open SVG curve from `yl` on the left edge to `yr` on the right edge: one border of a connector. */
+export function connectorCurve(width: number, yl: number, yr: number): string {
+  const m = width / 2;
+  const f = (n: number) => Math.round(n * 10) / 10;
+  return `M0,${f(yl)} C${f(m)},${f(yl)} ${f(m)},${f(yr)} ${f(width)},${f(yr)}`;
+}
+
 /** Index of the next (`dir = 1`) or previous (`dir = -1`) block relative to `line` on the right side. */
 export function nextChunk(chunks: readonly Chunk[], line: number, dir: 1 | -1): number {
   if (dir === 1) return chunks.findIndex((c) => c.b0 + 1 > line);

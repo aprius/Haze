@@ -2015,8 +2015,6 @@ kbd {
   position: relative;
   flex: none;
   overflow: hidden;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
 }
 
 .diff-gap svg {
@@ -2032,46 +2030,37 @@ kbd {
   visibility: hidden;
 }
 
+/* The same tint in the editors and in the connectors, so a block reads as one band. */
+.rd-added { --rd: var(--rd-added); }
+.rd-modified { --rd: var(--rd-modified); }
+.rd-deleted { --rd: var(--rd-deleted); }
+
 .rd-link {
+  fill: color-mix(in srgb, var(--rd) 18%, transparent);
+}
+
+.rd-edge {
+  fill: none;
+  stroke: color-mix(in srgb, var(--rd) 65%, transparent);
   stroke-width: 1;
 }
 
-.rd-link.rd-added {
-  fill: color-mix(in srgb, var(--rd-added) 22%, transparent);
-  stroke: color-mix(in srgb, var(--rd-added) 60%, transparent);
+.rd-line {
+  background: color-mix(in srgb, var(--rd) 18%, transparent);
 }
 
-.rd-link.rd-modified {
-  fill: color-mix(in srgb, var(--rd-modified) 22%, transparent);
-  stroke: color-mix(in srgb, var(--rd-modified) 60%, transparent);
+.rd-top {
+  box-shadow: inset 0 1px color-mix(in srgb, var(--rd) 65%, transparent);
 }
 
-.rd-link.rd-deleted {
-  fill: color-mix(in srgb, var(--rd-deleted) 22%, transparent);
-  stroke: color-mix(in srgb, var(--rd-deleted) 60%, transparent);
-}
-
-.rd-line.rd-added {
-  background: color-mix(in srgb, var(--rd-added) 16%, transparent);
-}
-
-.rd-line.rd-modified {
-  background: color-mix(in srgb, var(--rd-modified) 16%, transparent);
-}
-
-.rd-line.rd-deleted {
-  background: color-mix(in srgb, var(--rd-deleted) 16%, transparent);
+.rd-bottom {
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--rd) 65%, transparent);
 }
 
 .rd-char {
   background: color-mix(in srgb, var(--rd-modified) 34%, transparent);
   border-radius: 2px;
 }
-
-.rd-mark-below.rd-added { box-shadow: inset 0 -1px var(--rd-added); }
-.rd-mark-below.rd-deleted { box-shadow: inset 0 -1px var(--rd-deleted); }
-.rd-mark-above.rd-added { box-shadow: inset 0 1px var(--rd-added); }
-.rd-mark-above.rd-deleted { box-shadow: inset 0 1px var(--rd-deleted); }
 
 .rd-apply {
   position: absolute;
@@ -2083,13 +2072,13 @@ kbd {
   border-radius: 3px;
   font: 600 13px/14px var(--font-ui);
   color: var(--muted);
-  background: var(--editor-bg);
+  background: transparent;
   cursor: pointer;
 }
 
 .rd-apply:hover {
   color: var(--fg);
-  background: var(--hover);
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 
 .blame-text {

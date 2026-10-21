@@ -4,7 +4,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ensureBuffer, getModel } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
-import { chunkKind, connectorPath, mapBoundary, nextChunk, toChunk, type Chunk, type ChunkKind } from "../lib/diffLink";
+import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, toChunk, type Chunk, type ChunkKind } from "../lib/diffLink";
 import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
@@ -88,7 +88,14 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       glyphMargin: false,
       theme: monacoTheme(),
     });
-    const left = monaco.editor.create(leftHost.current, opts(true));
+    // The left side has no vertical scrollbar (it follows the right one), so
+    // its blocks run straight into the connectors like in Rider.
+    const left = monaco.editor.create(leftHost.current, {
+      ...opts(true),
+      scrollbar: { vertical: "hidden", verticalScrollbarSize: 0 },
+      overviewRulerLanes: 0,
+      overviewRulerBorder: false,
+    });
     const right = monaco.editor.create(rightHost.current, opts(!editable));
     const differ = monaco.editor.createDiffEditor(differHost.current, { ignoreTrimWhitespace: false, renderOverviewRuler: false });
     sides.current = { left, right, differ };
@@ -132,7 +139,14 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
         const r0 = boundaryY(right, c.b0);
         const r1 = boundaryY(right, c.b1);
         if (Math.max(l1, r1) < 0 || Math.min(l0, r0) > height) return;
-        paths += `<path class="rd-link rd-${chunkKind(c)}" d="${connectorPath(width, l0, l1, r0, r1)}"/>`;
+        const kind = chunkKind(c);
+        // Borders sit half a pixel inside the band to line up with the 1px edges drawn in the editors.
+        const edge = (y0: number, y1: number, b: number): [number, number] => (y0 === y1 ? (b > 0 ? [y0 - 0.5, y0 - 0.5] : [y0 + 0.5, y0 + 0.5]) : [y0 + 0.5, y1 - 0.5]);
+        const [lt, lb] = edge(l0, l1, c.a0);
+        const [rt, rb] = edge(r0, r1, c.b0);
+        paths +=
+          `<path class="rd-link rd-${kind}" d="${connectorPath(width, l0, l1, r0, r1)}"/>` +
+          `<path class="rd-edge rd-${kind}" d="${connectorCurve(width, lt, rt)} ${connectorCurve(width, lb, rb)}"/>`;
         if (editable) buttons += `<button class="rd-apply" data-chunk="${i}" title="Replace with the left side" style="top:${Math.round(l0)}px">»</button>`;
       });
       gapEl.innerHTML = `<svg width="${width}" height="${height}">${paths}</svg>${buttons}`;
@@ -160,13 +174,16 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       const changes = differ.getLineChanges() ?? [];
       chunks.current = changes.map(toChunk);
       setStats(changes.length);
-      const lineDeco = (ed: monaco.editor.ICodeEditor, kind: ChunkKind, s: number, e: number): monaco.editor.IModelDeltaDecoration => {
-        if (s < e) return { range: new monaco.Range(s + 1, 1, e, 1), options: { isWholeLine: true, className: `rd-line rd-${kind}` } };
+      // Each class goes on the text and on the gutter, so a block is one band across the editor.
+      const whole = (from: number, to: number, cls: string): monaco.editor.IModelDeltaDecoration => ({
+        range: new monaco.Range(from, 1, to, 1),
+        options: { isWholeLine: true, className: cls, marginClassName: cls },
+      });
+      const lineDeco = (ed: monaco.editor.ICodeEditor, kind: ChunkKind, s: number, e: number): monaco.editor.IModelDeltaDecoration[] => {
+        if (s < e) return [whole(s + 1, e, `rd-line rd-${kind}`), whole(s + 1, s + 1, `rd-top rd-${kind}`), whole(e, e, `rd-bottom rd-${kind}`)];
         // Empty side: a thin line where the other side's block belongs.
         const lines = ed.getModel()?.getLineCount() ?? 1;
-        const below = s >= 1;
-        const line = below ? Math.min(s, lines) : 1;
-        return { range: new monaco.Range(line, 1, line, 1), options: { isWholeLine: true, className: `rd-mark-${below ? "below" : "above"} rd-${kind}` } };
+        return s >= 1 ? [whole(Math.min(s, lines), Math.min(s, lines), `rd-bottom rd-${kind}`)] : [whole(1, 1, `rd-top rd-${kind}`)];
       };
       const charDeco = (sl: number, sc: number, el: number, ec: number): monaco.editor.IModelDeltaDecoration[] =>
         sl > 0 && el > 0 && (sl !== el || sc !== ec) ? [{ range: new monaco.Range(sl, sc, el, ec), options: { inlineClassName: "rd-char" } }] : [];
@@ -175,8 +192,8 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       changes.forEach((ch, i) => {
         const c = chunks.current[i];
         const kind = chunkKind(c);
-        l.push(lineDeco(left, kind, c.a0, c.a1));
-        r.push(lineDeco(right, kind, c.b0, c.b1));
+        l.push(...lineDeco(left, kind, c.a0, c.a1));
+        r.push(...lineDeco(right, kind, c.b0, c.b1));
         if (kind !== "modified") return;
         for (const x of ch.charChanges ?? []) {
           l.push(...charDeco(x.originalStartLineNumber, x.originalStartColumn, x.originalEndLineNumber, x.originalEndColumn));
