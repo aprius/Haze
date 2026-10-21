@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { getModel, reloadBuffer } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
 import { buildMerge, resolution, type ConflictBlock } from "../lib/merge";
-import { languageFor, monaco } from "../lib/monaco";
+import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
 import { absPath, refreshRepo, repo, runGit } from "../store/git";
@@ -66,9 +66,7 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
       readOnly,
       automaticLayout: true,
       minimap: { enabled: false },
-      fontFamily: 'JetBrains Mono, "Cascadia Code", Menlo, Consolas, monospace',
-      fontSize: 13,
-      lineHeight: 20,
+      ...codeFontOptions(),
       scrollBeyondLastLine: false,
       glyphMargin: false,
       theme: monacoTheme(),

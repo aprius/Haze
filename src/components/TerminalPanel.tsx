@@ -6,6 +6,7 @@ import { Terminal, type ILink } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { ChevronDown, ChevronRight, ChevronUp, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { codeFontFamily, loadCodeFont, useFonts } from "../lib/fonts";
 import { api } from "../lib/ipc";
 import { matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
@@ -34,6 +35,20 @@ useTheme.subscribe((t) => {
   for (const v of views.values()) v.term.options.theme = TERMINAL_THEMES[t.mode];
 });
 
+// The terminal uses the code font family at its own size. Shown terminals
+// refit to the new cell size (see TerminalView); hidden ones refit when shown.
+useFonts.subscribe((f, prev) => {
+  if (f.codeFont === prev.codeFont && f.terminalSize === prev.terminalSize) return;
+  void loadCodeFont(f).then(() => {
+    for (const v of views.values()) {
+      v.term.options.fontFamily = codeFontFamily(f);
+      v.term.options.fontSize = f.terminalSize;
+    }
+    fontListeners.forEach((l) => l());
+  });
+});
+const fontListeners = new Set<() => void>();
+
 /** A keydown that inserts text, as opposed to Enter, arrows, shortcuts or IME composition. */
 function isTextKey(e: KeyboardEvent): boolean {
   if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.keyCode === 229) return false;
@@ -53,8 +68,8 @@ function createView(id: string, project: Project): View {
   const el = document.createElement("div");
   el.className = "xterm-host";
   const term = new Terminal({
-    fontFamily: '"JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace',
-    fontSize: 13,
+    fontFamily: codeFontFamily(),
+    fontSize: useFonts.getState().terminalSize,
     lineHeight: 1.15,
     scrollback: 10000,
     allowProposedApi: true,
@@ -271,7 +286,11 @@ function TerminalView({ id, project, active }: { id: string; project: Project; a
     const ro = new ResizeObserver(fit);
     if (host.current) ro.observe(host.current);
     fit();
-    return () => ro.disconnect();
+    fontListeners.add(fit);
+    return () => {
+      ro.disconnect();
+      fontListeners.delete(fit);
+    };
   }, [id, project]);
 
   useEffect(() => {

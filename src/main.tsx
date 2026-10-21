@@ -9,6 +9,8 @@ import "@fontsource/jetbrains-mono/700.css";
 import "./styles.css";
 // Sets <html data-theme> before the first render.
 import "./lib/theme";
+// Applies the saved UI and code fonts.
+import { loadCodeFont } from "./lib/fonts";
 // Restores the saved zoom and listens for Ctrl+wheel.
 import "./lib/zoom";
 
@@ -28,9 +30,7 @@ window.addEventListener("keydown", (e) => {
 
 // The terminal and editors measure glyphs once when created; load the bundled
 // font first so they do not measure the fallback.
-void Promise.all(["400", "italic 400", "700"].map((w) => document.fonts.load(`${w} 13px "JetBrains Mono"`)))
-  .catch(() => {})
-  .then(() =>
+void loadCodeFont().then(() =>
     createRoot(document.getElementById("root")!).render(
       <StrictMode>
         <App />
