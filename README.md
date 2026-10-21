@@ -1,167 +1,282 @@
-# Haze
+<p align="center">
+  <img src="assets/logo.svg" width="72" alt="Haze logo">
+</p>
 
-Không gian làm việc nhẹ dành cho việc lập trình cùng AI agent (Claude Code, Codex…), hướng tới người dùng .NET quen với Rider: cây file và quản lý Git kiểu Rider, editor đủ dùng để đọc và điều hướng code, terminal không bao giờ mất phiên.
+<h1 align="center">Haze</h1>
 
-> A lightweight, AI-first workspace: Rider-style project view and Git tooling, a capable editor, and terminals that survive restarts.
+<p align="center">
+  A lightweight, AI-first workspace for coding alongside agents like Claude Code and Codex.<br>
+  Rider-style project view and Git tooling, a capable editor, and terminals that survive restarts.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platforms">
+  <img src="https://img.shields.io/badge/built%20with-Tauri%202-24c8db.svg" alt="Tauri 2">
+</p>
 
 ![Haze](docs/screenshot.png)
 
-Trạng thái: **giai đoạn 4** (Git kiểu Rider/Rebased). Lộ trình đầy đủ: [docs/ROADMAP.md](docs/ROADMAP.md).
+## Why Haze?
 
-## Đã có
+When an AI agent writes most of the code, a full IDE becomes heavy and noisy, while a plain terminal is too bare. Haze sits in between. It is aimed at .NET developers used to JetBrains Rider and keeps the parts of Rider that matter most in an agent-driven workflow:
 
-**Project**
-- Thanh project bên trái: mở nhiều project, yêu thích, sắp xếp, đóng/mở lại; màn hình Welcome liệt kê project gần đây.
-- Khôi phục toàn bộ khi mở lại: project, thư mục đang mở rộng, tab editor, kích thước panel, terminal.
+- **Review what the agent did**: Rider-style commit window, diffs, log graph, 3-way merge, AI checkpoints and per-file "reviewed" marks.
+- **Navigate code quickly**: Search Everywhere, Find/Replace in Files, and C# navigation through the Roslyn Language Server.
+- **Never lose a session**: shells and agents run in a separate PTY host process, so closing or updating Haze does not kill them.
+- **Never overwrite the agent's work silently**: files changed on disk reload automatically, and conflicting edits are always surfaced.
+- **No phantom errors**: C# errors come only from a real `dotnet build`, not from a language server that is out of sync.
 
-**Cây file (Project view)**
-- Tải từng cấp, ảo hóa (chỉ vẽ dòng đang thấy), tự cập nhật khi file trên đĩa thay đổi.
-- Màu theo trạng thái git như Rider: sửa (xanh), mới thêm (xanh lá), chưa track (đỏ), bị ignore (vàng nhạt), xung đột; thư mục chứa thay đổi cũng được tô màu.
-- Lồng file kiểu Rider: `appsettings.Development.json` dưới `appsettings.json`, `Index.razor.cs` dưới `Index.razor`, `Strings.Designer.cs` dưới `Strings.resx`, `App.csproj.user` dưới `App.csproj`…
-- New File / New Directory (Alt+Insert), Rename (Shift+F6 / F2), Delete vào thùng rác, Cut/Copy/Paste (Ctrl+X/C/V), kéo thả để di chuyển (giữ Ctrl để copy), Copy Path (Ctrl+Shift+C), Open in Terminal, Reveal in File Manager.
-- Chọn nhiều bằng Ctrl/Shift, điều hướng bằng bàn phím.
+> Status: early development (v0.1.0). See [docs/ROADMAP.md](docs/ROADMAP.md) for the roadmap.
 
-**Editor (Monaco)**
-- Tab xem trước (click một lần: tab nghiêng, bị thay bởi file kế tiếp; double-click hoặc sửa thì giữ lại).
-- Giữ nguyên encoding (UTF-8, UTF-8 BOM, UTF-16; file cũ không phải UTF-8 được đọc và ghi theo Windows-1252, byte lỗi lẻ trong file UTF-8 được giữ nguyên, nên không mất byte nào) và kiểu xuống dòng (LF/CRLF) khi lưu; ghi file an toàn qua file tạm.
-- **Không ghi đè âm thầm**: file chưa sửa tự tải lại khi AI sửa trên đĩa; file đang sửa dở thì hiện thông báo với "Load disk version" / "Overwrite with mine"; lưu bị chặn nếu file trên đĩa đã đổi.
-- Bản nháp chưa lưu được giữ qua lần tắt/mở app.
-- Ctrl+S lưu tất cả, Ctrl+F4 đóng tab, Ctrl+Tab chuyển tab.
+## Features
 
-**Tìm kiếm (giai đoạn 2)**
-- **Double Shift — Search Everywhere** với các tab All / Files / Actions / Text. Tìm mờ tên file như Rider (`ordcon` → `OrdersController.cs`), ưu tiên trùng tên file, gõ `Tên.cs:12` để nhảy tới dòng. Ctrl+Shift+N: Go to File, Ctrl+Shift+A: Find Action, Ctrl+E: file mở gần đây.
-- **Find in Files (Ctrl+Shift+F) / Replace in Files (Ctrl+Shift+R)**:
-  - Regex đầy đủ (lookahead/lookbehind, backreference), thay thế bằng `$1`, `${name}`; Match case, Words, Preserve case.
-  - Phạm vi: In Project / Directory / Open Files; file mask `*.cs, !*.Designer.cs`; mặc định bỏ `bin/`, `obj/`, `node_modules/` và file trong `.gitignore` (có ô "Include ignored").
-  - Lọc ngữ cảnh cho C# (phân tích bằng tree-sitter): Anywhere / In comments / In string literals / Except….
-  - Đọc đúng file UTF-16 và UTF-8 BOM; khi ghi giữ nguyên encoding, BOM, CRLF.
-  - File đang mở được tìm trên nội dung chưa lưu và thay ngay trong editor (Ctrl+Z được); file không mở thì ghi trên đĩa.
-  - Trước khi ghi, chạy lại tìm kiếm trên nội dung hiện tại: file đổi kể từ lúc tìm (ví dụ AI vừa sửa) thì bỏ qua và báo lại, không ghi đè.
-  - Xem trước từng chỗ thay (cũ gạch đỏ, mới xanh), tick/bỏ tick từng chỗ hoặc cả file, khung xem code xung quanh; nút **Undo** hoàn tác cả lượt.
-- Mở rộng tìm kiếm từ thư mục đang chọn trong Project view, hoặc lấy sẵn chữ đang bôi đen trong editor.
+### Projects and file tree
 
-**Editor (giai đoạn 2)**
-- **Copy Context (Ctrl+Shift+C)**: copy đoạn code kèm `đường/dẫn.cs:7-9` và khối code Markdown, để dán cho AI.
-- Phím kiểu Rider: Ctrl+D nhân đôi dòng, Ctrl+Y xóa dòng, Ctrl+R thay thế trong file, Ctrl+W/Ctrl+Shift+W mở rộng/thu hẹp vùng chọn, Alt+J chọn chỗ trùng tiếp theo, Alt+Shift+↑/↓ di chuyển dòng, Alt+F1 tìm file đang mở trong Project view.
-- Xem trước Markdown (Source/Preview), xem ảnh (png, jpg, gif, webp, svg…).
+- Multiple projects in a sidebar with favorites, ordering and a Welcome screen of recent projects.
+- Full session restore: open projects, expanded folders, editor tabs, panel sizes and terminals.
+- Lazy-loaded, virtualized file tree that updates live when files change on disk.
+- Rider-like Git status colors (modified, added, untracked, ignored, conflicted), propagated to parent folders.
+- Rider-style file nesting: `appsettings.Development.json` under `appsettings.json`, `Index.razor.cs` under `Index.razor`, `Strings.Designer.cs` under `Strings.resx`, and so on.
+- New File/Directory (`Alt+Insert`), Rename (`Shift+F6`/`F2`), Delete to trash, Cut/Copy/Paste, drag and drop (hold `Ctrl` to copy), Copy Path, Open in Terminal, Reveal in File Manager.
 
-**C# và .NET (giai đoạn 3)**
-- Dùng **Roslyn Language Server** (`roslyn-language-server`, bản .NET tool của Microsoft); dự phòng `csharp-ls`. Nếu chưa cài, thanh trên cùng có nút **Install** chạy `dotnet tool install --global roslyn-language-server --prerelease`.
-- Điều hướng kiểu Rider: **Ctrl+B / Ctrl+click** tới định nghĩa (mở được cả file khác), **Alt+F7 / Shift+F12** Find Usages, **Ctrl+Alt+B** Go to Implementation, **Ctrl+F12** cấu trúc file, **Shift+F6** Rename (đổi tên qua nhiều file, một lần Undo), **Alt+Enter** quick fix/refactoring của Roslyn, **Ctrl+Alt+L** format, hover, completion, gợi ý tham số, tô sáng các chỗ dùng.
-- **Không có lỗi "ảo"**: Haze không lấy lỗi từ language server. Lỗi chỉ đến từ build thật: **Ctrl+Shift+B** chạy `dotnet build`, panel **Build** liệt kê lỗi/cảnh báo MSBuild (bấm để nhảy tới), và vạch đỏ trong editor; vạch đỏ của file nào sẽ tự xóa khi file đó bị sửa, cho tới lần build sau.
-- Thanh **Run**: cấu hình chạy lấy từ `launchSettings.json` của từng project (và `dotnet test` nếu có project test). **Shift+F10** chạy trong một tab terminal riêng (vẫn sống khi đóng Haze).
-- Double Shift có thêm tab **Symbols** (tìm class/method mờ, ví dụ `OrdSer`), Find in Files có thêm phạm vi **Solution** (đọc `.sln`/`.slnx`).
-- File do AI tạo/sửa/xóa trên đĩa được báo cho Roslyn (`workspace/didChangeWatchedFiles`), nên điều hướng luôn theo code mới.
+### Editor (Monaco)
 
-**Git (giai đoạn 4)** — tự viết, gọi git CLI; giao diện theo Rider/Rebased
-- **Commit (Alt+0, Ctrl+K)**: tick từng file để commit, không cần stage; nhóm Changes / Unversioned Files / Merge Conflicts; Amend (tự điền message cũ); Commit and Push; Rollback (hỏi trước khi xóa file mới); Add to VCS, Add to .gitignore; banner Continue/Abort khi đang merge/rebase dở.
-- **Git (Alt+9)**: log có **đồ thị nhánh** (lane tính trên toàn bộ lịch sử đã tải, tải thêm khi cuộn), nhãn branch/tag/remote, lọc theo text/hash, tác giả, nhánh, đường dẫn, First parent; danh sách nhánh bên trái; chi tiết commit và file thay đổi bên phải; tab **Console** ghi lại mọi lệnh git Haze đã chạy.
-- Menu commit: Copy Revision, Checkout Revision, New Branch, New Tag, Cherry-Pick, Revert, Undo Commit, Reset Current Branch to Here (Soft/Mixed/Hard).
-- **Branches** (bấm tên nhánh ở thanh trạng thái, hoặc Ctrl+Shift+\`): tìm nhánh, Checkout (có **Smart Checkout** tự stash khi có thay đổi), New Branch, Merge into current, Rebase onto, Compare, Push, Rename, Delete (hỏi khi chưa merge), xóa nhánh trên remote; Fetch.
-- **Push (Ctrl+Shift+K)**: liệt kê các commit sẽ push, chọn remote/nhánh đích, `--force-with-lease`; tự đặt upstream cho nhánh mới. **Update Project (Ctrl+T)**: pull kiểu Merge hoặc Rebase, tự stash/khôi phục thay đổi.
-- **Diff** mở như một tab (F7 / Shift+F7 để nhảy giữa các khác biệt); với file đang sửa, bên phải chính là file thật nên sửa trực tiếp được.
-- **Annotate with Git Blame**, **Show History for File**, **Compare with HEAD** từ menu chuột phải của editor và cây file.
-- **Xung đột**: nhóm Merge Conflicts trong cửa sổ Commit (tự mở khi merge/rebase/cherry-pick gặp xung đột); Accept Yours / Accept Theirs, hoặc **cửa sổ merge 3 khung** (Yours | Result | Theirs): thay đổi không xung đột được gộp sẵn, mỗi xung đột chọn « Left / Both / Right » hoặc sửa tay, Apply ghi file và `git add`; sau đó Continue.
-- **Interactive Rebase from Here…** (menu commit trong log): sắp xếp lại, pick / reword / edit / squash / fixup / drop — không cần mở trình soạn thảo văn bản.
-- **Stashes** (tab trong cửa sổ Git): xem nội dung, Apply, Pop, Drop, Unstash as Branch, Stash Changes (kèm file chưa track).
-- **Checkpoint cho AI** (nút máy ảnh trong cửa sổ Commit): chụp toàn bộ thư mục làm việc (kể cả file mới, không đụng index/nhánh) trước khi để agent chạy; mục **Since checkpoint** liệt kê mọi file agent đã đổi, bấm để xem diff so với lúc chụp.
-- **Đánh dấu đã review** từng file (biểu tượng con mắt); dấu tự mất khi file bị sửa lại.
-- Không bao giờ chờ nhập mật khẩu (`GIT_TERMINAL_PROMPT=0`): cần credential helper hoặc SSH agent; lỗi xác thực hiện ngay thành thông báo.
+- Preview tabs (single click opens a temporary tab; double-click or editing pins it).
+- Preserves encoding (UTF-8, UTF-8 BOM, UTF-16; legacy non-UTF-8 files are read and written as Windows-1252, and stray invalid bytes in UTF-8 files are kept, so no byte is ever lost) and line endings (LF/CRLF); writes atomically via a temp file.
+- **No silent overwrites**: clean buffers reload when the agent edits the file; dirty buffers show *Load disk version* / *Overwrite with mine*; saving is blocked if the file changed on disk.
+- Unsaved drafts survive app restarts.
+- **Copy Context** (`Ctrl+Shift+C`): copies the selection with `path/to/File.cs:7-9` and a Markdown code fence, ready to paste into an agent.
+- Rider keymap: `Ctrl+D` duplicate line, `Ctrl+Y` delete line, `Ctrl+W`/`Ctrl+Shift+W` extend/shrink selection, `Alt+J` next occurrence, `Alt+Shift+↑/↓` move line, `Alt+F1` select in Project view.
+- Markdown preview and image viewer.
 
-**Terminal**
-- Shell chạy trong một tiến trình nền riêng (PTY host): **đóng hay cập nhật Haze không giết shell hay AI agent đang chạy**; mở lại là nối lại đúng phiên, phát lại output gần nhất (4 MB/phiên).
-- Nhiều tab, tìm trong output (Ctrl+F), Ctrl+C copy khi có vùng chọn. Đóng tab chỉ hỏi khi có chương trình đang chạy trong đó (shell đứng ở prompt thì đóng luôn).
-- **Ctrl+click vào đường dẫn** để mở file đúng dòng/cột: hiểu định dạng lỗi MSBuild/`dotnet build` (`Program.cs(12,5): error CS1002`) lẫn `file:line:col`. Đường dẫn tương đối tính theo thư mục hiện tại của shell (sau `cd`; trên Windows cần shell báo thư mục qua OSC 7/OSC 9;9, như Starship hay oh-my-posh).
-- Alt+F12 bật/tắt terminal như Rider, Alt+1 bật/tắt Project view.
-- Biến môi trường `HAZE_TERMINAL_ID` có sẵn trong mỗi terminal (hook AI agent dùng nó để biết đang chạy ở tab nào).
+### Search
 
-**AI agent**
-- **Settings (Ctrl+Alt+S, nút bánh răng ở thanh bên trái)** → cài hook cho **Claude Code** (`~/.claude/settings.json`, giữ nguyên cài đặt và hook khác của bạn) hoặc **Codex** (`notify` trong `~/.codex/config.toml`; không ghi đè nếu bạn đã có `notify`). Gỡ được bất cứ lúc nào; lần ghi đầu có bản sao `.haze-backup`.
-- Tab terminal có agent hiện huy hiệu **CC/CX**: xanh nhấp nháy = đang làm, vàng = chờ bạn (xin quyền, hỏi lại), xanh lá = xong, đỏ = lỗi. Dự án ở thanh bên trái có chấm màu tương ứng.
-- **Thông báo desktop** khi agent cần bạn hoặc làm xong mà bạn không nhìn vào terminal đó (tắt được trong Settings).
-- Trạng thái nằm trong PTY host nên vẫn còn sau khi khởi động lại Haze. Không lưu prompt hay transcript.
-- **Worktree**: Branches popup → *New Worktree…* (hoặc chuột phải một nhánh) tạo thư mục `<repo>-<nhánh>` với nhánh mới và mở nó thành một dự án riêng — mỗi agent một worktree, không giẫm chân nhau. Nhóm **Worktrees** trong cửa sổ Git: mở, tạo tiếp, xóa.
+- **Search Everywhere** (double `Shift`) with All / Files / Symbols / Actions / Text tabs. Rider-like fuzzy matching (`ordcon` → `OrdersController.cs`), `Name.cs:12` jumps to a line. Also `Ctrl+Shift+N` Go to File, `Ctrl+Shift+A` Find Action, `Ctrl+E` Recent Files.
+- **Find in Files** (`Ctrl+Shift+F`) / **Replace in Files** (`Ctrl+Shift+R`):
+  - Full regex (lookaround, backreferences), `$1` / `${name}` replacements, Match case, Words, Preserve case.
+  - Scopes: Project / Solution / Directory / Open Files; file masks like `*.cs, !*.Designer.cs`; skips `bin/`, `obj/`, `node_modules/` and `.gitignore`d files by default.
+  - C# context filter powered by tree-sitter: anywhere, only in comments, only in string literals, or everything except those.
+  - Open files are searched and replaced in their unsaved buffers (undoable); other files are written on disk with encoding, BOM and CRLF preserved.
+  - Every match is re-checked before writing: files that changed since the search (for example, edited by the agent) are skipped and reported.
+  - Per-match preview with checkboxes and a one-click **Undo** for the whole replace.
 
-## Chạy và build
+![Replace in Files](docs/replace-in-files.png)
 
-Yêu cầu: Node.js 20+, Rust stable, git; trên Linux cần thêm `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev`.
+### C# and .NET
 
-Cho C#: .NET SDK (Roslyn Language Server cần .NET 10 runtime) và `dotnet tool install --global roslyn-language-server --prerelease`.
+- Uses Microsoft's **Roslyn Language Server** (`roslyn-language-server` .NET tool), with `csharp-ls` as a fallback. If it is missing, Haze offers a one-click **Install**.
+- Rider-style navigation: `Ctrl+B`/`Ctrl+Click` Go to Definition, `Alt+F7`/`Shift+F12` Find Usages, `Ctrl+Alt+B` Go to Implementation, `Ctrl+F12` File Structure, `Shift+F6` cross-file Rename (single undo), `Alt+Enter` Roslyn quick fixes and refactorings, `Ctrl+Alt+L` format, plus hover, completion, signature help and highlights.
+- **Real build errors only**: `Ctrl+Shift+B` runs `dotnet build`; the Build panel lists MSBuild errors and warnings and the editor shows squiggles, which clear for a file as soon as you edit it.
+- **Run bar** built from each project's `launchSettings.json` (and `dotnet test` for test projects). `Shift+F10` runs in its own terminal tab, which survives closing Haze.
+- Files created, changed or deleted by the agent are reported to Roslyn (`workspace/didChangeWatchedFiles`), so navigation always reflects the latest code.
 
-```bash
-npm install
-npm run tauri dev        # chạy bản dev
-npm run tauri build      # build bản cài đặt cho máy đang dùng
-```
+![C# navigation](docs/csharp.png)
 
-## Cài đặt
+### Git
 
-**macOS (Homebrew)** — một bản `.dmg` chạy cả Apple Silicon lẫn Intel:
+A Rider/Rebased-style Git client built on top of the system `git` CLI.
+
+- **Commit** (`Alt+0`, `Ctrl+K`): check the files to commit without staging; Changes / Unversioned Files / Merge Conflicts groups; Amend, Commit and Push, Rollback, Add to VCS, Add to `.gitignore`; Continue/Abort banner during merge or rebase.
+- **Git log** (`Alt+9`): branch graph, branch/tag/remote labels, filters by text, hash, author, branch, path and first parent; commit details; a **Console** tab with every git command Haze ran.
+- Commit actions: Checkout, New Branch, New Tag, Cherry-Pick, Revert, Undo Commit, Reset to Here (Soft/Mixed/Hard), **Interactive Rebase from Here** (pick / reword / edit / squash / fixup / drop, no text editor needed).
+- **Branches** popup (status bar or ``Ctrl+Shift+` ``): checkout with **Smart Checkout** (auto-stash), new, merge, rebase, compare, push, rename, delete, delete remote; Fetch.
+- **Push** (`Ctrl+Shift+K`) with a preview of outgoing commits and `--force-with-lease`; **Update Project** (`Ctrl+T`) via merge or rebase with auto-stash.
+- **Diff** tabs (`F7`/`Shift+F7` to jump between changes), editable on the working-copy side; Annotate with Git Blame, Show History for File, Compare with HEAD.
+- **Conflict resolution**: Accept Yours / Accept Theirs, or a **3-way merge view** (Yours | Result | Theirs) with non-conflicting changes pre-merged.
+- **Stashes**: view, apply, pop, drop, unstash as branch, stash including untracked files.
+- **AI checkpoints**: snapshot the whole working tree (including new files, without touching index or branches) before letting an agent run; *Since checkpoint* lists every file it changed, with diffs.
+- **Reviewed marks** per file, cleared automatically when the file changes again.
+- Never blocks on a password prompt (`GIT_TERMINAL_PROMPT=0`); use a credential helper or SSH agent.
+
+![Git](docs/git.png)
+![3-way merge](docs/merge.png)
+
+### Terminal
+
+- Shells run in a separate **PTY host** process: closing or updating Haze does not kill shells or running agents. On reopen Haze reattaches and replays recent output (4 MB per session).
+- Multiple tabs, search in output (`Ctrl+F`), `Ctrl+C` copies when there is a selection. Closing a tab only asks for confirmation when a program is running in it.
+- `Ctrl+Click` on paths opens the file at line/column, including MSBuild format (`Program.cs(12,5): error CS1002`) and `file:line:col`. Relative paths resolve against the shell's current directory (after `cd`; on Windows the shell must report it via OSC 7 / OSC 9;9, as Starship or oh-my-posh do).
+- `Alt+F12` toggles the terminal, `Alt+1` toggles the Project view.
+- `HAZE_TERMINAL_ID` is set in every terminal so agent hooks know which tab they run in.
+
+### AI agents
+
+- **Settings** (`Ctrl+Alt+S`) installs status hooks for **Claude Code** (`~/.claude/settings.json`, keeping your other settings and hooks) or **Codex** (`notify` in `~/.codex/config.toml`; never replaces an existing `notify`). Hooks can be removed anytime, and a `.haze-backup` copy is made on the first write.
+- Terminal tabs running an agent show a **CC/CX** badge: pulsing blue = working, yellow = waiting for you (permission, question), green = done, red = error. Projects in the sidebar show a matching dot.
+- **Desktop notifications** when an agent needs you or finishes in a terminal you are not looking at.
+- Status lives in the PTY host, so it survives Haze restarts. Prompts and transcripts are never stored.
+- **Worktrees**: *New Worktree…* in the Branches popup creates `<repo>-<branch>` on a new branch and opens it as a separate project, so each agent gets its own worktree.
+
+![AI agents](docs/agents.png)
+
+## Installation
+
+**macOS (Homebrew)**: a single universal `.dmg` for Apple Silicon and Intel.
 
 ```bash
 brew tap aprius/haze https://github.com/aprius/Haze
 brew install --cask haze
-brew upgrade --cask haze   # cập nhật
+brew upgrade --cask haze   # update
 ```
 
-**Windows / Linux**: tải từ [Releases](https://github.com/aprius/Haze/releases) — `-setup.exe` hoặc `.msi` (Windows), `.deb`, `.rpm` hoặc `.AppImage` (Linux).
+**Windows / Linux**: download from [Releases](https://github.com/aprius/Haze/releases): `-setup.exe` or `.msi` (Windows), `.deb`, `.rpm` or `.AppImage` (Linux).
 
-### Phát hành bản mới
+## Building from source
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) 20+
+- [Rust](https://rustup.rs/) (stable)
+- `git` on `PATH`
+- Linux only: `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev` (see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
+
+For C# support:
+
+- .NET SDK (the Roslyn Language Server requires the .NET 10 runtime)
+- `dotnet tool install --global roslyn-language-server --prerelease`
+
+### Build and run
 
 ```bash
-scripts/bump-version.sh 0.2.0           # đổi version ở package.json, tauri.conf.json, Cargo.toml
+git clone https://github.com/aprius/Haze.git
+cd Haze
+npm install
+npm run tauri dev        # run in development mode
+npm run tauri build      # build installers for the current platform
+```
+
+### Tests
+
+```bash
+npm run build && npm test                       # TypeScript typecheck + Vite build + Vitest
+cd src-tauri && cargo test && cargo clippy      # Rust tests and lints
+```
+
+CI runs the same checks on Windows, macOS and Linux.
+
+### Releasing
+
+```bash
+scripts/bump-version.sh 0.2.0           # bumps package.json, tauri.conf.json and Cargo.toml
 git commit -am "Release v0.2.0"
 git tag v0.2.0 && git push --follow-tags
 ```
 
-Tag `v*` chạy workflow [Release](.github/workflows/release.yml): build bản cài đặt cho macOS (universal), Windows, Linux, đăng lên GitHub Release, rồi cập nhật `version`/`sha256` trong [Casks/haze.rb](Casks/haze.rb) trên nhánh mặc định. Chạy tay workflow (Actions → Release → Run workflow) để chỉ build và tải file cài đặt từ Artifacts.
+A `v*` tag runs the [Release](.github/workflows/release.yml) workflow: it builds installers for macOS (universal), Windows and Linux, publishes a GitHub Release, and updates `version`/`sha256` in [Casks/haze.rb](Casks/haze.rb) on the default branch. Running the workflow manually (Actions → Release → Run workflow) only builds and uploads the installers as artifacts.
 
-Bản macOS mặc định được ký ad-hoc; cask tự gỡ cờ quarantine nên Gatekeeper không chặn. Muốn ký và notarize bằng Apple Developer ID, thêm các secret `APPLE_CERTIFICATE` (file `.p12` Developer ID Application, mã hóa base64), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
+macOS builds are ad-hoc signed by default; the cask removes the quarantine flag so Gatekeeper does not block the app. To sign and notarize with an Apple Developer ID, add the secrets `APPLE_CERTIFICATE` (base64-encoded Developer ID Application `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID`.
 
-Kiểm tra:
+## Usage
 
-```bash
-npm run build && npm test                       # TypeScript + Vite + Vitest
-cd src-tauri && cargo test && cargo clippy      # Rust
-```
+1. Launch Haze and open a folder from the Welcome screen (or the *Open Folder…* button in the project sidebar).
+2. Open a terminal (`Alt+F12`) and start your agent, e.g. `claude` or `codex`.
+3. Optional: open **Settings** (`Ctrl+Alt+S`) and install the agent hook to get status badges and notifications.
+4. Before a big task, take an **AI checkpoint** from the Commit window. While the agent works, edits on disk show up live in the tree and editor.
+5. Review the result in the Commit window (`Alt+0`): open diffs, mark files as reviewed, roll back what you do not want, then commit and push.
+6. For parallel agents, create a **worktree** per task from the Branches popup.
 
-## Kiến trúc
+### Key shortcuts
 
-| Phần | Công nghệ |
+| Action | Shortcut |
 |---|---|
-| Vỏ app | Tauri 2 (Rust) |
-| Giao diện | React 19 + TypeScript + zustand |
+| Search Everywhere | `Shift` `Shift` |
+| Go to File / Find Action / Recent Files | `Ctrl+Shift+N` / `Ctrl+Shift+A` / `Ctrl+E` |
+| Find / Replace in Files | `Ctrl+Shift+F` / `Ctrl+Shift+R` |
+| Go to Definition / Implementation | `Ctrl+B` / `Ctrl+Alt+B` |
+| Find Usages | `Alt+F7` |
+| Rename | `Shift+F6` |
+| Quick fix | `Alt+Enter` |
+| Build / Run | `Ctrl+Shift+B` / `Shift+F10` |
+| Commit / Git log | `Alt+0` (`Ctrl+K`) / `Alt+9` |
+| Push / Update Project | `Ctrl+Shift+K` / `Ctrl+T` |
+| Branches | ``Ctrl+Shift+` `` |
+| Terminal / Project view | `Alt+F12` / `Alt+1` |
+| Copy Context for AI | `Ctrl+Shift+C` |
+| Settings | `Ctrl+Alt+S` |
+
+## Architecture
+
+Haze is a [Tauri 2](https://tauri.app/) app: a Rust backend that owns the file system, Git, search, language servers and terminals, and a React frontend rendered in the system webview. They talk over Tauri IPC commands and events.
+
+```text
+┌──────────────────────── Haze window (webview) ───────────────────────┐
+│  React 19 + TypeScript + zustand                                     │
+│  FileTree · Monaco editor · Search · Git/Commit/Merge · xterm.js     │
+│  LSP client (JSON-RPC) for C#                                        │
+└───────────────┬──────────────────────────────────────────────────────┘
+                │ Tauri IPC (commands + events)
+┌───────────────▼────────────────── haze (Rust) ───────────────────────┐
+│  fs_ops · watcher · git / git_log / git_ops · search · file_index    │
+│  syntax (tree-sitter) · lsp · dotnet · agent_hooks · pty client      │
+└───────┬───────────────────────┬───────────────────────┬──────────────┘
+        │ stdio (LSP)           │ local socket          │ git CLI
+┌───────▼─────────┐   ┌─────────▼──────────────┐   ┌────▼─────┐
+│ Roslyn Language │   │ PTY host               │   │ system   │
+│ Server          │   │ (haze --pty-host)      │   │ git      │
+└─────────────────┘   │ shells, agents, status │   └──────────┘
+                      └─────────▲──────────────┘
+                                │ haze --agent-hook
+                      Claude Code / Codex hooks
+```
+
+### Key design decisions
+
+- **Out-of-process terminals.** The PTY host is the same `haze` binary started with `--pty-host`. It owns every shell (via `portable-pty`) and keeps a 4 MB replay buffer per session. The UI connects to it over a local socket (`interprocess`), so the app can close, crash or update without killing the agent. The host exits by itself 60 seconds after the last window disconnects and no shells are left running.
+- **Agent status via hooks.** Claude Code and Codex hooks invoke `haze --agent-hook`, which reads `HAZE_TERMINAL_ID` and reports the agent state to the PTY host. The state is held there, so badges survive restarts.
+- **Disk is the source of truth.** A `notify` watcher pushes changes to the tree, editor buffers, file index and Roslyn. Writes are atomic and preserve encoding and line endings; saves and replacements are verified against current disk content before writing.
+- **System git, not libgit2.** All Git operations shell out to the user's `git`, so behavior, config, hooks and credentials match the command line. Every command is logged in the Git Console.
+- **Errors from builds, not the language server.** Roslyn is used for navigation and refactoring only; diagnostics come from parsing real `dotnet build` output.
+
+### Tech stack
+
+| Area | Technology |
+|---|---|
+| App shell | Tauri 2 (Rust) |
+| UI | React 19, TypeScript, zustand, Vite |
 | Editor | Monaco |
-| Terminal | xterm.js + `portable-pty`, PTY host riêng nói chuyện qua local socket (`interprocess`) |
-| Theo dõi file | `notify` |
-| Git | git CLI của hệ thống |
-| C# | Roslyn Language Server qua LSP (stdio), client JSON-RPC tự viết trong `src/lib/lsp` |
-| Tìm kiếm | `ignore` (bộ duyệt file của ripgrep), `fancy-regex`, `globset`, `nucleo-matcher`, `tree-sitter-c-sharp` |
+| Terminal | xterm.js, `portable-pty`, `interprocess` |
+| File watching | `notify` |
+| Git | system `git` CLI |
+| C# | Roslyn Language Server over LSP (stdio), custom JSON-RPC client |
+| Search | `ignore` (ripgrep's walker), `fancy-regex`, `globset`, `nucleo-matcher`, `tree-sitter-c-sharp` |
 
+### Project layout
+
+```text
+src/                         frontend (React)
+  components/                FileTree, EditorArea, TerminalPanel, SearchEverywhere, FindInFiles,
+                             CommitPanel, GitPanel, DiffView, MergeView, RebaseDialog, BuildPanel, ...
+  lib/                       ipc (Rust bindings), buffers (open files), monaco, merge, termLinks, worktrees
+  lib/lsp/                   JSON-RPC client, C# session and Monaco providers
+  store/                     zustand stores: workspace, tree, terminals, git, dotnet, ui, persist
+src-tauri/src/               backend (Rust)
+  main.rs                    entry point: app, --pty-host or --agent-hook mode
+  fs_ops.rs, text.rs         file operations, encoding-preserving read/write
+  nesting.rs                 Rider-style file nesting rules
+  watcher.rs                 disk change notifications
+  git.rs                     git status for the file tree
+  git_log.rs                 git log and branch graph lanes
+  git_ops.rs                 changes, commit, rollback, branches, stash, blame, rebase, checkpoints
+  search.rs                  Find/Replace in Files with undo
+  syntax.rs                  C# comment/string ranges (tree-sitter)
+  file_index.rs              file list and fuzzy matching for Search Everywhere
+  lsp.rs                     language server process and message relay
+  dotnet.rs                  solutions, projects, launch profiles, dotnet build parsing
+  agent_hooks.rs             Claude Code / Codex hook install and the --agent-hook mode
+  procinfo.rs                shell working directory and child-process detection for terminals
+  pty/                       PTY host (host.rs), client (client.rs), wire protocol (protocol.rs)
+scripts/                     bump-version.sh
+Casks/                       Homebrew cask (updated by the release workflow)
+docs/                        roadmap and screenshots
 ```
-src/                    giao diện (React)
-  components/           FileTree, EditorArea, TerminalPanel, SearchEverywhere, FindInFiles, Shell, Overlays
-  lib/                  ipc (gọi Rust), buffers (file đang mở), monaco, path, termLinks, workspaceEdit
-  lib/lsp/              client JSON-RPC, phiên C# + provider cho Monaco
-  store/                workspace (project, tab), tree, terminals, persist
-src-tauri/src/
-  fs_ops.rs             thao tác file, đọc/ghi giữ encoding
-  nesting.rs            luật lồng file kiểu Rider
-  git.rs                git status cho cây file
-  watcher.rs            theo dõi thay đổi trên đĩa
-  search.rs             Find/Replace in Files, hoàn tác
-  syntax.rs             vùng comment/string của C# (tree-sitter)
-  file_index.rs         danh sách file + tìm mờ cho Double Shift
-  lsp.rs                chạy language server, chuyển tin nhắn LSP
-  dotnet.rs             tìm solution/project/launch profile, chạy dotnet build và tách lỗi MSBuild
-  git_log.rs            git log + tính lane cho đồ thị nhánh
-  git_ops.rs            thay đổi cục bộ, commit theo file, rollback, branch, stash, blame, rebase, checkpoint
-  agent_hooks.rs        cài/gỡ hook Claude Code, Codex; chế độ `haze --agent-hook` báo trạng thái cho PTY host
-  pty/                  PTY host (host.rs), client (client.rs), giao thức (protocol.rs)
-```
 
-Tiến trình PTY host chính là file chạy `haze` với tham số `--pty-host`. Nó tự thoát sau 60 giây khi không còn cửa sổ Haze nào kết nối và không còn shell nào đang chạy.
+## Contributing
 
-## Giấy phép
+Issues and pull requests are welcome. Please run the checks in [Tests](#tests) before opening a PR.
 
-Chưa chọn. Haze chỉ tham khảo **ý tưởng** từ Tervia (AGPL-3.0), không dùng code của Tervia.
+## License
+
+Haze is released under the [MIT License](LICENSE).
+
+Haze takes **ideas** from Tervia (AGPL-3.0) but contains none of its code.
