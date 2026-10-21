@@ -4,6 +4,7 @@ import { GitBranch, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { api, type Branch } from "../lib/ipc";
+import { validBranch } from "../lib/gitView";
 import { parseWorktrees, type Worktree } from "../lib/worktrees";
 
 export type { Worktree };
@@ -14,7 +15,6 @@ import { useWorkspace, type Project } from "../store/workspace";
 import { choose, confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
 import { shortcutLabel } from "../lib/keymap";
 
-const validBranch = (v: string) => (!v.trim() ? "Name cannot be empty" : /^-|[\s~^:?*[\\]|\.\.|@\{|\/$|\.lock$/.test(v.trim()) ? "Not a valid branch name" : null);
 
 // ------------------------------------------------------------------ branch actions
 

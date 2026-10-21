@@ -153,11 +153,7 @@ export function refreshRepo(projectId: string, projectPath: string, delay = 0, f
   );
 }
 
-/** Default ticks like Rider: tracked changes on, unversioned files off. */
-export function checkedPaths(r: RepoState): Set<string> {
-  if (r.checked) return new Set(r.checked.filter((p) => r.changes.some((c) => c.rel === p)));
-  return new Set(r.changes.filter((c) => c.status !== "untracked" && c.status !== "conflict").map((c) => c.rel));
-}
+export { checkedPaths } from "../lib/gitView";
 
 /** Runs git and records it in the console; failures become an error toast. */
 export async function runGit(projectId: string, args: string[], opts: { label?: string; quiet?: boolean } = {}): Promise<GitOutput | null> {

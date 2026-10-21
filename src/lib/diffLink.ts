@@ -75,3 +75,34 @@ export function nextChunk(chunks: readonly Chunk[], line: number, dir: 1 | -1): 
   for (let i = chunks.length - 1; i >= 0; i--) if (Math.max(chunks[i].b1, chunks[i].b0 + 1) < line) return i;
   return -1;
 }
+
+/** A text edit in Monaco coordinates (1-based lines and columns). */
+export interface LineEdit {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+  text: string;
+}
+
+/**
+ * The edit on the right side (`right`, its lines) that replaces block `c` with
+ * the left side's lines, or with `append` inserts them below it, keeping the
+ * right lines. `null` when there is nothing to do.
+ */
+export function revertEdit(c: Chunk, left: readonly string[], right: readonly string[], eol: string, append = false): LineEdit | null {
+  const text = c.a0 < c.a1 ? left.slice(c.a0, c.a1).join(eol) : null;
+  if (append && text === null) return null;
+  const n = Math.max(1, right.length);
+  const maxCol = (line: number) => (right[line - 1] ?? "").length + 1;
+  const edit = (startLine: number, startColumn: number, endLine: number, endColumn: number, text: string) => ({ startLine, startColumn, endLine, endColumn, text });
+  const b0 = append ? c.b1 : c.b0;
+  if (b0 < c.b1) {
+    if (text !== null) return edit(b0 + 1, 1, c.b1, maxCol(c.b1), text);
+    if (c.b1 < n) return edit(b0 + 1, 1, c.b1 + 1, 1, "");
+    // Removing the last lines also removes the line break before them.
+    return b0 > 0 ? edit(b0, maxCol(b0), n, maxCol(n), "") : edit(1, 1, n, maxCol(n), "");
+  }
+  if (text === null) return null;
+  return b0 < n ? edit(b0 + 1, 1, b0 + 1, 1, text + eol) : edit(n, maxCol(n), n, maxCol(n), eol + text);
+}
