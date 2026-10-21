@@ -1,4 +1,5 @@
 pub mod agent_hooks;
+mod cli_open;
 mod dotnet;
 mod file_index;
 mod fs_ops;
@@ -576,6 +577,14 @@ async fn pty_close(pty: State<'_, Pty>, id: String) -> CmdResult<()> {
     blocking(move || client.request(Request::Close { id }).map(|_| ())).await
 }
 
+// ---------------------------------------------------------------- command line
+
+/// Projects/files asked for on the command line or by a second launch.
+#[tauri::command]
+fn take_open_requests(pending: State<cli_open::PendingOpens>) -> Vec<cli_open::OpenRequest> {
+    std::mem::take(&mut *pending.0.lock())
+}
+
 fn forward_pty_event(app: &AppHandle, event: Option<PtyEvent>) {
     let ui = match event {
         Some(PtyEvent::Snapshot { id, data }) => PtyUiEvent::Snapshot { id, data },
@@ -590,7 +599,25 @@ fn forward_pty_event(app: &AppHandle, event: Option<PtyEvent>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     shell_env::load_login_path();
+    let pending = cli_open::PendingOpens::default();
+    if let Ok(cwd) = std::env::current_dir() {
+        let argv: Vec<String> = std::env::args().collect();
+        pending.0.lock().extend(cli_open::parse(&argv, &cwd));
+    }
     tauri::Builder::default()
+        // First: a second `haze <path>` hands its request to this instance and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            if let Some(req) = cli_open::parse(&argv, cwd.as_ref()) {
+                app.state::<cli_open::PendingOpens>().0.lock().push(req);
+                let _ = app.emit("app://open", ());
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
+        .manage(pending)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -609,6 +636,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            take_open_requests,
             load_state,
             save_state,
             list_dir,

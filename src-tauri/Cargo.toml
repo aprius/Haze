@@ -34,6 +34,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2.8.3"
 tauri-plugin-notification = "2.7.0"
 tauri-plugin-opener = "2.7.2"
+tauri-plugin-single-instance = "2.5.4"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 toml_edit = "0.25.17"

@@ -1,0 +1,12 @@
+{
+  "name": "com.haze.ide",
+  "displayName": "Haze Editor Support",
+  "version": "0.1.0",
+  "unity": "2020.3",
+  "description": "Use Haze as Unity's External Script Editor: generates the .sln and .csproj files and opens scripts in Haze at the right line.",
+  "author": {
+    "name": "Haze",
+    "url": "https://github.com/aprius/Haze"
+  },
+  "license": "MIT"
+}

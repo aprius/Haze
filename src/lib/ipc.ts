@@ -340,7 +340,16 @@ export interface Checkpoint {
   label: string;
 }
 
+/** A project and/or file to open, from the command line (see cli_open.rs). */
+export interface OpenRequest {
+  project: string | null;
+  file: string | null;
+  line: number | null;
+  column: number | null;
+}
+
 export const api = {
+  takeOpenRequests: () => invoke<OpenRequest[]>("take_open_requests"),
   loadState: () => invoke<unknown>("load_state"),
   saveState: (value: unknown) => invoke<void>("save_state", { value }),
 
@@ -413,6 +422,10 @@ export const api = {
   ptyResize: (id: string, cols: number, rows: number) => invoke<void>("pty_resize", { id, cols, rows }),
   ptyClose: (id: string) => invoke<void>("pty_close", { id }),
 };
+
+export function onOpenRequest(cb: () => void): Promise<UnlistenFn> {
+  return listen("app://open", () => cb());
+}
 
 export function onFsChange(cb: (c: FsChange) => void): Promise<UnlistenFn> {
   return listen<FsChange>("fs://changed", (e) => cb(e.payload));
