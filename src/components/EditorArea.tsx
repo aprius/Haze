@@ -584,7 +584,6 @@ export function EditorArea({ project }: { project: Project }) {
     });
   }, [active]);
 
-  // Show the active model.
   const ready = meta?.status === "text";
   useEffect(() => {
     const editor = editorRef.current;

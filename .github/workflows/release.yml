@@ -1,8 +1,9 @@
 name: Release
 
-# Đẩy tag `vX.Y.Z` (trùng version trong tauri.conf.json) để build bản cài đặt cho
-# macOS/Windows/Linux, tạo GitHub Release và cập nhật Homebrew cask (Casks/haze.rb).
-# Chạy tay (workflow_dispatch) thì chỉ build và để file cài đặt ở mục Artifacts.
+# Pushing a `vX.Y.Z` tag (matching the version in tauri.conf.json) builds the
+# macOS/Windows/Linux installers, creates the GitHub Release and updates the
+# Homebrew cask (Casks/haze.rb). A manual run (workflow_dispatch) only builds and
+# leaves the installers under Artifacts.
 
 on:
   push:
@@ -24,7 +25,7 @@ jobs:
           - platform: windows-latest
             args: ""
             rust-targets: ""
-          # 22.04 để bản .deb/.AppImage chạy được trên cả các distro glibc cũ hơn.
+          # 22.04 so the .deb/.AppImage also run on distros with an older glibc.
           - platform: ubuntu-22.04
             args: ""
             rust-targets: ""
@@ -38,7 +39,7 @@ jobs:
         run: |
           app=$(node -p "require('./src-tauri/tauri.conf.json').version")
           if [ "v$app" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME khác version $app trong tauri.conf.json (chạy scripts/bump-version.sh)"
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $app in tauri.conf.json (run scripts/bump-version.sh)"
             exit 1
           fi
 
@@ -63,11 +64,12 @@ jobs:
 
       - run: npm ci
 
-      # Tùy chọn: ký và notarize bản macOS. Chỉ xuất các biến có secret, vì biến
-      # rỗng (secret chưa đặt) vẫn khiến Tauri thử ký bằng chứng chỉ rỗng.
-      # Không có secret thì app được ký ad-hoc (cask Homebrew tự gỡ cờ quarantine).
-      # Tauri ký bằng identity đọc từ chính APPLE_CERTIFICATE và chỉ kiểm tra
-      # APPLE_SIGNING_IDENTITY là một phần của tên đó, nên không cần secret riêng.
+      # Optional: sign and notarize the macOS build. Only variables whose secret is
+      # set are exported: an empty one (secret not set) still makes Tauri try to
+      # sign with an empty certificate. Without secrets the app is signed ad hoc
+      # (the Homebrew cask removes the quarantine flag). Tauri signs with the
+      # identity read from APPLE_CERTIFICATE itself and only checks that
+      # APPLE_SIGNING_IDENTITY is part of that name, so it needs no secret of its own.
       - name: Apple signing secrets
         if: runner.os == 'macOS'
         shell: bash
@@ -101,7 +103,7 @@ jobs:
             brew tap aprius/haze https://github.com/aprius/Haze
             brew install --cask haze
             ```
-            Hoặc tải file cài đặt bên dưới: `.dmg` (macOS, Intel + Apple Silicon), `-setup.exe` / `.msi` (Windows), `.deb` / `.rpm` / `.AppImage` (Linux).
+            Or download an installer below: `.dmg` (macOS, Intel + Apple Silicon), `-setup.exe` / `.msi` (Windows), `.deb` / `.rpm` / `.AppImage` (Linux).
           releaseDraft: false
           prerelease: false
 
@@ -141,7 +143,7 @@ jobs:
             -e "s/^  sha256 \".*\"/  sha256 \"$sha\"/" \
             Casks/haze.rb
           if git diff --quiet; then
-            echo "Cask đã ở $version"
+            echo "Cask is already at $version"
             exit 0
           fi
           git config user.name "github-actions[bot]"

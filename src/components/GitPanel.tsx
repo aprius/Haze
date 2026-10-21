@@ -454,7 +454,6 @@ export function GitPanel({ project }: { project: Project }) {
     void load();
   }, [load, r?.revision]);
 
-  // Debounced text filters.
   useEffect(() => {
     const t = setTimeout(
       () => setQuery((q) => ({ ...q, limit: PAGE, text: textInput.trim() || null, author: authorInput.trim() || null })),

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Đặt version cho package.json, tauri.conf.json, Cargo.toml (và Cargo.lock).
+# Sets the version in package.json, tauri.conf.json, Cargo.toml (and Cargo.lock).
 #   scripts/bump-version.sh 0.2.0
 #   git commit -am "Release v0.2.0" && git tag v0.2.0 && git push --follow-tags
 set -euo pipefail
@@ -16,7 +16,7 @@ node -e '
   const toml = "src-tauri/Cargo.toml";
   fs.writeFileSync(toml, fs.readFileSync(toml, "utf8").replace(/^version = ".*"/m, `version = "${v}"`));
 ' "$version"
-# Cargo ghi lại version của package haze vào Cargo.lock.
+# Cargo writes the haze package's new version into Cargo.lock.
 (cd src-tauri && { cargo metadata --format-version 1 --offline >/dev/null 2>&1 || cargo metadata --quiet --format-version 1 >/dev/null; })
 
 echo "Haze $version"
