@@ -59,17 +59,24 @@ interface Sides {
   differ: monaco.editor.IStandaloneDiffEditor;
 }
 
-const GAP = 56;
+// IntelliJ's `diff.divider.width`.
+const GAP = 24;
+const ICON = 16;
+const ARROW =
+  '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 4.5 12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 /**
  * Rider-style diff: two plain editors (no filler lines), curved connectors
- * between matching blocks in the gap, scrolling kept in step block by block,
- * and `»` buttons that copy a block from the left into an editable right side.
+ * between matching blocks in the gap, scrolling kept in step block by block.
+ * As in IntelliJ, the left editor is mirrored: its gutter (`>>` icons, then
+ * line numbers) sits against the gap. Monaco cannot mirror a gutter, so that
+ * one is drawn here and the left editor shows no line numbers of its own.
  */
 export function DiffView({ spec }: { spec: DiffSpec }) {
   const leftHost = useRef<HTMLDivElement>(null);
   const rightHost = useRef<HTMLDivElement>(null);
   const differHost = useRef<HTMLDivElement>(null);
+  const gutter = useRef<HTMLDivElement>(null);
   const gap = useRef<HTMLDivElement>(null);
   const sides = useRef<Sides | null>(null);
   const chunks = useRef<Chunk[]>([]);
@@ -78,7 +85,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
   const editable = spec.right === "working";
 
   useEffect(() => {
-    if (!leftHost.current || !rightHost.current || !differHost.current || !gap.current) return;
+    if (!leftHost.current || !rightHost.current || !differHost.current || !gutter.current || !gap.current) return;
     const opts = (readOnly: boolean): monaco.editor.IStandaloneEditorConstructionOptions => ({
       readOnly,
       automaticLayout: true,
@@ -88,10 +95,13 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       glyphMargin: false,
       theme: monacoTheme(),
     });
-    // The left side has no vertical scrollbar (it follows the right one), so
-    // its blocks run straight into the connectors like in Rider.
+    // The left side has no vertical scrollbar (it follows the right one) and
+    // no gutter of its own, so its blocks run straight into the mirrored gutter.
     const left = monaco.editor.create(leftHost.current, {
       ...opts(true),
+      lineNumbers: "off",
+      folding: false,
+      lineDecorationsWidth: 10,
       scrollbar: { vertical: "hidden", verticalScrollbarSize: 0 },
       overviewRulerLanes: 0,
       overviewRulerBorder: false,
@@ -101,6 +111,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     sides.current = { left, right, differ };
     const leftDecos = left.createDecorationsCollection();
     const rightDecos = right.createDecorationsCollection();
+    const gutterEl = gutter.current;
     const gapEl = gap.current;
 
     // Pixel position of a (fractional) line boundary, relative to the viewport.
@@ -126,24 +137,53 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       return lo + (h > 0 ? Math.min(1, Math.max(0, (y - y0) / h)) : 0);
     };
 
-    // Like Rider: centred on the block's first left line (or on the marker of an
-    // empty block), and kept inside the block while its top is scrolled away.
-    const BUTTON = 16;
-    const applyTop = (l0: number, l1: number) => {
-      if (l0 === l1) return l0 - BUTTON / 2;
+    let frame = 0;
+    // The mirrored left gutter: band tints and edges, `>>` icons on each
+    // block's first line (where IntelliJ puts them), then right-aligned line numbers.
+    const drawGutter = () => {
+      const model = left.getModel();
+      if (!model) return void (gutterEl.innerHTML = "");
       const line = left.getOption(monaco.editor.EditorOption.lineHeight);
-      const top = l0 + (line - BUTTON) / 2;
-      return Math.max(top, Math.min((line - BUTTON) / 2, l1 - line + (line - BUTTON) / 2));
+      const font = left.getOption(monaco.editor.EditorOption.fontInfo);
+      const digits = Math.max(2, String(model.getLineCount()).length);
+      const width = `${Math.ceil(ICON + 6 + digits * font.typicalHalfwidthCharacterWidth + 8)}px`;
+      if (gutterEl.style.width !== width) gutterEl.style.width = width;
+      Object.assign(gutterEl.style, { fontFamily: font.fontFamily, fontSize: `${font.fontSize}px`, lineHeight: `${line}px` });
+      const height = gutterEl.clientHeight;
+      let html = "";
+      chunks.current.forEach((c, i) => {
+        const y0 = boundaryY(left, c.a0);
+        const y1 = boundaryY(left, c.a1);
+        if (y1 < -line || y0 > height + line) return;
+        const kind = chunkKind(c);
+        if (c.a0 < c.a1) {
+          html += `<div class="rd-gl-band rd-line rd-${kind}" style="top:${y0}px;height:${y1 - y0}px"></div>`;
+          html += `<div class="rd-gl-edge rd-${kind}" style="top:${y0}px"></div><div class="rd-gl-edge rd-${kind}" style="top:${y1 - 1}px"></div>`;
+        } else {
+          html += `<div class="rd-gl-edge rd-${kind}" style="top:${c.a0 > 0 ? y0 - 1 : y0}px"></div>`;
+        }
+        if (editable) {
+          const at = boundaryY(left, Math.min(c.a0 + 1, model.getLineCount()) - 1);
+          html += `<button class="rd-apply" data-chunk="${i}" title="Revert" style="top:${at + (line - ICON) / 2}px">${ARROW}</button>`;
+        }
+      });
+      const caret = left.getPosition()?.lineNumber;
+      const scroll = left.getScrollTop();
+      for (const r of left.getVisibleRanges()) {
+        for (let n = r.startLineNumber; n <= r.endLineNumber; n++) {
+          html += `<div class="rd-gl-num${n === caret ? " active" : ""}" style="top:${left.getTopForLineNumber(n) - scroll}px">${n}</div>`;
+        }
+      }
+      gutterEl.innerHTML = html;
     };
 
-    let frame = 0;
     const draw = () => {
       frame = 0;
+      drawGutter();
       const width = gapEl.clientWidth;
       const height = gapEl.clientHeight;
       let paths = "";
-      let buttons = "";
-      chunks.current.forEach((c, i) => {
+      chunks.current.forEach((c) => {
         const l0 = boundaryY(left, c.a0);
         const l1 = boundaryY(left, c.a1);
         const r0 = boundaryY(right, c.b0);
@@ -157,9 +197,8 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
         paths +=
           `<path class="rd-link rd-${kind}" d="${connectorPath(width, l0, l1, r0, r1)}"/>` +
           `<path class="rd-edge rd-${kind}" d="${connectorCurve(width, lt, rt)} ${connectorCurve(width, lb, rb)}"/>`;
-        if (editable) buttons += `<button class="rd-apply" data-chunk="${i}" title="Replace with the left side" style="top:${Math.round(applyTop(l0, l1))}px">»</button>`;
       });
-      gapEl.innerHTML = `<svg width="${width}" height="${height}">${paths}</svg>${buttons}`;
+      gapEl.innerHTML = `<svg width="${width}" height="${height}">${paths}</svg>`;
     };
     const redraw = () => {
       if (!frame) frame = requestAnimationFrame(draw);
@@ -215,6 +254,14 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       redraw();
     };
 
+    // Wheel over the gutter or the gap scrolls like over the editors.
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault();
+      right.setScrollPosition({ scrollTop: right.getScrollTop() + e.deltaY, scrollLeft: right.getScrollLeft() + e.deltaX });
+    };
+    gutterEl.addEventListener("wheel", wheel, { passive: false });
+    gapEl.addEventListener("wheel", wheel, { passive: false });
+
     // Monaco binds F7 itself, so the shortcuts go on the editors rather than the container.
     for (const ed of [left, right]) {
       ed.addCommand(monaco.KeyCode.F7, () => step(1));
@@ -226,6 +273,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       left.onDidScrollChange(follow(left, right, true)),
       right.onDidScrollChange(follow(right, left, false)),
       left.onDidLayoutChange(redraw),
+      left.onDidChangeCursorPosition(redraw),
       right.onDidLayoutChange(redraw),
       differ.onDidUpdateDiff(() => {
         update();
@@ -265,6 +313,8 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     return () => {
       cancelled = true;
       cancelAnimationFrame(frame);
+      gutterEl.removeEventListener("wheel", wheel);
+      gapEl.removeEventListener("wheel", wheel);
       subs.forEach((s) => s.dispose());
       differ.dispose();
       left.dispose();
@@ -351,15 +401,15 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       <div className="diff-host">
         <div ref={leftHost} className="diff-side" />
         <div
-          ref={gap}
-          className="diff-gap"
-          style={{ width: GAP }}
+          ref={gutter}
+          className="diff-lgutter"
           onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
             const b = (e.target as HTMLElement).closest<HTMLElement>("[data-chunk]");
             if (b) apply(Number(b.dataset.chunk));
           }}
         />
+        <div ref={gap} className="diff-gap" style={{ width: GAP }} />
         <div ref={rightHost} className="diff-side" />
         <div ref={differHost} className="diff-differ" aria-hidden />
       </div>

@@ -32,6 +32,9 @@
   --diff-tint: 14%;
   --diff-word: 28%;
   --diff-edge: 55%;
+  /* Same as editorLineNumber in src/lib/monaco.ts, for the diff's own left gutter. */
+  --line-number: #bfb9ba;
+  --line-number-active: #706b6e;
   color-scheme: light;
 }
 
@@ -67,6 +70,8 @@
   --diff-tint: 15%;
   --diff-word: 30%;
   --diff-edge: 60%;
+  --line-number: #5b595c;
+  --line-number-active: #c1c0c0;
   color-scheme: dark;
 }
 
@@ -2068,18 +2073,54 @@ kbd {
   border-radius: 2px;
 }
 
+/* Mirrored gutter of the left diff editor: icons next to the text, line numbers against the gap. */
+.diff-lgutter {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+
+.rd-gl-band,
+.rd-gl-edge,
+.rd-gl-num {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.rd-gl-edge {
+  height: 1px;
+  background: color-mix(in srgb, var(--rd) var(--diff-edge), transparent);
+}
+
+.rd-gl-num {
+  padding-right: 8px;
+  text-align: right;
+  color: var(--line-number);
+  font-variant-numeric: tabular-nums;
+}
+
+.rd-gl-num.active {
+  color: var(--line-number-active);
+}
+
 .rd-apply {
   position: absolute;
-  left: 4px;
+  z-index: 1;
+  left: 3px;
   width: 16px;
   height: 16px;
   padding: 0;
   border: 0;
   border-radius: 3px;
-  font: 600 13px/14px var(--font-ui);
   color: var(--muted);
   background: transparent;
   cursor: pointer;
+}
+
+.rd-apply svg {
+  display: block;
 }
 
 .rd-apply:hover {
