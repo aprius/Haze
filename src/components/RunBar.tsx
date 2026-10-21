@@ -49,13 +49,12 @@ export async function runConfig(project: Project, cfg: RunConfig): Promise<void>
   const existing = ui?.terminalOrder.find((id) => sessions[id]?.title === cfg.label);
   if (existing) {
     if (sessions[existing]?.running && !(await confirmAction("Run", `"${cfg.label}" is still running. Stop and run again?`, "Restart"))) {
-      useWorkspace.getState().updateUi(project.id, { activeTerminal: existing, terminalVisible: true, bottomTab: "terminal" });
+      useWorkspace.getState().updateUi(project.id, { activeTerminal: existing, terminalVisible: true });
       return;
     }
     await closeTerminal(project.id, existing);
   }
   await newTerminal(project.id, cfg.cwd, { title: cfg.label, command: cfg.command });
-  useWorkspace.getState().updateUi(project.id, { bottomTab: "terminal" });
 }
 
 function csharpLabel(s: CsharpStatus | undefined): { text: string; tone: string } {

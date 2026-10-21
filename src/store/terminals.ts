@@ -23,7 +23,7 @@ function isWatching(id: string): boolean {
   const ws = useWorkspace.getState();
   const project = ws.projects.find((p) => p.id === ws.activeProjectId);
   const ui = project ? ws.ui[project.id] : undefined;
-  return !!ui && ui.terminalVisible && ui.bottomTab === "terminal" && ui.activeTerminal === id;
+  return !!ui && ui.terminalVisible && ui.activeTerminal === id;
 }
 
 export function acknowledge(id: string): void {
@@ -156,8 +156,6 @@ export async function newTerminal(
       terminalOrder: [...ui.terminalOrder, info.id],
       activeTerminal: info.id,
       terminalVisible: true,
-      // Opened from the tree or a run configuration while Build or Git is showing.
-      bottomTab: "terminal",
     }));
     return info.id;
   } catch (e) {

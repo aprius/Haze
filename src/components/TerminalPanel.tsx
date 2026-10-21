@@ -4,7 +4,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ILink } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ChevronDown, ChevronRight, ChevronUp, PanelBottom, PanelRight, Plus, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/ipc";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
@@ -51,6 +51,14 @@ const MONOKAI_PRO = {
   brightCyan: "#78dce8",
   brightWhite: "#fcfcfa",
 };
+
+/** A keydown that inserts text, as opposed to Enter, arrows, shortcuts or IME composition. */
+function isTextKey(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.keyCode === 229) return false;
+  if (e.key === "Dead" || e.key === "Process" || e.key === "Unidentified") return false;
+  // Named keys ("Enter", "F5") are ASCII words; injected text arrives on a letter key.
+  return [...e.key].length === 1 || /^(Key[A-Z]|Digit\d)$/.test(e.code) || !/^[A-Z][A-Za-z0-9]*$/.test(e.key);
+}
 
 function decode(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -99,9 +107,47 @@ function createView(id: string, project: Project): View {
     return !!cwd;
   });
 
-  term.onData((data) => void api.ptyWrite(id, data).catch(() => {}));
+  // One write in flight at a time: a Vietnamese input method fixes a word with
+  // a burst of backspaces then the new text, and the shell must get them in order.
+  let pending = "";
+  let writing = false;
+  const flush = () => {
+    if (writing || !pending) return;
+    const data = pending;
+    pending = "";
+    writing = true;
+    void api
+      .ptyWrite(id, data)
+      .catch(() => {})
+      .finally(() => {
+        writing = false;
+        flush();
+      });
+  };
+  term.onData((data) => {
+    pending += data;
+    flush();
+  });
+
+  // Input methods that type by injecting key events (Gõ Nhanh, EVKey, OpenKey)
+  // send several characters in one event, but xterm takes text from keydown or
+  // keypress, which hold one, and then stops the rest. Text keys are left to
+  // the browser and sent from the input event, which carries all of it.
+  let typing = false;
+  term.textarea?.addEventListener("input", (e) => {
+    const ev = e as InputEvent;
+    if (!typing || ev.isComposing) return;
+    typing = false;
+    if (ev.inputType === "insertText" && ev.data) term.input(ev.data);
+    term.textarea!.value = "";
+  });
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type !== "keydown") return true;
+    if (e.type === "keypress") return !typing;
+    if (e.type !== "keydown") {
+      typing = false;
+      return true;
+    }
+    typing = false;
     const mod = e.ctrlKey || e.metaKey;
     // Copy with Ctrl+C only when there is a selection; otherwise send SIGINT.
     if (mod && !e.shiftKey && e.key.toLowerCase() === "c" && term.hasSelection()) {
@@ -119,7 +165,8 @@ function createView(id: string, project: Project): View {
     }
     // Leave app shortcuts (Alt+1, Ctrl+Tab...) to the window handler.
     if ((e.altKey && e.key === "1") || (e.ctrlKey && e.key === "Tab")) return false;
-    return true;
+    typing = isTextKey(e);
+    return !typing;
   });
 
   // Only absolute paths are cached: relative ones depend on the directory the shell is in now.
@@ -193,14 +240,14 @@ function createView(id: string, project: Project): View {
 export function toggleTerminal(projectId: string, hideOnlyWhenFocused = true): void {
   const ws = useWorkspace.getState();
   const ui = ws.ui[projectId];
-  const shown = !!ui?.terminalVisible && ui.bottomTab === "terminal";
+  const shown = !!ui?.terminalVisible;
   const focused = !!(document.activeElement as HTMLElement | null)?.closest(".terminal-panel");
   if (shown && (focused || !hideOnlyWhenFocused)) {
     ws.updateUi(projectId, { terminalVisible: false });
     popupClosed();
     return;
   }
-  ws.updateUi(projectId, { terminalVisible: true, bottomTab: "terminal" });
+  ws.updateUi(projectId, { terminalVisible: true });
   requestAnimationFrame(() => {
     const id = useWorkspace.getState().ui[projectId]?.activeTerminal;
     if (id) views.get(id)?.term.focus();
@@ -301,26 +348,7 @@ function SearchBar({ id, onClose }: { id: string; onClose: () => void }) {
   );
 }
 
-/** Switches the bottom panel between tool windows (Terminal, Build). */
-export function ToolTabs({ project }: { project: Project }) {
-  const tab = useWorkspace((s) => s.ui[project.id]?.bottomTab ?? "terminal");
-  const set = (bottomTab: "terminal" | "build" | "git") => useWorkspace.getState().updateUi(project.id, { bottomTab });
-  return (
-    <div className="tool-tabs">
-      <button className={"tool-tab" + (tab === "terminal" ? " active" : "")} onClick={() => set("terminal")}>
-        Terminal
-      </button>
-      <button className={"tool-tab" + (tab === "build" ? " active" : "")} onClick={() => set("build")}>
-        Build
-      </button>
-      <button className={"tool-tab" + (tab === "git" ? " active" : "")} onClick={() => set("git")} title="Git (Alt+9)">
-        Git
-      </button>
-    </div>
-  );
-}
-
-/** A session's directory relative to the project, for the session list. */
+/** A session's directory relative to the project, for its tab's tooltip. */
 function shortCwd(cwd: string, root: string): string {
   const c = cwd.replace(/[\\/]+$/, "");
   const r = root.replace(/[\\/]+$/, "");
@@ -339,13 +367,12 @@ export function TerminalPanel({ project }: { project: Project }) {
   const [searching, setSearching] = useState(false);
   const order = ui?.terminalOrder ?? [];
   const active = ui?.activeTerminal ?? null;
-  const right = ui?.terminalDock !== "bottom";
 
   useEffect(() => {
-    if (ui?.terminalVisible && ui.bottomTab === "terminal" && order.length === 0 && connected) void newTerminal(project.id, project.path);
+    if (ui?.terminalVisible && order.length === 0 && connected) void newTerminal(project.id, project.path);
     // Only when the panel is shown empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ui?.terminalVisible, ui?.bottomTab, order.length === 0, connected]);
+  }, [ui?.terminalVisible, order.length === 0, connected]);
 
   useEffect(() => {
     const onFind = () => setSearching(true);
@@ -364,25 +391,67 @@ export function TerminalPanel({ project }: { project: Project }) {
   };
 
   return (
-    <div className={"terminal-panel" + (right ? " docked-right" : "")}>
-      <div className="panel-header">
-        <ToolTabs project={project} />
-        <div className="panel-actions">
+    <div className="terminal-panel">
+      <div className="panel-header term-header">
+        <div className="term-tabs">
+          {order.map((id) => {
+            const s = sessions[id];
+            return (
+              <div
+                key={id}
+                className={"term-tab" + (id === active ? " active" : "") + (s && !s.running ? " exited" : "")}
+                onMouseDown={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    void close(id);
+                  }
+                }}
+                onClick={() => updateUi(project.id, { activeTerminal: id })}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openMenu(e, [
+                    { label: "New Terminal", action: () => void newTerminal(project.id, project.path) },
+                    { label: "Clear", action: () => views.get(id)?.term.clear() },
+                    { separator: true },
+                    { label: "Close", action: () => void close(id) },
+                  ]);
+                }}
+                title={s ? `${s.title} — ${shortCwd(s.cwd, project.path)}${s.agent?.message ? `\n${s.agent.message}` : ""}` : id}
+              >
+                {s?.agent ? (
+                  <span
+                    className={"agent-state " + s.agent.state + (attention[id] ? " attention" : "")}
+                    title={`${agentName(s.agent.agent)}: ${s.agent.state}${s.agent.message ? ` — ${s.agent.message}` : ""}`}
+                  >
+                    {s.agent.agent === "codex" ? "CX" : "CC"}
+                  </span>
+                ) : (
+                  <span className={"dot" + (s?.running ? " running" : "")} />
+                )}
+                <span className="term-tab-title">{s?.title ?? "Terminal"}</span>
+                <button
+                  className="tab-close"
+                  title="Close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void close(id);
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            );
+          })}
           <button className="icon-btn" title="New terminal" onClick={() => void newTerminal(project.id, project.path)}>
             <Plus size={14} />
           </button>
+        </div>
+        <div className="panel-actions">
           <button className="icon-btn" title="Find (Ctrl+F)" onClick={() => setSearching((v) => !v)}>
             <Search size={14} />
           </button>
-          <button
-            className="icon-btn"
-            title={right ? "Move to Bottom" : "Move to Right"}
-            onClick={() => updateUi(project.id, { terminalDock: right ? "bottom" : "right" })}
-          >
-            {right ? <PanelBottom size={14} /> : <PanelRight size={14} />}
-          </button>
           <button className="icon-btn" title="Hide (Alt+F12)" onClick={() => updateUi(project.id, { terminalVisible: false })}>
-            {right ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+            <ChevronRight size={14} />
           </button>
         </div>
       </div>
@@ -405,69 +474,10 @@ export function TerminalPanel({ project }: { project: Project }) {
         </div>
       )}
       {searching && active && <SearchBar id={active} onClose={() => setSearching(false)} />}
-      <div className="terminal-main">
-        <div className="terminal-body" style={{ background: MONOKAI_PRO.background }}>
-          {order.map((id) => (
-            <TerminalView key={id} id={id} project={project} active={id === active} />
-          ))}
-        </div>
-        {/* One shell needs no list; more get one beside the screen (above it when docked right). */}
-        {order.length > 1 && (
-          <div className="term-list">
-            {order.map((id) => {
-              const s = sessions[id];
-              const detail = s?.agent?.message || (s && !s.running ? `Exited${s.exitCode != null ? ` (${s.exitCode})` : ""}` : s ? shortCwd(s.cwd, project.path) : "");
-              return (
-                <div
-                  key={id}
-                  className={"term-item" + (id === active ? " active" : "") + (s && !s.running ? " exited" : "")}
-                  onMouseDown={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      void close(id);
-                    }
-                  }}
-                  onClick={() => updateUi(project.id, { activeTerminal: id })}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    openMenu(e, [
-                      { label: "New Terminal", action: () => void newTerminal(project.id, project.path) },
-                      { label: "Clear", action: () => views.get(id)?.term.clear() },
-                      { separator: true },
-                      { label: "Close", action: () => void close(id) },
-                    ]);
-                  }}
-                  title={s ? `${s.title} — ${s.cwd}` : id}
-                >
-                  {s?.agent ? (
-                    <span
-                      className={"agent-state " + s.agent.state + (attention[id] ? " attention" : "")}
-                      title={`${agentName(s.agent.agent)}: ${s.agent.state}${s.agent.message ? ` — ${s.agent.message}` : ""}`}
-                    >
-                      {s.agent.agent === "codex" ? "CX" : "CC"}
-                    </span>
-                  ) : (
-                    <span className={"dot" + (s?.running ? " running" : "")} />
-                  )}
-                  <div className="term-item-text">
-                    <span className="term-item-title">{s?.title ?? "Terminal"}</span>
-                    {detail && <span className="term-item-detail">{detail}</span>}
-                  </div>
-                  <button
-                    className="tab-close"
-                    title="Close"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void close(id);
-                    }}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
+      <div className="terminal-body" style={{ background: MONOKAI_PRO.background }}>
+        {order.map((id) => (
+          <TerminalView key={id} id={id} project={project} active={id === active} />
+        ))}
       </div>
     </div>
   );

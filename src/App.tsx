@@ -1,11 +1,12 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ChevronLeft } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { closeTabsWithPrompt, EditorArea, revealInTree, saveAll, selectedText, triggerEditorAction } from "./components/EditorArea";
 import { FileTree } from "./components/FileTree";
 import { FindInFiles } from "./components/FindInFiles";
 import { SearchEverywhere } from "./components/SearchEverywhere";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
-import { ProjectRail, Splitter, StatusBar, Welcome } from "./components/Shell";
+import { ProjectRail, Splitter, StatusBar, toggleBottom, toggleSidebar, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
 import { CommitPanel } from "./components/CommitPanel";
 import { BranchesPopup, openBranchesPopup, openPushDialog, PushDialog, updateProject } from "./components/GitDialogs";
@@ -39,11 +40,14 @@ function ProjectView({ project }: { project: Project }) {
           <>
             <div className="sidebar" style={{ width: ui.sidebarWidth }}>
               <div className="sidebar-tabs">
-                <button className={"tool-tab" + (ui.sidebarTab !== "commit" ? " active" : "")} onClick={() => updateUi(project.id, { sidebarTab: "project" })} title="Project (Alt+1)">
+                <button className={"tool-tab" + (ui.sidebarTab !== "commit" ? " active" : "")} onClick={() => toggleSidebar(project.id, "project")} title="Project (Alt+1)">
                   Project
                 </button>
-                <button className={"tool-tab" + (ui.sidebarTab === "commit" ? " active" : "")} onClick={() => updateUi(project.id, { sidebarTab: "commit" })} title="Commit (Alt+0)">
+                <button className={"tool-tab" + (ui.sidebarTab === "commit" ? " active" : "")} onClick={() => toggleSidebar(project.id, "commit")} title="Commit (Alt+0)">
                   Commit
+                </button>
+                <button className="icon-btn sidebar-hide" title="Hide" onClick={() => updateUi(project.id, { sidebarVisible: false })}>
+                  <ChevronLeft size={14} />
                 </button>
               </div>
               {ui.sidebarTab === "commit" ? <CommitPanel project={project} /> : <FileTree project={project} />}
@@ -54,7 +58,7 @@ function ProjectView({ project }: { project: Project }) {
         <div className="center">
           <EditorArea project={project} />
         </div>
-        {ui.terminalVisible && ui.terminalDock === "right" && (
+        {ui.terminalVisible && (
           <>
             <Splitter
               vertical
@@ -64,43 +68,28 @@ function ProjectView({ project }: { project: Project }) {
               invert
               onChange={(v) => updateUi(project.id, { terminalWidth: v })}
             />
-            <div className="bottom docked-right" style={{ width: ui.terminalWidth }}>
-              <ToolPanel project={project} />
+            <div className="side-dock" style={{ width: ui.terminalWidth }}>
+              <TerminalPanel project={project} />
             </div>
           </>
         )}
       </div>
-      {ui.terminalVisible && ui.terminalDock === "bottom" && (
+      {ui.bottomVisible && (
         <>
           <Splitter
             vertical={false}
-            value={ui.terminalHeight}
+            value={ui.bottomHeight}
             min={100}
             max={Math.max(200, window.innerHeight - 160)}
             invert
-            onChange={(v) => updateUi(project.id, { terminalHeight: v })}
+            onChange={(v) => updateUi(project.id, { bottomHeight: v })}
           />
-          <div className="bottom" style={{ height: ui.terminalHeight }}>
-            <ToolPanel project={project} />
+          <div className="bottom" style={{ height: ui.bottomHeight }}>
+            {ui.bottomTab === "git" ? <GitPanel project={project} /> : <BuildPanel project={project} />}
           </div>
         </>
       )}
     </div>
-  );
-}
-
-/** Terminal, Build and Git, docked below or beside the editor. */
-function ToolPanel({ project }: { project: Project }) {
-  const tab = useWorkspace((s) => s.ui[project.id]?.bottomTab ?? "terminal");
-  return (
-    <>
-      {/* The terminal stays mounted so xterm keeps its screen while Build is shown. */}
-      <div className="bottom-slot" style={{ display: tab === "terminal" ? "flex" : "none" }}>
-        <TerminalPanel project={project} />
-      </div>
-      {tab === "build" && <BuildPanel project={project} />}
-      {tab === "git" && <GitPanel project={project} />}
-    </>
   );
 }
 
@@ -142,13 +131,9 @@ function useGlobalShortcuts(project: Project | null) {
       } else if (mod && !e.shiftKey && !e.altKey && k === "t" && project) void updateProject(project);
       else if (mod && e.shiftKey && e.code === "Backquote" && project) openBranchesPopup(project);
       else if (e.altKey && !mod && e.key === "0" && project) {
-        const ui = useWorkspace.getState().ui[project.id];
-        const showing = ui?.sidebarVisible && ui.sidebarTab === "commit";
-        useWorkspace.getState().updateUi(project.id, { sidebarVisible: !showing, sidebarTab: "commit" });
+        toggleSidebar(project.id, "commit");
       } else if (e.altKey && !mod && e.key === "9" && project) {
-        const ui = useWorkspace.getState().ui[project.id];
-        const showing = ui?.terminalVisible && ui.bottomTab === "git";
-        useWorkspace.getState().updateUi(project.id, { terminalVisible: !showing, bottomTab: "git" });
+        toggleBottom(project.id, "git");
       } else if (mod && e.shiftKey && k === "b" && project) {
         void startBuild(project.id, project.path, "build", defaultBuildTarget(project.id));
       } else if (e.shiftKey && !mod && e.key === "F10" && project) {

@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { basename, relative } from "../lib/path";
 import { cancelBuild, defaultBuildTarget, startBuild, useDotnet } from "../store/dotnet";
 import { useWorkspace, type Project } from "../store/workspace";
-import { ToolTabs } from "./TerminalPanel";
 
 export function BuildPanel({ project }: { project: Project }) {
   const build = useDotnet((s) => s.builds[project.id]);
@@ -60,7 +59,7 @@ export function BuildPanel({ project }: { project: Project }) {
               <Hammer size={14} />
             </button>
           )}
-          <button className="icon-btn" title="Hide (Alt+F12)" onClick={() => useWorkspace.getState().updateUi(project.id, { terminalVisible: false })}>
+          <button className="icon-btn" title="Hide" onClick={() => useWorkspace.getState().updateUi(project.id, { bottomVisible: false })}>
             <ChevronDown size={14} />
           </button>
         </div>
@@ -91,6 +90,22 @@ export function BuildPanel({ project }: { project: Project }) {
           {build?.lines.join("\n")}
         </pre>
       </div>
+    </div>
+  );
+}
+
+/** Switches the bottom panel between tool windows (Build, Git). */
+export function ToolTabs({ project }: { project: Project }) {
+  const tab = useWorkspace((s) => s.ui[project.id]?.bottomTab ?? "build");
+  const set = (bottomTab: "build" | "git") => useWorkspace.getState().updateUi(project.id, { bottomTab });
+  return (
+    <div className="tool-tabs">
+      <button className={"tool-tab" + (tab === "build" ? " active" : "")} onClick={() => set("build")}>
+        Build
+      </button>
+      <button className={"tool-tab" + (tab === "git" ? " active" : "")} onClick={() => set("git")} title="Git (Alt+9)">
+        Git
+      </button>
     </div>
   );
 }

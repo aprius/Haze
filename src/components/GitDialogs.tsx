@@ -94,7 +94,7 @@ function branchMenu(project: Project, b: Branch, current: string | null): MenuIt
       {
         label: `Compare with '${current}'`,
         action: () => {
-          useWorkspace.getState().updateUi(project.id, { terminalVisible: true, bottomTab: "git" });
+          useWorkspace.getState().updateUi(project.id, { bottomVisible: true, bottomTab: "git" });
           setLogFilter(project.id, { refs: [`${current}..${b.name}`] });
         },
       },

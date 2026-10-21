@@ -27,16 +27,17 @@ export interface ProjectUi {
   sidebarVisible: boolean;
   sidebarWidth: number;
   terminalVisible: boolean;
-  terminalHeight: number;
+  /** Terminal sessions, docked right of the editor. */
   terminalWidth: number;
-  /** Where the tool panel (Terminal, Build, Git) sits beside the editor. */
-  terminalDock: "right" | "bottom";
+  /** Build and Git, docked below. */
+  bottomVisible: boolean;
+  bottomHeight: number;
   terminalOrder: string[];
   activeTerminal: string | null;
   /** Most recently opened files, newest first (Ctrl+E). */
   recentFiles: string[];
   /** Tool window shown in the bottom panel. */
-  bottomTab: "terminal" | "build" | "git";
+  bottomTab: "build" | "git";
   /** Tool window shown in the left sidebar. */
   sidebarTab: "project" | "commit";
   /** Selected run configuration id (see RunBar). */
@@ -57,13 +58,13 @@ export const defaultUi = (): ProjectUi => ({
   sidebarVisible: true,
   sidebarWidth: 300,
   terminalVisible: false,
-  terminalHeight: 280,
   terminalWidth: 560,
-  terminalDock: "right",
+  bottomVisible: false,
+  bottomHeight: 280,
   terminalOrder: [],
   activeTerminal: null,
   recentFiles: [],
-  bottomTab: "terminal",
+  bottomTab: "build",
   sidebarTab: "project",
   runConfig: null,
 });

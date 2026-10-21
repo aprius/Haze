@@ -70,7 +70,11 @@ async function doRestore(): Promise<void> {
   }
   if (data && data.version === VERSION) {
     const ui: Record<string, ProjectUi> = {};
-    for (const p of data.projects ?? []) ui[p.id] = { ...defaultUi(), ...(data.ui?.[p.id] ?? {}) };
+    for (const p of data.projects ?? []) {
+      ui[p.id] = { ...defaultUi(), ...(data.ui?.[p.id] ?? {}) };
+      // The terminal used to share the bottom panel.
+      if ((ui[p.id].bottomTab as string) === "terminal") ui[p.id].bottomTab = "build";
+    }
     for (const [path, d] of Object.entries(data.drafts ?? {})) recoveredDrafts.set(path, d);
     // Load every draft now, not when its tab is first shown: background tabs
     // then show as unsaved, Save All includes them, and closing one asks first.

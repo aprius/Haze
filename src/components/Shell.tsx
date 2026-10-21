@@ -1,7 +1,7 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, GitBranch, Plus, Settings, Star, TerminalSquare } from "lucide-react";
+import { FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, Plus, Settings, Star, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type TextEncoding } from "../lib/ipc";
@@ -232,6 +232,22 @@ const ENCODING_LABELS: Record<TextEncoding, string> = {
   "utf8-bom-invalid": "UTF-8 BOM (invalid bytes)",
 };
 
+/** Shows the sidebar on `tab`, or hides it when that tab is already showing. */
+export function toggleSidebar(projectId: string, tab: "project" | "commit"): void {
+  const ws = useWorkspace.getState();
+  const ui = ws.ui[projectId];
+  const showing = !!ui?.sidebarVisible && (ui.sidebarTab === "commit") === (tab === "commit");
+  ws.updateUi(projectId, { sidebarVisible: !showing, sidebarTab: tab });
+}
+
+/** Shows the bottom dock on `tab`, or hides it when that tab is already showing. */
+export function toggleBottom(projectId: string, tab: "build" | "git"): void {
+  const ws = useWorkspace.getState();
+  const ui = ws.ui[projectId];
+  const showing = !!ui?.bottomVisible && ui.bottomTab === tab;
+  ws.updateUi(projectId, { bottomVisible: !showing, bottomTab: tab });
+}
+
 export function StatusBar({ project }: { project: Project | null }) {
   const git = useTree((s) => (project ? s.git[project.id] : undefined));
   const operation = useGit((s) => (project ? s.repos[project.id]?.branches?.operation : null));
@@ -242,6 +258,20 @@ export function StatusBar({ project }: { project: Project | null }) {
     <div className="status-bar">
       {project && (
         <>
+          <button
+            className={"status-item status-btn" + (ui?.sidebarVisible && ui.sidebarTab !== "commit" ? " on" : "")}
+            onClick={() => toggleSidebar(project.id, "project")}
+            title="Project (Alt+1)"
+          >
+            <FolderTree size={12} />
+          </button>
+          <button
+            className={"status-item status-btn" + (ui?.sidebarVisible && ui.sidebarTab === "commit" ? " on" : "")}
+            onClick={() => toggleSidebar(project.id, "commit")}
+            title="Commit (Alt+0)"
+          >
+            <GitCommitHorizontal size={12} />
+          </button>
           <span className="status-item">{project.name}</span>
           {git?.status.isRepo && (
             <button className="status-item status-btn" title="Branches (Ctrl+Shift+`)" onClick={() => openBranchesPopup(project)}>
@@ -272,8 +302,26 @@ export function StatusBar({ project }: { project: Project | null }) {
         </>
       )}
       {project && (
+        <>
+          <button
+            className={"status-item status-btn" + (ui?.bottomVisible && ui.bottomTab === "build" ? " on" : "")}
+            onClick={() => toggleBottom(project.id, "build")}
+            title="Build"
+          >
+            <Hammer size={12} /> Build
+          </button>
+          <button
+            className={"status-item status-btn" + (ui?.bottomVisible && ui.bottomTab === "git" ? " on" : "")}
+            onClick={() => toggleBottom(project.id, "git")}
+            title="Git (Alt+9)"
+          >
+            <GitGraph size={12} /> Git
+          </button>
+        </>
+      )}
+      {project && (
         <button
-          className={"status-item status-btn" + (ui?.terminalVisible && ui.bottomTab === "terminal" ? " on" : "")}
+          className={"status-item status-btn" + (ui?.terminalVisible ? " on" : "")}
           onClick={() => toggleTerminal(project.id, false)}
           title="Terminal (Alt+F12)"
         >

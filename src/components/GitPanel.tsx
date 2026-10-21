@@ -10,7 +10,7 @@ import { openDiff } from "./DiffView";
 import { branchMenu, checkout, listWorktrees, newBranch, newWorktree, onLogFilter, openWorktree, setLogFilter, takeLogFilter, type Worktree } from "./GitDialogs";
 import { choose, confirmAction, openMenu, prompt, toast } from "./Overlays";
 import { openRebaseDialog } from "./RebaseDialog";
-import { ToolTabs } from "./TerminalPanel";
+import { ToolTabs } from "./BuildPanel";
 
 const ROW_H = 22;
 const LANE_W = 14;
@@ -523,7 +523,7 @@ export function GitPanel({ project }: { project: Project }) {
           <button className="icon-btn" title="Refresh" onClick={() => void load()}>
             <RefreshCw size={14} />
           </button>
-          <button className="icon-btn" title="Hide (Alt+9)" onClick={() => useWorkspace.getState().updateUi(project.id, { terminalVisible: false })}>
+          <button className="icon-btn" title="Hide (Alt+9)" onClick={() => useWorkspace.getState().updateUi(project.id, { bottomVisible: false })}>
             <ChevronDown size={14} />
           </button>
         </div>
@@ -606,6 +606,6 @@ export function showHistory(project: Project, absolute: string): void {
   if (!root) return toast("Not a git repository.", "error");
   const norm = (p: string) => p.replace(/\\/g, "/");
   const rel = norm(absolute).startsWith(norm(root) + "/") ? norm(absolute).slice(norm(root).length + 1) : norm(absolute);
-  useWorkspace.getState().updateUi(project.id, { terminalVisible: true, bottomTab: "git" });
+  useWorkspace.getState().updateUi(project.id, { bottomVisible: true, bottomTab: "git" });
   setLogFilter(project.id, { path: rel });
 }

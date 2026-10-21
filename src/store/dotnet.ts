@@ -176,7 +176,7 @@ export async function startBuild(projectId: string, root: string, verb: BuildVer
   }));
   editedSinceBuild.clear();
   applyMarkers();
-  useWorkspace.getState().updateUi(projectId, { terminalVisible: true, bottomTab: "build" });
+  useWorkspace.getState().updateUi(projectId, { bottomVisible: true, bottomTab: "build" });
   try {
     const id = await api.buildStart(verb, target, root);
     buildProject.set(id, projectId);
