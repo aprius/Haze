@@ -27,6 +27,9 @@ pub struct GitStatus {
     pub branch: Option<String>,
     /// Absolute path -> status. Ignored directories appear once, not per file.
     pub files: HashMap<String, FileStatus>,
+    /// The same status as the Commit window lists it, so a refresh runs
+    /// `git status` once for both.
+    pub changes: Vec<crate::git_ops::Change>,
 }
 
 pub fn git_command() -> Command {
@@ -90,6 +93,7 @@ pub fn status(dir: &Path) -> Result<GitStatus> {
             "--untracked-files=all",
         ],
     )?;
+    let changes = crate::git_ops::parse_changes(&String::from_utf8_lossy(&out));
     let (branch, files) = parse_porcelain(&out);
     let files = files
         .into_iter()
@@ -100,6 +104,7 @@ pub fn status(dir: &Path) -> Result<GitStatus> {
         root: Some(top.to_string_lossy().into_owned()),
         branch,
         files,
+        changes,
     })
 }
 
@@ -213,6 +218,9 @@ mod tests {
         let st = status(root).unwrap();
         assert!(st.is_repo);
         assert_eq!(st.branch.as_deref(), Some("main"));
+        // Ignored files stay out of the Commit window's list.
+        assert_eq!(st.changes, crate::git_ops::changes(root).unwrap());
+        assert_eq!(st.changes.len(), 2);
         let top = PathBuf::from(st.root.unwrap());
         assert_eq!(
             st.files.get(&to_native(&top, "A.cs")),

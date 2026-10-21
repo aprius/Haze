@@ -279,11 +279,6 @@ async fn git_log(root: String, query: git_log::LogQuery) -> CmdResult<git_log::L
 }
 
 #[tauri::command]
-async fn git_changes(root: String) -> CmdResult<Vec<git_ops::Change>> {
-    blocking(move || git_ops::changes(root.as_ref())).await
-}
-
-#[tauri::command]
 async fn git_toplevel(root: String) -> CmdResult<String> {
     blocking(move || {
         Ok(git_ops::toplevel(root.as_ref())?
@@ -484,7 +479,33 @@ fn lsp_stop(servers: State<'_, Arc<lsp::LspServers>>, id: u64) {
 
 // ---------------------------------------------------------------- terminals
 
-struct Pty(Arc<PtyClient>);
+struct Pty {
+    client: Arc<PtyClient>,
+    /// Input, resizes, attach and detach, applied in the order the UI sent
+    /// them. As async commands each ran on its own blocking task, so two
+    /// keystrokes could reach the shell swapped when the machine was busy.
+    queue: std::sync::mpsc::Sender<Request>,
+}
+
+impl Pty {
+    fn new(client: Arc<PtyClient>) -> Self {
+        let (queue, requests) = std::sync::mpsc::channel::<Request>();
+        let sender = client.clone();
+        std::thread::spawn(move || {
+            for req in requests {
+                // Like before, failures are not reported (the UI ignored them).
+                let _ = sender.notify(req);
+            }
+        });
+        Self { client, queue }
+    }
+
+    fn send(&self, req: Request) -> CmdResult<()> {
+        self.queue
+            .send(req)
+            .map_err(|_| "terminal input stopped".to_string())
+    }
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "t")]
@@ -510,7 +531,7 @@ enum PtyUiEvent {
 
 #[tauri::command]
 async fn pty_list(pty: State<'_, Pty>) -> CmdResult<Vec<SessionInfo>> {
-    let client = pty.0.clone();
+    let client = pty.client.clone();
     blocking(move || match client.request(Request::List)? {
         Reply::Sessions { sessions } => Ok(sessions),
         other => anyhow::bail!("unexpected reply {other:?}"),
@@ -520,7 +541,7 @@ async fn pty_list(pty: State<'_, Pty>) -> CmdResult<Vec<SessionInfo>> {
 
 #[tauri::command]
 async fn pty_create(pty: State<'_, Pty>, spec: SessionSpec) -> CmdResult<SessionInfo> {
-    let client = pty.0.clone();
+    let client = pty.client.clone();
     blocking(move || match client.request(Request::Create { spec })? {
         Reply::Created { session } => Ok(session),
         other => anyhow::bail!("unexpected reply {other:?}"),
@@ -529,32 +550,28 @@ async fn pty_create(pty: State<'_, Pty>, spec: SessionSpec) -> CmdResult<Session
 }
 
 #[tauri::command]
-async fn pty_attach(pty: State<'_, Pty>, id: String) -> CmdResult<()> {
-    let client = pty.0.clone();
-    blocking(move || client.notify(Request::Attach { id })).await
+fn pty_attach(pty: State<'_, Pty>, id: String) -> CmdResult<()> {
+    pty.send(Request::Attach { id })
 }
 
 #[tauri::command]
-async fn pty_detach(pty: State<'_, Pty>, id: String) -> CmdResult<()> {
-    let client = pty.0.clone();
-    blocking(move || client.notify(Request::Detach { id })).await
+fn pty_detach(pty: State<'_, Pty>, id: String) -> CmdResult<()> {
+    pty.send(Request::Detach { id })
 }
 
 #[tauri::command]
-async fn pty_write(pty: State<'_, Pty>, id: String, data: String) -> CmdResult<()> {
-    let client = pty.0.clone();
-    blocking(move || client.notify(Request::Write { id, data })).await
+fn pty_write(pty: State<'_, Pty>, id: String, data: String) -> CmdResult<()> {
+    pty.send(Request::Write { id, data })
 }
 
 #[tauri::command]
-async fn pty_resize(pty: State<'_, Pty>, id: String, cols: u16, rows: u16) -> CmdResult<()> {
-    let client = pty.0.clone();
-    blocking(move || client.notify(Request::Resize { id, cols, rows })).await
+fn pty_resize(pty: State<'_, Pty>, id: String, cols: u16, rows: u16) -> CmdResult<()> {
+    pty.send(Request::Resize { id, cols, rows })
 }
 
 #[tauri::command]
 async fn pty_close(pty: State<'_, Pty>, id: String) -> CmdResult<()> {
-    let client = pty.0.clone();
+    let client = pty.client.clone();
     blocking(move || client.request(Request::Close { id }).map(|_| ())).await
 }
 
@@ -586,7 +603,7 @@ pub fn run() {
             let client = PtyClient::new(pty::client::batched(Arc::new(move |ev| {
                 forward_pty_event(&handle, ev)
             })));
-            app.manage(Pty(Arc::new(client)));
+            app.manage(Pty::new(Arc::new(client)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -612,7 +629,6 @@ pub fn run() {
             find_files,
             read_image,
             git_log,
-            git_changes,
             git_toplevel,
             git_commit,
             git_rollback,

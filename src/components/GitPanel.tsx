@@ -2,7 +2,7 @@
 // and a console of the git commands Haze ran.
 import { ChevronDown, Copy, FolderGit2, GitBranch, RefreshCw, Tag, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, errorMessage, type Branch, type Commit, type CommitDetails, type GraphRow, type LogQuery } from "../lib/ipc";
+import { api, errorMessage, type Branch, type Commit, type CommitDetails, type GraphRow, type LogPage, type LogQuery } from "../lib/ipc";
 import { basename, dirname } from "../lib/path";
 import { repo, runGit, useGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -326,7 +326,11 @@ export function GitPanel({ project }: { project: Project }) {
   const [query, setQuery] = useState<LogQuery>({ limit: PAGE, refs: [], text: null, author: null, path: null, firstParent: false });
   const [textInput, setTextInput] = useState("");
   const [authorInput, setAuthorInput] = useState("");
-  const [page, setPage] = useState<{ commits: Commit[]; graph: GraphRow[]; hasMore: boolean } | null>(null);
+  const [page, setPage] = useState<LogPage | null>(null);
+  // The page shown and the filter it was loaded with; `seq` drops answers a newer load replaced.
+  const shown = useRef<{ query: LogQuery; page: LogPage } | null>(null);
+  const seq = useRef(0);
+  const loadingMore = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -348,14 +352,40 @@ export function GitPanel({ project }: { project: Project }) {
 
   const load = useCallback(async () => {
     if (!root) return;
+    const n = ++seq.current;
+    // A refresh keeps as many commits as were loaded; a new filter starts over.
+    const prev = shown.current;
+    const limit = prev && prev.query === query ? Math.max(PAGE, prev.page.commits.length) : PAGE;
     try {
-      const p = await api.gitLog(root, query);
+      const p = await api.gitLog(root, { ...query, limit });
+      if (n !== seq.current) return;
+      shown.current = { query, page: p };
       setPage(p);
       setError(null);
     } catch (e) {
-      setError(errorMessage(e));
+      if (n === seq.current) setError(errorMessage(e));
     }
   }, [root, query]);
+
+  // Scrolling to the end fetches only the next page and continues its lanes;
+  // listing the whole history again got slower with every page.
+  const loadMore = async () => {
+    const cur = shown.current;
+    if (!root || !cur?.page.hasMore || loadingMore.current) return;
+    loadingMore.current = true;
+    const n = seq.current;
+    try {
+      const p = await api.gitLog(root, { ...cur.query, limit: PAGE, skip: cur.page.next, lanes: cur.page.lanes });
+      if (n !== seq.current) return;
+      const next = { ...p, commits: [...cur.page.commits, ...p.commits], graph: [...cur.page.graph, ...p.graph] };
+      shown.current = { query: cur.query, page: next };
+      setPage(next);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      loadingMore.current = false;
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -512,9 +542,7 @@ export function GitPanel({ project }: { project: Project }) {
             onScroll={(e) => {
               const el = e.currentTarget;
               setScrollTop(el.scrollTop);
-              if (page?.hasMore && el.scrollTop + el.clientHeight > el.scrollHeight - ROW_H * 20) {
-                setQuery((q) => (q.limit <= commits.length ? { ...q, limit: q.limit + PAGE } : q));
-              }
+              if (page?.hasMore && el.scrollTop + el.clientHeight > el.scrollHeight - ROW_H * 20) void loadMore();
             }}
             onKeyDown={(e) => {
               const i = commits.findIndex((c) => c.hash === selected);

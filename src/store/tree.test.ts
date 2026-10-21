@@ -17,7 +17,7 @@ describe("affectsGit", () => {
   useTree.setState({
     git: {
       p: {
-        status: { isRepo: true, root: "/r", branch: "main", files: { "/r/bin": "ignored", "/r/A.cs": "modified" } },
+        status: { isRepo: true, root: "/r", branch: "main", files: { "/r/bin": "ignored", "/r/A.cs": "modified" }, changes: [] },
         changedDirs: new Set(["/r"]),
         ignored: ["/r/bin", "C:/w/obj"],
       },
