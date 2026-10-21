@@ -70,6 +70,8 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 - **Real build errors only**: `Ctrl+Shift+B` runs `dotnet build`; the Build panel lists MSBuild errors and warnings and the editor shows squiggles, which clear for a file as soon as you edit it.
 - **Run bar** built from each project's `launchSettings.json` (and `dotnet test` for test projects). `Shift+F10` runs in its own terminal tab, which survives closing Haze.
 - Files created, changed or deleted by the agent are reported to Roslyn (`workspace/didChangeWatchedFiles`), so navigation always reflects the latest code.
+- **Unity**: add the [`com.haze.ide`](unity/com.haze.ide) package (*Package Manager → Add package from git URL* → `https://github.com/aprius/Haze.git?path=/unity/com.haze.ide`) and pick Haze as External Script Editor. Unity then generates the `.sln`/`.csproj` files for Haze and opens scripts and console errors in Haze at the right line.
+- Command line: `haze <folder> [<file>] [--line N] [--column N]` opens a project or file; a running Haze is reused.
 
 ![C# navigation](docs/csharp.png)
 

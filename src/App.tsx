@@ -19,13 +19,13 @@ import { UsagesPopup } from "./components/UsagesPopup";
 import { notifyFileChanges, startCsharp, stopCsharp } from "./lib/lsp/csharp";
 import { defaultBuildTarget, loadDotnetInfo, startBuild, useDotnet } from "./store/dotnet";
 import { handleDiskChanges } from "./lib/buffers";
-import { api, onFsChange } from "./lib/ipc";
-import { basename } from "./lib/path";
+import { api, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
+import { basename, dirname } from "./lib/path";
 import { restore } from "./store/persist";
 import { startTerminals } from "./store/terminals";
 import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
 import { openFindInFiles, openSearchEverywhere, useUi } from "./store/ui";
-import { useWorkspace, type Project } from "./store/workspace";
+import { projectForPath, useWorkspace, type Project } from "./store/workspace";
 
 function ProjectView({ project }: { project: Project }) {
   const ui = useWorkspace((s) => s.ui[project.id]);
@@ -206,6 +206,15 @@ function useGlobalShortcuts(project: Project | null) {
   }, [project]);
 }
 
+function openRequested(req: OpenRequest) {
+  const ws = useWorkspace.getState();
+  const owner = req.file && !req.project ? projectForPath(req.file) : null;
+  const root = req.project ?? owner?.path ?? (req.file ? dirname(req.file) : null);
+  if (!root) return;
+  const id = ws.addProject(root);
+  if (req.file) ws.openFile(id, req.file, req.line ? { line: req.line, column: req.column ?? 1 } : {});
+}
+
 export default function App() {
   const loaded = useWorkspace((s) => s.loaded);
   const projects = useWorkspace((s) => s.projects);
@@ -216,6 +225,15 @@ export default function App() {
   useEffect(() => {
     void restore().then(() => startTerminals());
   }, []);
+
+  // `haze <project> [<file>] --line N` (e.g. from Unity), at launch or from a second launch.
+  useEffect(() => {
+    if (!loaded) return;
+    const drain = () => void api.takeOpenRequests().then((reqs) => reqs.forEach(openRequested)).catch(console.error);
+    drain();
+    const un = onOpenRequest(drain);
+    return () => void un.then((f) => f());
+  }, [loaded]);
 
   // Watch open projects; keep tree, git and buffers in sync with disk.
   const openRoots = projects.filter((p) => p.open).map((p) => p.path).join("\n");
