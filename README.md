@@ -91,8 +91,32 @@ Cho C#: .NET SDK (Roslyn Language Server cần .NET 10 runtime) và `dotnet tool
 ```bash
 npm install
 npm run tauri dev        # chạy bản dev
-npm run tauri build      # build bản cài đặt
+npm run tauri build      # build bản cài đặt cho máy đang dùng
 ```
+
+## Cài đặt
+
+**macOS (Homebrew)** — một bản `.dmg` chạy cả Apple Silicon lẫn Intel:
+
+```bash
+brew tap aprius/haze https://github.com/aprius/Haze
+brew install --cask haze
+brew upgrade --cask haze   # cập nhật
+```
+
+**Windows / Linux**: tải từ [Releases](https://github.com/aprius/Haze/releases) — `-setup.exe` hoặc `.msi` (Windows), `.deb`, `.rpm` hoặc `.AppImage` (Linux).
+
+### Phát hành bản mới
+
+```bash
+scripts/bump-version.sh 0.2.0           # đổi version ở package.json, tauri.conf.json, Cargo.toml
+git commit -am "Release v0.2.0"
+git tag v0.2.0 && git push --follow-tags
+```
+
+Tag `v*` chạy workflow [Release](.github/workflows/release.yml): build bản cài đặt cho macOS (universal), Windows, Linux, đăng lên GitHub Release, rồi cập nhật `version`/`sha256` trong [Casks/haze.rb](Casks/haze.rb) trên nhánh mặc định. Chạy tay workflow (Actions → Release → Run workflow) để chỉ build và tải file cài đặt từ Artifacts.
+
+Bản macOS mặc định được ký ad-hoc; cask tự gỡ cờ quarantine nên Gatekeeper không chặn. Muốn ký và notarize bằng Apple Developer ID, thêm các secret `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`.
 
 Kiểm tra:
 
