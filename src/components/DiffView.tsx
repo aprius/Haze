@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ensureBuffer, getModel } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
 import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, revertEdit, toChunk, type Chunk, type ChunkKind } from "../lib/diffLink";
-import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
+import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { diffPath, diffTitle, type DiffSpec } from "../lib/diffSpec";
 import { absPath } from "../store/git";
@@ -63,6 +63,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
       glyphMargin: false,
+      suggest: suggestOptions,
       theme: monacoTheme(),
     });
     // The left side has no vertical scrollbar (it follows the right one) and

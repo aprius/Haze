@@ -126,6 +126,11 @@ export const codeFontOptions = () => {
   return { fontFamily: codeFontFamily(f), fontSize: f.codeSize, lineHeight: codeLineHeight(f.codeSize) };
 };
 
+// Suggestions widen to fit long member names and their details (up to the
+// editor's width; a size the user dragged still wins). Monaco reads this
+// option but its typings (0.57) do not declare it yet.
+export const suggestOptions = { fitWidthToDetails: true } as unknown as monaco.editor.ISuggestOptions;
+
 // Fonts are per editor, so update every open one (diff editors list their two sides).
 useFonts.subscribe((f, prev) => {
   if (f.codeFont === prev.codeFont && f.codeSize === prev.codeSize) return;

@@ -1,12 +1,10 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { X } from "lucide-react";
-import DOMPurify from "dompurify";
-import { marked } from "marked";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers, type BufferMeta } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
-import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
+import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, relative } from "../lib/path";
 import { findImplementations, findUsages, prepareRename, renameSymbol } from "../lib/lsp/csharp";
@@ -280,14 +278,20 @@ function MarkdownPreview({ path }: { path: string }) {
   useEffect(() => {
     const model = getModel(path);
     if (!model) return;
-    const render = () => setHtml(DOMPurify.sanitize(marked.parse(model.getValue(), { async: false }) as string));
-    render();
+    let cancelled = false;
+    let render = () => {};
+    void import("../lib/markdown").then(({ renderMarkdown }) => {
+      if (cancelled) return;
+      render = () => setHtml(renderMarkdown(model.getValue()));
+      render();
+    });
     let t: ReturnType<typeof setTimeout>;
     const sub = model.onDidChangeContent(() => {
       clearTimeout(t);
-      t = setTimeout(render, 150);
+      t = setTimeout(() => render(), 150);
     });
     return () => {
+      cancelled = true;
       clearTimeout(t);
       sub.dispose();
     };
@@ -506,6 +510,7 @@ export function EditorArea({ project }: { project: Project }) {
       renderWhitespace: "selection",
       smoothScrolling: true,
       stickyScroll: { enabled: true },
+      suggest: suggestOptions,
       bracketPairColorization: { enabled: true },
       theme: monacoTheme(),
     });
