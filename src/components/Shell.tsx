@@ -1,7 +1,7 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, Moon, Plus, Settings, Star, Sun, TerminalSquare } from "lucide-react";
+import { FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type TextEncoding } from "../lib/ipc";
@@ -19,6 +19,7 @@ import { closeTabsWithPrompt, useCursor } from "./EditorArea";
 import { confirmAction, openMenu } from "./Overlays";
 import { disposeView, toggleTerminal } from "./TerminalPanel";
 import { shortcutLabel } from "../lib/keymap";
+import { DEFAULT_ZOOM, resetZoom, useZoom } from "../lib/zoom";
 
 export async function openFolder(): Promise<void> {
   const dir = await open({ directory: true, multiple: false, title: "Open Folder" });
@@ -263,6 +264,7 @@ export function StatusBar({ project }: { project: Project | null }) {
   const meta = useBuffers((s) => (ui?.activeTab ? s.meta[ui.activeTab] : undefined));
   const cursor = useCursor();
   const commitOpen = useUi((s) => !!project && s.commitWindow === project.id);
+  const zoom = useZoom((s) => s.zoom);
   return (
     <div className="status-bar">
       {project && (
@@ -309,6 +311,11 @@ export function StatusBar({ project }: { project: Project | null }) {
             {ENCODING_LABELS[meta.encoding]}
           </span>
         </>
+      )}
+      {zoom !== DEFAULT_ZOOM && (
+        <button className="status-item status-btn" onClick={resetZoom} title={`Zoom ${Math.round(zoom * 100)}% — click to reset to 100% (${shortcutLabel("resetZoom")})`}>
+          {Math.round(zoom * 100)}% <RotateCcw size={11} />
+        </button>
       )}
       {project && (
         <>

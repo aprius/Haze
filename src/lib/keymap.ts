@@ -33,6 +33,9 @@ const app = {
   run: { mac: ["ctrl F5", "shift F10"], other: ["shift F10"] },
   rename: { mac: ["F2", "shift F6"], other: ["shift F6", "F2"] },
   copyContext: { mac: ["meta shift C"], other: ["ctrl shift C"] },
+  zoomIn: { mac: ["meta EQUALS", "meta shift EQUALS", "meta NUMPAD_ADD"], other: ["ctrl EQUALS", "ctrl shift EQUALS", "ctrl NUMPAD_ADD"] },
+  zoomOut: { mac: ["meta MINUS", "meta NUMPAD_SUBTRACT"], other: ["ctrl MINUS", "ctrl NUMPAD_SUBTRACT"] },
+  resetZoom: { mac: ["meta 0", "meta NUMPAD0"], other: ["ctrl 0", "ctrl NUMPAD0"] },
 } satisfies Record<string, { mac: Keystroke[]; other: Keystroke[] }>;
 
 export type Command = keyof typeof app;
@@ -77,6 +80,9 @@ const named: Record<string, string> = {
   DOWN: "ArrowDown",
   LEFT: "ArrowLeft",
   RIGHT: "ArrowRight",
+  NUMPAD_ADD: "NumpadAdd",
+  NUMPAD_SUBTRACT: "NumpadSubtract",
+  NUMPAD0: "Numpad0",
 };
 
 const cache = new Map<Keystroke, Parsed>();
@@ -118,6 +124,8 @@ const label: Record<string, string> = {
   BACK_SPACE: "Backspace",
   PAGE_UP: "PgUp",
   PAGE_DOWN: "PgDn",
+  EQUALS: "=",
+  MINUS: "-",
   UP: "↑",
   DOWN: "↓",
   LEFT: "←",

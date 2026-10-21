@@ -9,6 +9,8 @@ import "@fontsource/jetbrains-mono/700.css";
 import "./styles.css";
 // Sets <html data-theme> before the first render.
 import "./lib/theme";
+// Restores the saved zoom and listens for Ctrl+wheel.
+import "./lib/zoom";
 
 // Native-feeling: no browser context menu except in text inputs.
 window.addEventListener("contextmenu", (e) => {

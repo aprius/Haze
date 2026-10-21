@@ -8,6 +8,7 @@ import { useTree } from "../store/tree";
 import { openFindInFiles, openSearchEverywhere } from "../store/ui";
 import { shortcutLabel } from "./keymap";
 import { toggleThemeMode } from "./theme";
+import { resetZoom, zoomIn, zoomOut } from "./zoom";
 import { activeProject, useWorkspace } from "../store/workspace";
 
 export interface Action {
@@ -40,6 +41,9 @@ export const actions: Action[] = [
   { id: "saveAll", label: "Save All", shortcut: shortcutLabel("saveAll"), run: () => void saveAll() },
   { id: "openFolder", label: "Open Folder…", run: () => void openFolder() },
   { id: "toggleTheme", label: "Toggle Light/Dark Theme", run: toggleThemeMode },
+  { id: "zoomIn", label: "Zoom In", shortcut: shortcutLabel("zoomIn"), run: zoomIn },
+  { id: "zoomOut", label: "Zoom Out", shortcut: shortcutLabel("zoomOut"), run: zoomOut },
+  { id: "resetZoom", label: "Reset Zoom", shortcut: shortcutLabel("resetZoom"), run: resetZoom },
   { id: "settings", label: "Settings (AI agent hooks, notifications)", shortcut: shortcutLabel("settings"), run: () => openSettings() },
   {
     id: "closeTab",

@@ -24,6 +24,7 @@ import { handleDiskChanges } from "./lib/buffers";
 import { matches, type Command } from "./lib/keymap";
 import { api, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
 import { basename, dirname } from "./lib/path";
+import { resetZoom, zoomIn, zoomOut } from "./lib/zoom";
 import { restore } from "./store/persist";
 import { startTerminals } from "./store/terminals";
 import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
@@ -116,6 +117,9 @@ function useGlobalShortcuts(project: Project | null) {
       if (is("searchEverywhere")) openSearchEverywhere("all");
       else if (is("gotoFile")) openSearchEverywhere("files");
       else if (is("settings")) openSettings();
+      else if (is("zoomIn")) zoomIn();
+      else if (is("zoomOut")) zoomOut();
+      else if (is("resetZoom")) resetZoom();
       // Monaco does not always receive Shift+F6 (WebKitGTK); route it to Rename ourselves.
       else if (is("rename") && triggerEditorAction("haze.rename")) {
         /* handled */
