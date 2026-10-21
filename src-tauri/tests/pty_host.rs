@@ -173,6 +173,54 @@ fn session_survives_client_and_replays_output() {
     std::thread::sleep(Duration::from_millis(500));
     assert!(!alive(), "grandchild survived Close");
 
+    // A shell at its prompt is not busy (closing it needs no question); a
+    // command running in it is.
+    let Reply::Created { session: shell } = second
+        .request(Request::Create {
+            spec: SessionSpec {
+                project_id: Some("p1".into()),
+                cwd: dir.path().to_string_lossy().into_owned(),
+                cols: 80,
+                rows: 24,
+                title: None,
+                command: None,
+                env: vec![],
+            },
+        })
+        .unwrap()
+    else {
+        panic!("expected Created")
+    };
+    let busy = |id: &str| {
+        let Reply::Sessions { sessions } = second.request(Request::List).unwrap() else {
+            panic!()
+        };
+        sessions.into_iter().find(|s| s.id == id).unwrap().busy
+    };
+    let wait_for = |want: bool| {
+        let start = std::time::Instant::now();
+        while busy(&shell.id) != Some(want) {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "busy never became {want}"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    wait_for(false);
+    second
+        .notify(Request::Write {
+            id: shell.id.clone(),
+            data: "sleep 30\n".into(),
+        })
+        .unwrap();
+    wait_for(true);
+    second
+        .request(Request::Close {
+            id: shell.id.clone(),
+        })
+        .unwrap();
+
     second
         .request(Request::Close {
             id: session.id.clone(),

@@ -14,6 +14,48 @@ pub enum TextEncoding {
     /// Legacy single-byte text (not valid UTF-8). Windows-1252 maps every
     /// byte to a character and back, so such files round-trip unchanged.
     Windows1252,
+    /// UTF-8 with a few invalid bytes, kept as escape characters (see
+    /// `ESCAPE_BASE`) and written back as the same bytes.
+    Utf8Invalid,
+    /// The same, after a UTF-8 BOM.
+    Utf8BomInvalid,
+}
+
+/// Invalid bytes 0x80–0xFF of an otherwise UTF-8 file are shown as the
+/// private-use characters U+F780–U+F7FF and saved as the original bytes
+/// again, like Python's `surrogateescape` (Rust strings cannot hold lone
+/// surrogates).
+const ESCAPE_BASE: u32 = 0xF700;
+
+fn is_escape(c: char) -> bool {
+    (ESCAPE_BASE + 0x80..=ESCAPE_BASE + 0xFF).contains(&(c as u32))
+}
+
+/// The text with its invalid bytes escaped; `None` when it already holds
+/// escape characters, which could not be told apart from escaped bytes.
+fn escape_invalid(bytes: &[u8]) -> Option<String> {
+    let mut out = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        if chunk.valid().chars().any(is_escape) {
+            return None;
+        }
+        out.push_str(chunk.valid());
+        for &b in chunk.invalid() {
+            out.push(char::from_u32(ESCAPE_BASE + u32::from(b))?);
+        }
+    }
+    Some(out)
+}
+
+fn unescape_invalid(content: &str, out: &mut Vec<u8>) {
+    let mut buf = [0u8; 4];
+    for c in content.chars() {
+        if is_escape(c) {
+            out.push((c as u32 - ESCAPE_BASE) as u8);
+        } else {
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,10 +77,16 @@ pub enum Decoded {
 
 pub fn decode(bytes: &[u8]) -> Decoded {
     let (content, encoding) = if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        (
-            String::from_utf8_lossy(rest).into_owned(),
-            TextEncoding::Utf8Bom,
-        )
+        match std::str::from_utf8(rest) {
+            Ok(s) => (s.to_owned(), TextEncoding::Utf8Bom),
+            Err(_) => match escape_invalid(rest) {
+                Some(s) => (s, TextEncoding::Utf8BomInvalid),
+                None => (
+                    String::from_utf8_lossy(rest).into_owned(),
+                    TextEncoding::Utf8Bom,
+                ),
+            },
+        }
     } else if bytes.starts_with(&[0xFF, 0xFE]) {
         let (s, _, _) = encoding_rs::UTF_16LE.decode(bytes);
         (s.into_owned(), TextEncoding::Utf16le)
@@ -51,17 +99,16 @@ pub fn decode(bytes: &[u8]) -> Decoded {
         }
         match std::str::from_utf8(bytes) {
             Ok(s) => (s.to_owned(), TextEncoding::Utf8),
-            // UTF-8 text with a stray byte: show it as UTF-8.
-            Err(_) if mostly_utf8(bytes) => (
-                String::from_utf8_lossy(bytes).into_owned(),
-                TextEncoding::Utf8,
-            ),
-            // A legacy file (Latin-1 comments in old C# code…): decoding it as
-            // lossy UTF-8 would turn every accented letter into U+FFFD on save.
-            Err(_) => (
-                encoding_rs::WINDOWS_1252.decode(bytes).0.into_owned(),
-                TextEncoding::Windows1252,
-            ),
+            Err(_) => match mostly_utf8(bytes).then(|| escape_invalid(bytes)).flatten() {
+                // UTF-8 text with a stray byte: show it as UTF-8, keeping the byte.
+                Some(s) => (s, TextEncoding::Utf8Invalid),
+                // A legacy file (Latin-1 comments in old C# code…): decoding it as
+                // lossy UTF-8 would turn every accented letter into U+FFFD on save.
+                None => (
+                    encoding_rs::WINDOWS_1252.decode(bytes).0.into_owned(),
+                    TextEncoding::Windows1252,
+                ),
+            },
         }
     };
     let eol = detect_eol(&content);
@@ -125,6 +172,16 @@ pub fn encode(content: &str, encoding: TextEncoding) -> Result<Vec<u8>> {
             }
             bytes.into_owned()
         }
+        TextEncoding::Utf8Invalid => {
+            let mut v = Vec::with_capacity(content.len());
+            unescape_invalid(content, &mut v);
+            v
+        }
+        TextEncoding::Utf8BomInvalid => {
+            let mut v = vec![0xEF, 0xBB, 0xBF];
+            unescape_invalid(content, &mut v);
+            v
+        }
     })
 }
 
@@ -163,13 +220,34 @@ mod tests {
         assert!(content.starts_with("// Größe"));
         round_trip(latin1);
         assert!(encode("xin chào ệ", TextEncoding::Windows1252).is_err());
-        // UTF-8 with one stray byte stays UTF-8.
+    }
+
+    #[test]
+    fn stray_bytes_in_utf8_files_survive_saving() {
         let mut stray = "// xin chào thế giới ".as_bytes().to_vec();
-        stray.extend_from_slice(b"\xFF\n");
-        let Decoded::Text { encoding, .. } = decode(&stray) else {
+        stray.extend_from_slice(b"\xFF\xE2\x82\n");
+        let Decoded::Text {
+            content, encoding, ..
+        } = decode(&stray)
+        else {
             panic!()
         };
-        assert_eq!(encoding, TextEncoding::Utf8);
+        assert_eq!(encoding, TextEncoding::Utf8Invalid);
+        assert!(content.starts_with("// xin chào thế giới "));
+        round_trip(&stray);
+        // An edit elsewhere keeps the bytes as they were.
+        let edited = content.replace("xin", "chào");
+        let saved = encode(&edited, encoding).unwrap();
+        assert!(saved.ends_with(b"\xFF\xE2\x82\n"));
+
+        let mut bom = b"\xEF\xBB\xBF".to_vec();
+        bom.extend_from_slice(&stray);
+        round_trip(&bom);
+        // Text that already holds an escape character cannot be escaped unambiguously.
+        let mut ambiguous = "thế giới \u{F7A0} ".as_bytes().to_vec();
+        ambiguous.extend_from_slice(b"\xFF");
+        assert!(escape_invalid(&ambiguous).is_none());
+        round_trip(&ambiguous);
     }
 
     #[test]

@@ -166,6 +166,17 @@ export async function newTerminal(
   }
 }
 
+/** Those of `ids` running a program, not just a shell at its prompt (asked fresh from the host). */
+export async function busyTerminals(ids: string[]): Promise<string[]> {
+  const fresh = await api.ptyList().catch(() => null);
+  const byId = new Map((fresh ?? Object.values(useTerminals.getState().sessions)).map((s) => [s.id, s]));
+  // An older host does not tell: then anything still running counts.
+  return ids.filter((id) => {
+    const s = byId.get(id);
+    return !!s && (s.busy ?? s.running);
+  });
+}
+
 export async function closeTerminal(projectId: string, id: string): Promise<void> {
   try {
     await api.ptyClose(id);

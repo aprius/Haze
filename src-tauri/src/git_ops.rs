@@ -529,8 +529,9 @@ pub fn parse_blame(out: &str) -> Vec<BlameLine> {
     lines
 }
 
-/// Blame for `rel`; `contents` (unsaved editor text) is blamed instead of the disk file when given.
-pub fn blame(root: &Path, rel: &str, contents: Option<&str>) -> Result<Vec<BlameLine>> {
+/// Blame for `rel`; `contents` (unsaved editor text, in the file's encoding)
+/// is blamed instead of the disk file when given.
+pub fn blame(root: &Path, rel: &str, contents: Option<&[u8]>) -> Result<Vec<BlameLine>> {
     let mut cmd = git(root);
     cmd.args(["blame", "--line-porcelain"]);
     if contents.is_some() {
@@ -542,11 +543,7 @@ pub fn blame(root: &Path, rel: &str, contents: Option<&str>) -> Result<Vec<Blame
         .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
     if let Some(c) = contents {
-        child
-            .stdin
-            .take()
-            .context("no stdin")?
-            .write_all(c.as_bytes())?;
+        child.stdin.take().context("no stdin")?.write_all(c)?;
     } else {
         drop(child.stdin.take());
     }
@@ -912,7 +909,7 @@ mod tests {
         assert_eq!(s.len(), 1);
         assert!(s[0].message.contains("wip"));
 
-        let blame = blame(r.path(), "a.cs", Some("line1\nline2\nnew\n")).unwrap();
+        let blame = blame(r.path(), "a.cs", Some(b"line1\nline2\nnew\n")).unwrap();
         assert_eq!(blame.len(), 3);
         assert_eq!(
             blame.iter().map(|b| b.line).collect::<Vec<_>>(),

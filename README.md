@@ -23,7 +23,7 @@ Trạng thái: **giai đoạn 4** (Git kiểu Rider/Rebased). Lộ trình đầy
 
 **Editor (Monaco)**
 - Tab xem trước (click một lần: tab nghiêng, bị thay bởi file kế tiếp; double-click hoặc sửa thì giữ lại).
-- Giữ nguyên encoding (UTF-8, UTF-8 BOM, UTF-16; file cũ không phải UTF-8 được đọc và ghi theo Windows-1252 nên không mất byte nào) và kiểu xuống dòng (LF/CRLF) khi lưu; ghi file an toàn qua file tạm.
+- Giữ nguyên encoding (UTF-8, UTF-8 BOM, UTF-16; file cũ không phải UTF-8 được đọc và ghi theo Windows-1252, byte lỗi lẻ trong file UTF-8 được giữ nguyên, nên không mất byte nào) và kiểu xuống dòng (LF/CRLF) khi lưu; ghi file an toàn qua file tạm.
 - **Không ghi đè âm thầm**: file chưa sửa tự tải lại khi AI sửa trên đĩa; file đang sửa dở thì hiện thông báo với "Load disk version" / "Overwrite with mine"; lưu bị chặn nếu file trên đĩa đã đổi.
 - Bản nháp chưa lưu được giữ qua lần tắt/mở app.
 - Ctrl+S lưu tất cả, Ctrl+F4 đóng tab, Ctrl+Tab chuyển tab.
@@ -70,8 +70,8 @@ Trạng thái: **giai đoạn 4** (Git kiểu Rider/Rebased). Lộ trình đầy
 
 **Terminal**
 - Shell chạy trong một tiến trình nền riêng (PTY host): **đóng hay cập nhật Haze không giết shell hay AI agent đang chạy**; mở lại là nối lại đúng phiên, phát lại output gần nhất (4 MB/phiên).
-- Nhiều tab, tìm trong output (Ctrl+F), Ctrl+C copy khi có vùng chọn.
-- **Ctrl+click vào đường dẫn** để mở file đúng dòng/cột: hiểu định dạng lỗi MSBuild/`dotnet build` (`Program.cs(12,5): error CS1002`) lẫn `file:line:col`.
+- Nhiều tab, tìm trong output (Ctrl+F), Ctrl+C copy khi có vùng chọn. Đóng tab chỉ hỏi khi có chương trình đang chạy trong đó (shell đứng ở prompt thì đóng luôn).
+- **Ctrl+click vào đường dẫn** để mở file đúng dòng/cột: hiểu định dạng lỗi MSBuild/`dotnet build` (`Program.cs(12,5): error CS1002`) lẫn `file:line:col`. Đường dẫn tương đối tính theo thư mục hiện tại của shell (sau `cd`; trên Windows cần shell báo thư mục qua OSC 7/OSC 9;9, như Starship hay oh-my-posh).
 - Alt+F12 bật/tắt terminal như Rider, Alt+1 bật/tắt Project view.
 - Biến môi trường `HAZE_TERMINAL_ID` có sẵn trong mỗi terminal (hook AI agent dùng nó để biết đang chạy ở tab nào).
 

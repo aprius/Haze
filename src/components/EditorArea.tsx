@@ -178,7 +178,7 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
   try {
     const meta = useBuffers.getState().meta[path];
     const dirty = meta?.status === "text" && meta.dirty;
-    const lines = await api.gitBlame(root, rel, dirty ? model.getValue() : null);
+    const lines = await api.gitBlame(root, rel, dirty ? model.getValue() : null, meta?.status === "text" ? meta.encoding : null);
     const uncommitted = "0".repeat(40);
     const ids = model.deltaDecorations(
       [],

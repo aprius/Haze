@@ -32,6 +32,8 @@ struct Session {
     /// wait on each other (a large paste into a busy program).
     input: Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// Started as the user's shell, not as a given command.
+    shell: bool,
     scrollback: Scrollback,
     subscribers: HashSet<ClientId>,
 }
@@ -167,7 +169,13 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
                 .sessions
                 .lock()
                 .values()
-                .map(|s| s.lock().info.clone())
+                .map(|s| {
+                    let s = s.lock();
+                    SessionInfo {
+                        busy: Some(busy(&s)),
+                        ..s.info.clone()
+                    }
+                })
                 .collect();
             sessions.sort_by_key(|s| s.created_at);
             return Reply::Sessions { sessions };
@@ -250,6 +258,32 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
     }
 }
 
+/// Whether closing would stop a program: anything but a shell at its prompt.
+fn busy(s: &Session) -> bool {
+    if !s.info.running {
+        return false;
+    }
+    if !s.shell {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        // At the prompt the shell's own process group is in the foreground;
+        // a command it runs gets a group of its own.
+        match (s.master.process_group_leader(), s.info.pid) {
+            (Some(group), Some(pid)) => group as u32 != pid,
+            _ => true,
+        }
+    }
+    #[cfg(windows)]
+    {
+        s.info
+            .pid
+            .and_then(crate::procinfo::has_children)
+            .unwrap_or(true)
+    }
+}
+
 fn with_session(host: &Host, id: &str, f: impl FnOnce(&mut Session) -> Result<()>) -> Result<()> {
     let session = host.sessions.lock().get(id).cloned();
     let session = session.with_context(|| format!("no terminal session {id}"))?;
@@ -323,6 +357,7 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
         running: true,
         exit_code: None,
         agent: None,
+        busy: None,
     };
     let mut reader = pair.master.try_clone_reader()?;
     let mut writer = pair.master.take_writer()?;
@@ -343,6 +378,7 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
         input,
         master: pair.master,
         killer: child.clone_killer(),
+        shell: !spec.command.as_ref().is_some_and(|argv| !argv.is_empty()),
         scrollback: Scrollback::default(),
         subscribers: HashSet::new(),
     }));

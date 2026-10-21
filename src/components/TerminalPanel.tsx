@@ -7,8 +7,8 @@ import "@xterm/xterm/css/xterm.css";
 import { ChevronDown, ChevronUp, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/ipc";
-import { findPathCandidates } from "../lib/termLinks";
-import { agentName, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
+import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
+import { agentName, busyTerminals, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { confirmAction, openMenu } from "./Overlays";
@@ -22,6 +22,8 @@ interface View {
   el: HTMLDivElement;
   ready: boolean;
   lastSize: string;
+  /** Directory the shell last reported (OSC 7 / OSC 9;9), if it does. */
+  cwd: string | null;
 }
 const views = new Map<string, View>();
 
@@ -70,7 +72,18 @@ function createView(id: string, project: Project): View {
     // Falls back to the DOM renderer.
   }
 
-  const view: View = { term, fit, search, el, ready: false, lastSize: "" };
+  const view: View = { term, fit, search, el, ready: false, lastSize: "", cwd: null };
+  // Shells that report their directory make links right after `cd` even where
+  // the OS does not tell (Windows).
+  term.parser.registerOscHandler(7, (data) => {
+    view.cwd = parseOscCwd(7, data) ?? view.cwd;
+    return true;
+  });
+  term.parser.registerOscHandler(9, (data) => {
+    const cwd = parseOscCwd(9, data);
+    if (cwd) view.cwd = cwd;
+    return !!cwd;
+  });
 
   term.onData((data) => void api.ptyWrite(id, data).catch(() => {}));
   term.attachCustomKeyEventHandler((e) => {
@@ -95,23 +108,35 @@ function createView(id: string, project: Project): View {
     return true;
   });
 
+  // Only absolute paths are cached: relative ones depend on the directory the shell is in now.
   const cache = new Map<string, string | null>();
+  const absolute = (p: string) => /^([\\/~]|[A-Za-z]:[\\/])/.test(p);
   term.registerLinkProvider({
     provideLinks(y, callback) {
       const line = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? "";
       const matches = findPathCandidates(line);
       if (!matches.length) return callback(undefined);
       const session = useTerminals.getState().sessions[id];
-      const cwd = session?.cwd ?? project.path;
-      const unknown = [...new Set(matches.map((m) => m.path).filter((p) => !cache.has(p)))];
+      const cwds = [view.cwd, session?.cwd ?? project.path].filter((c): c is string => !!c);
+      const found = new Map<string, string | null>();
+      const unknown = [...new Set(matches.map((m) => m.path))].filter((p) => {
+        if (!cache.has(p)) return true;
+        found.set(p, cache.get(p)!);
+        return false;
+      });
       const resolveAll = unknown.length
-        ? api.resolvePaths(cwd, unknown).then((r) => unknown.forEach((p, i) => cache.set(p, r[i])))
+        ? api.resolvePaths(cwds, session?.pid ?? null, unknown).then((r) =>
+            unknown.forEach((p, i) => {
+              found.set(p, r[i]);
+              if (absolute(p)) cache.set(p, r[i]);
+            }),
+          )
         : Promise.resolve();
       resolveAll
         .then(() => {
           const links: ILink[] = [];
           for (const m of matches) {
-            const resolved = cache.get(m.path);
+            const resolved = found.get(m.path);
             if (!resolved) continue;
             links.push({
               range: { start: { x: m.index + 1, y }, end: { x: m.index + m.text.length, y } },
@@ -306,7 +331,9 @@ export function TerminalPanel({ project }: { project: Project }) {
 
   const close = async (id: string) => {
     const s = sessions[id];
-    if (s?.running && !(await confirmAction("Close terminal", `"${s.title}" is still running. Terminate it?`, "Terminate", true)))
+    // A shell waiting at its prompt closes without a question, like Rider.
+    const busy = (await busyTerminals([id])).length > 0;
+    if (busy && !(await confirmAction("Close terminal", `"${s?.title ?? "Terminal"}" is still running. Terminate it?`, "Terminate", true)))
       return;
     disposeView(id);
     await closeTerminal(project.id, id);

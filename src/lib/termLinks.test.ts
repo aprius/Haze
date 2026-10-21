@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findPathCandidates } from "./termLinks";
+import { findPathCandidates, parseOscCwd } from "./termLinks";
 
 describe("findPathCandidates", () => {
   it("parses msbuild diagnostics", () => {
@@ -22,5 +22,18 @@ describe("findPathCandidates", () => {
 
   it("ignores urls", () => {
     expect(findPathCandidates("see https://example.com/docs/index.html")).toEqual([]);
+  });
+});
+
+describe("parseOscCwd", () => {
+  it("reads OSC 7 file URLs", () => {
+    expect(parseOscCwd(7, "file://my-host/home/me/My%20App")).toBe("/home/me/My App");
+    expect(parseOscCwd(7, "file:///C:/work/App")).toBe("C:/work/App");
+    expect(parseOscCwd(7, "not a url")).toBeNull();
+  });
+
+  it("reads OSC 9;9 and ignores other OSC 9 messages", () => {
+    expect(parseOscCwd(9, '9;"C:\\work\\App"')).toBe("C:\\work\\App");
+    expect(parseOscCwd(9, "build finished")).toBeNull();
   });
 });
