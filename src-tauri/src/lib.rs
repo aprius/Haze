@@ -207,6 +207,24 @@ async fn search_text(
         .await
 }
 
+/// Like `SearchGeneration`, for the text searches behind Ctrl+Click when no
+/// language server answers: they replace each other, not a Find in Files.
+#[derive(Default)]
+struct NavSearchGeneration(Arc<AtomicU64>);
+
+#[tauri::command]
+async fn search_nav(
+    generation: State<'_, NavSearchGeneration>,
+    id: u64,
+    query: search::SearchQuery,
+    scope: search::SearchScope,
+    max_matches: Option<usize>,
+) -> CmdResult<search::SearchResults> {
+    let current = generation.0.clone();
+    current.store(id, Ordering::Relaxed);
+    blocking(move || search::search(&query, &scope, id, &current, max_matches.unwrap_or(500))).await
+}
+
 #[tauri::command]
 async fn replace_in_files(
     history: State<'_, Arc<search::ReplaceHistory>>,
@@ -626,6 +644,7 @@ pub fn run() {
         .manage(Arc::new(file_index::FileIndex::default()))
         .manage(Arc::new(search::ReplaceHistory::default()))
         .manage(SearchGeneration::default())
+        .manage(NavSearchGeneration::default())
         .manage(Arc::new(lsp::LspServers::default()))
         .manage(dotnet::Builds::default())
         .setup(|app| {
@@ -655,6 +674,7 @@ pub fn run() {
             watch_project,
             unwatch_project,
             search_text,
+            search_nav,
             replace_in_files,
             undo_replace,
             find_files,

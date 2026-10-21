@@ -10,6 +10,7 @@ import { languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, relative } from "../lib/path";
 import { findImplementations, findUsages, prepareRename, renameSymbol } from "../lib/lsp/csharp";
+import { findTextUsages, registerTextNavigation } from "../lib/textNav";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
 import { setSelection } from "../store/tree";
@@ -107,7 +108,7 @@ function installRiderKeymap() {
     { keybinding: M.Alt | M.Shift | K.DownArrow, command: "editor.action.moveLinesDownAction", when: edit },
     { keybinding: M.CtrlCmd | M.Shift | K.Slash, command: "editor.action.blockComment", when: edit },
     { keybinding: M.CtrlCmd | M.Shift | K.KeyU, command: "editor.action.transformToUppercase", when: edit },
-    // Code navigation (C# via Roslyn).
+    // Code navigation (C# via Roslyn, other languages by text search: lib/textNav).
     { keybinding: M.CtrlCmd | K.KeyB, command: "editor.action.revealDefinition", when: "editorTextFocus" },
     { keybinding: M.Alt | K.Enter, command: "editor.action.quickFix", when: edit },
     { keybinding: M.CtrlCmd | M.Alt | K.KeyL, command: "editor.action.formatDocument", when: edit },
@@ -152,6 +153,8 @@ function installRiderKeymap() {
     { keybinding: M.Shift | K.F12, command: "editor.action.marker.prevInFiles", when: "editorFocus" },
   ];
   monaco.editor.addKeybindingRules([...common, ...(isMac ? mac : other)]);
+  // Ctrl+Click / Ctrl+B in languages Roslyn does not cover, and in C# until it is up.
+  registerTextNavigation();
   // Navigating to another file (Ctrl+click, F12…) opens it in Haze's tabs.
   monaco.editor.registerEditorOpener({
     openCodeEditor(_source, resource, selectionOrPosition) {
@@ -539,8 +542,8 @@ export function EditorArea({ project }: { project: Project }) {
     codeAction("haze.findUsages", "Find Usages", isMac ? [M.Alt | K.F7] : [M.Alt | K.F7, M.Shift | K.F12], () => {
       const model = editor.getModel();
       const pos = editor.getPosition();
-      if (!model || !pos || !isCs()) return;
-      void showLocations(project, `Usages of ${symbolAt(editor)}`, () => findUsages(model, pos));
+      if (!model || !pos) return;
+      void showLocations(project, `Usages of ${symbolAt(editor)}`, () => (isCs() ? findUsages(model, pos) : findTextUsages(model, pos)));
     });
     codeAction("haze.gotoImplementation", "Go to Implementation", [M.CtrlCmd | M.Alt | K.KeyB], () => {
       const model = editor.getModel();

@@ -291,6 +291,11 @@ function ready(model: monaco.editor.ITextModel): CsharpSession | undefined {
   return s?.usable && s.client.alive ? s : undefined;
 }
 
+/** Whether Roslyn has loaded the model's projects and answers navigation (else lib/textNav.ts guesses). */
+export function csharpAnswers(model: monaco.editor.ITextModel): boolean {
+  return !!ready(model)?.ready;
+}
+
 /** Session for a model's file, or an error saying why there is none. */
 function requireSession(model: monaco.editor.ITextModel): CsharpSession {
   const s = sessionForPath(model.uri.fsPath);
@@ -441,6 +446,21 @@ export function registerProviders(): void {
       const s = ready(model);
       if (!s) return null;
       const res = await s.request<unknown>("textDocument/definition", docParams(model, position), token);
+      return toLocations(res).map((l) => ({ uri: monaco.Uri.file(uriToPath(l.uri)), range: toMonacoRange(l.range) }));
+    },
+  });
+
+  // Ctrl+Click on a declaration falls back to Go to References (Monaco's
+  // alternativeDefinitionCommand), which lists the usages like Rider.
+  L.registerReferenceProvider("csharp", {
+    async provideReferences(model, position, context, token) {
+      const s = ready(model);
+      if (!s) return null;
+      const res = await s.request<unknown>(
+        "textDocument/references",
+        { ...docParams(model, position), context: { includeDeclaration: context.includeDeclaration } },
+        token,
+      );
       return toLocations(res).map((l) => ({ uri: monaco.Uri.file(uriToPath(l.uri)), range: toMonacoRange(l.range) }));
     },
   });

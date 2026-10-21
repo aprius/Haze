@@ -369,6 +369,9 @@ export const api = {
 
   searchText: (id: number, query: SearchQuery, scope: SearchScope, maxMatches?: number) =>
     invoke<SearchResults>("search_text", { id, query, scope, maxMatches: maxMatches ?? null }),
+  /** A search of its own generation, so it never cancels Find in Files (see textNav.ts). */
+  searchNav: (id: number, query: SearchQuery, scope: SearchScope, maxMatches?: number) =>
+    invoke<SearchResults>("search_nav", { id, query, scope, maxMatches: maxMatches ?? null }),
   replaceInFiles: (query: SearchQuery, targets: ReplaceTarget[]) =>
     invoke<ReplaceOutcome>("replace_in_files", { query, targets }),
   undoReplace: (id: number) => invoke<{ path: string; reason: string }[]>("undo_replace", { id }),
