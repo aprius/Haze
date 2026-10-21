@@ -88,13 +88,13 @@ pub fn roslyn_log_dir() -> Option<PathBuf> {
 /// The .NET install that `dotnet` on PATH belongs to. .NET tools (like the
 /// language server) find the runtime only through `DOTNET_ROOT` or the
 /// default install location, which a Homebrew or user-local .NET is not in.
+/// Homebrew's `bin/dotnet` is a script that runs `../libexec/dotnet`.
 fn dotnet_root() -> Option<PathBuf> {
     let dotnet = find_in_path("dotnet")?.canonicalize().ok()?;
-    let root = dotnet.parent()?;
-    root.join("host")
-        .join("fxr")
-        .is_dir()
-        .then(|| root.to_path_buf())
+    let dir = dotnet.parent()?;
+    [dir.to_path_buf(), dir.parent()?.join("libexec")]
+        .into_iter()
+        .find(|root| root.join("host").join("fxr").is_dir())
 }
 
 /// The last lines of a server's stderr, for the "server stopped" message.
