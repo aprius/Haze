@@ -87,7 +87,7 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
 - Commit actions: Checkout, New Branch, New Tag, Cherry-Pick, Revert, Undo Commit, Reset to Here (Soft/Mixed/Hard), **Interactive Rebase from Here** (pick / reword / edit / squash / fixup / drop, no text editor needed).
 - **Branches** popup (status bar or ``Ctrl+Shift+` ``): checkout with **Smart Checkout** (auto-stash), new, merge, rebase, compare, push, rename, delete, delete remote; Fetch.
 - **Push** (`Ctrl+Shift+K`) with a preview of outgoing commits and `--force-with-lease`; **Update Project** (`Ctrl+T`) via merge or rebase with auto-stash.
-- **Diff** tabs (`F7`/`Shift+F7` to jump between changes), editable on the working-copy side; Annotate with Git Blame, Show History for File, Compare with HEAD.
+- **Diff** tabs in Rider style: no filler lines, curved connectors between matching blocks, scrolling kept in step block by block, word-level highlights, `F7`/`Shift+F7` to jump between changes; editable on the working-copy side, where `»` copies a block from the left. Annotate with Git Blame, Show History for File, Compare with HEAD.
 - **Conflict resolution**: Accept Yours / Accept Theirs, or a **3-way merge view** (Yours | Result | Theirs) with non-conflicting changes pre-merged.
 - **Stashes**: view, apply, pop, drop, unstash as branch, stash including untracked files.
 - **AI checkpoints**: snapshot the whole working tree (including new files, without touching index or branches) before letting an agent run; *Since checkpoint* lists every file it changed, with diffs.

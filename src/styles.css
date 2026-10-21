@@ -1993,8 +1993,103 @@ kbd {
 }
 
 .diff-host {
+  position: relative;
   flex: 1;
   min-height: 0;
+  display: flex;
+}
+
+.diff-side {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Rider-style diff: green added, blue modified, grey deleted. */
+.diff-view {
+  --rd-added: var(--git-added);
+  --rd-modified: var(--git-modified);
+  --rd-deleted: var(--git-deleted);
+}
+
+.diff-gap {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.diff-gap svg {
+  position: absolute;
+  inset: 0;
+}
+
+.diff-differ {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.rd-link {
+  stroke-width: 1;
+}
+
+.rd-link.rd-added {
+  fill: color-mix(in srgb, var(--rd-added) 22%, transparent);
+  stroke: color-mix(in srgb, var(--rd-added) 60%, transparent);
+}
+
+.rd-link.rd-modified {
+  fill: color-mix(in srgb, var(--rd-modified) 22%, transparent);
+  stroke: color-mix(in srgb, var(--rd-modified) 60%, transparent);
+}
+
+.rd-link.rd-deleted {
+  fill: color-mix(in srgb, var(--rd-deleted) 22%, transparent);
+  stroke: color-mix(in srgb, var(--rd-deleted) 60%, transparent);
+}
+
+.rd-line.rd-added {
+  background: color-mix(in srgb, var(--rd-added) 16%, transparent);
+}
+
+.rd-line.rd-modified {
+  background: color-mix(in srgb, var(--rd-modified) 16%, transparent);
+}
+
+.rd-line.rd-deleted {
+  background: color-mix(in srgb, var(--rd-deleted) 16%, transparent);
+}
+
+.rd-char {
+  background: color-mix(in srgb, var(--rd-modified) 34%, transparent);
+  border-radius: 2px;
+}
+
+.rd-mark-below.rd-added { box-shadow: inset 0 -1px var(--rd-added); }
+.rd-mark-below.rd-deleted { box-shadow: inset 0 -1px var(--rd-deleted); }
+.rd-mark-above.rd-added { box-shadow: inset 0 1px var(--rd-added); }
+.rd-mark-above.rd-deleted { box-shadow: inset 0 1px var(--rd-deleted); }
+
+.rd-apply {
+  position: absolute;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  font: 600 13px/14px var(--font-ui);
+  color: var(--muted);
+  background: var(--editor-bg);
+  cursor: pointer;
+}
+
+.rd-apply:hover {
+  color: var(--fg);
+  background: var(--hover);
 }
 
 .blame-text {

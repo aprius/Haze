@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ensureBuffer, getModel } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
+import { chunkKind, connectorPath, mapBoundary, nextChunk, toChunk, type Chunk, type ChunkKind } from "../lib/diffLink";
 import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
@@ -51,26 +52,161 @@ export function openDiff(projectId: string, spec: DiffSpec): void {
   useWorkspace.getState().openFile(projectId, diffPath(spec), { preview: true });
 }
 
+interface Sides {
+  left: monaco.editor.IStandaloneCodeEditor;
+  right: monaco.editor.IStandaloneCodeEditor;
+  /** Hidden diff editor: only used for Monaco's diff computation on the same models. */
+  differ: monaco.editor.IStandaloneDiffEditor;
+}
+
+const GAP = 56;
+
+/**
+ * Rider-style diff: two plain editors (no filler lines), curved connectors
+ * between matching blocks in the gap, scrolling kept in step block by block,
+ * and `»` buttons that copy a block from the left into an editable right side.
+ */
 export function DiffView({ spec }: { spec: DiffSpec }) {
-  const host = useRef<HTMLDivElement>(null);
-  const editor = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+  const leftHost = useRef<HTMLDivElement>(null);
+  const rightHost = useRef<HTMLDivElement>(null);
+  const differHost = useRef<HTMLDivElement>(null);
+  const gap = useRef<HTMLDivElement>(null);
+  const sides = useRef<Sides | null>(null);
+  const chunks = useRef<Chunk[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<number | null>(null);
+  const editable = spec.right === "working";
 
   useEffect(() => {
-    if (!host.current) return;
-    const ed = monaco.editor.createDiffEditor(host.current, {
+    if (!leftHost.current || !rightHost.current || !differHost.current || !gap.current) return;
+    const opts = (readOnly: boolean): monaco.editor.IStandaloneEditorConstructionOptions => ({
+      readOnly,
       automaticLayout: true,
-      renderSideBySide: true,
-      originalEditable: false,
-      readOnly: spec.right !== "working",
       ...codeFontOptions(),
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
-      ignoreTrimWhitespace: false,
+      glyphMargin: false,
       theme: monacoTheme(),
     });
-    editor.current = ed;
+    const left = monaco.editor.create(leftHost.current, opts(true));
+    const right = monaco.editor.create(rightHost.current, opts(!editable));
+    const differ = monaco.editor.createDiffEditor(differHost.current, { ignoreTrimWhitespace: false, renderOverviewRuler: false });
+    sides.current = { left, right, differ };
+    const leftDecos = left.createDecorationsCollection();
+    const rightDecos = right.createDecorationsCollection();
+    const gapEl = gap.current;
+
+    // Pixel position of a (fractional) line boundary, relative to the viewport.
+    const boundaryY = (ed: monaco.editor.ICodeEditor, b: number) => {
+      const lines = ed.getModel()?.getLineCount() ?? 1;
+      const at = (n: number) => (n <= 0 ? 0 : ed.getBottomForLineNumber(Math.min(n, lines)));
+      const lo = Math.floor(b);
+      return at(lo) + (b - lo) * (at(lo + 1) - at(lo)) - ed.getScrollTop();
+    };
+    // Inverse of `boundaryY` by binary search (folded regions make lines uneven).
+    const boundaryAt = (ed: monaco.editor.ICodeEditor, y: number) => {
+      const lines = ed.getModel()?.getLineCount() ?? 1;
+      let lo = 0;
+      let hi = lines;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (boundaryY(ed, mid) <= y) lo = mid;
+        else hi = mid - 1;
+      }
+      if (lo >= lines) return lines;
+      const y0 = boundaryY(ed, lo);
+      const h = boundaryY(ed, lo + 1) - y0;
+      return lo + (h > 0 ? Math.min(1, Math.max(0, (y - y0) / h)) : 0);
+    };
+
+    let frame = 0;
+    const draw = () => {
+      frame = 0;
+      const width = gapEl.clientWidth;
+      const height = gapEl.clientHeight;
+      let paths = "";
+      let buttons = "";
+      chunks.current.forEach((c, i) => {
+        const l0 = boundaryY(left, c.a0);
+        const l1 = boundaryY(left, c.a1);
+        const r0 = boundaryY(right, c.b0);
+        const r1 = boundaryY(right, c.b1);
+        if (Math.max(l1, r1) < 0 || Math.min(l0, r0) > height) return;
+        paths += `<path class="rd-link rd-${chunkKind(c)}" d="${connectorPath(width, l0, l1, r0, r1)}"/>`;
+        if (editable) buttons += `<button class="rd-apply" data-chunk="${i}" title="Replace with the left side" style="top:${Math.round(l0)}px">»</button>`;
+      });
+      gapEl.innerHTML = `<svg width="${width}" height="${height}">${paths}</svg>${buttons}`;
+    };
+    const redraw = () => {
+      if (!frame) frame = requestAnimationFrame(draw);
+    };
+
+    // Scroll the other side so the line at mid-viewport stays matched.
+    let syncing = false;
+    const follow = (from: monaco.editor.ICodeEditor, to: monaco.editor.ICodeEditor, fromLeft: boolean) => (e: monaco.IScrollEvent) => {
+      redraw();
+      if (syncing) return;
+      syncing = true;
+      if (e.scrollLeftChanged) to.setScrollLeft(e.scrollLeft);
+      if (e.scrollTopChanged) {
+        const mid = from.getLayoutInfo().height / 2;
+        const target = mapBoundary(chunks.current, boundaryAt(from, mid), fromLeft);
+        to.setScrollTop(to.getScrollTop() + boundaryY(to, target) - mid);
+      }
+      syncing = false;
+    };
+
+    const update = () => {
+      const changes = differ.getLineChanges() ?? [];
+      chunks.current = changes.map(toChunk);
+      setStats(changes.length);
+      const lineDeco = (ed: monaco.editor.ICodeEditor, kind: ChunkKind, s: number, e: number): monaco.editor.IModelDeltaDecoration => {
+        if (s < e) return { range: new monaco.Range(s + 1, 1, e, 1), options: { isWholeLine: true, className: `rd-line rd-${kind}` } };
+        // Empty side: a thin line where the other side's block belongs.
+        const lines = ed.getModel()?.getLineCount() ?? 1;
+        const below = s >= 1;
+        const line = below ? Math.min(s, lines) : 1;
+        return { range: new monaco.Range(line, 1, line, 1), options: { isWholeLine: true, className: `rd-mark-${below ? "below" : "above"} rd-${kind}` } };
+      };
+      const charDeco = (sl: number, sc: number, el: number, ec: number): monaco.editor.IModelDeltaDecoration[] =>
+        sl > 0 && el > 0 && (sl !== el || sc !== ec) ? [{ range: new monaco.Range(sl, sc, el, ec), options: { inlineClassName: "rd-char" } }] : [];
+      const l: monaco.editor.IModelDeltaDecoration[] = [];
+      const r: monaco.editor.IModelDeltaDecoration[] = [];
+      changes.forEach((ch, i) => {
+        const c = chunks.current[i];
+        const kind = chunkKind(c);
+        l.push(lineDeco(left, kind, c.a0, c.a1));
+        r.push(lineDeco(right, kind, c.b0, c.b1));
+        if (kind !== "modified") return;
+        for (const x of ch.charChanges ?? []) {
+          l.push(...charDeco(x.originalStartLineNumber, x.originalStartColumn, x.originalEndLineNumber, x.originalEndColumn));
+          r.push(...charDeco(x.modifiedStartLineNumber, x.modifiedStartColumn, x.modifiedEndLineNumber, x.modifiedEndColumn));
+        }
+      });
+      leftDecos.set(l);
+      rightDecos.set(r);
+      redraw();
+    };
+
+    // Monaco binds F7 itself, so the shortcuts go on the editors rather than the container.
+    for (const ed of [left, right]) {
+      ed.addCommand(monaco.KeyCode.F7, () => step(1));
+      ed.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F7, () => step(-1));
+    }
+
+    let first = true;
+    const subs = [
+      left.onDidScrollChange(follow(left, right, true)),
+      right.onDidScrollChange(follow(right, left, false)),
+      left.onDidLayoutChange(redraw),
+      right.onDidLayoutChange(redraw),
+      differ.onDidUpdateDiff(() => {
+        update();
+        if (first && chunks.current.length) goTo(0);
+        first = false;
+      }),
+    ];
+
     const owned: monaco.editor.ITextModel[] = [];
     let cancelled = false;
     const lang = languageFor(spec.rel);
@@ -84,7 +220,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       try {
         const original = await fromRev(spec.left, spec.oldRel ?? spec.rel);
         let modified: monaco.editor.ITextModel;
-        if (spec.right === "working") {
+        if (editable) {
           const path = absPath(spec.root, spec.rel);
           await ensureBuffer(path);
           modified = getModel(path) ?? (await fromRev(null, spec.rel));
@@ -92,44 +228,114 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
           modified = await fromRev(spec.right, spec.rel);
         }
         if (cancelled) return;
-        ed.onDidUpdateDiff(() => setStats(ed.getLineChanges()?.length ?? 0));
-        ed.setModel({ original, modified });
+        left.setModel(original);
+        right.setModel(modified);
+        differ.setModel({ original, modified });
       } catch (e) {
         setError(errorMessage(e));
       }
     })();
     return () => {
       cancelled = true;
-      ed.dispose();
+      cancelAnimationFrame(frame);
+      subs.forEach((s) => s.dispose());
+      differ.dispose();
+      left.dispose();
+      right.dispose();
       owned.forEach((m) => m.dispose());
-      editor.current = null;
+      sides.current = null;
+      chunks.current = [];
     };
-  }, [spec.root, spec.rel, spec.oldRel, spec.left, spec.right]);
+  }, [spec.root, spec.rel, spec.oldRel, spec.left, spec.right]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function goTo(i: number) {
+    const s = sides.current;
+    const c = chunks.current[i];
+    if (!s || !c) return;
+    const line = Math.min(c.b0 + 1, s.right.getModel()?.getLineCount() ?? 1);
+    s.right.revealLinesInCenter(line, Math.max(line, c.b1));
+    s.right.setPosition({ lineNumber: line, column: 1 });
+  }
+
+  function step(dir: 1 | -1) {
+    const s = sides.current;
+    if (!s) return;
+    const fromLeft = s.left.hasTextFocus();
+    const caret = (fromLeft ? s.left : s.right).getPosition()?.lineNumber ?? 0;
+    // A caret on the left is mapped to the right side first.
+    const line = fromLeft ? Math.floor(mapBoundary(chunks.current, caret - 1, true)) + 1 : caret;
+    const i = nextChunk(chunks.current, line, dir);
+    if (i >= 0) goTo(i);
+  }
+
+  // Replace the right side of a block with the left side's lines (one undo step).
+  function apply(i: number) {
+    const s = sides.current;
+    const c = chunks.current[i];
+    const from = s?.left.getModel();
+    const to = s?.right.getModel();
+    if (!s || !c || !from || !to) return;
+    const eol = to.getEOL();
+    const text = c.a0 < c.a1 ? from.getValueInRange(new monaco.Range(c.a0 + 1, 1, c.a1, from.getLineMaxColumn(c.a1))) : null;
+    const n = to.getLineCount();
+    let range: monaco.Range;
+    let insert: string;
+    if (c.b0 < c.b1) {
+      if (text !== null) {
+        range = new monaco.Range(c.b0 + 1, 1, c.b1, to.getLineMaxColumn(c.b1));
+        insert = text;
+      } else if (c.b1 < n) {
+        range = new monaco.Range(c.b0 + 1, 1, c.b1 + 1, 1);
+        insert = "";
+      } else {
+        // Removing the last lines also removes the line break before them.
+        range = c.b0 > 0 ? new monaco.Range(c.b0, to.getLineMaxColumn(c.b0), n, to.getLineMaxColumn(n)) : to.getFullModelRange();
+        insert = "";
+      }
+    } else {
+      if (text === null) return;
+      if (c.b0 < n) {
+        range = new monaco.Range(c.b0 + 1, 1, c.b0 + 1, 1);
+        insert = text + eol;
+      } else {
+        range = new monaco.Range(n, to.getLineMaxColumn(n), n, to.getLineMaxColumn(n));
+        insert = eol + text;
+      }
+    }
+    s.right.pushUndoStop();
+    s.right.executeEdits("diff-apply", [{ range, text: insert }]);
+    s.right.pushUndoStop();
+  }
 
   return (
     <div className="diff-view">
       <div className="diff-toolbar">
-        <button className="icon-btn" title="Previous difference (Shift+F7)" onClick={() => editor.current?.goToDiff("previous")}>
+        <button className="icon-btn" title="Previous difference (Shift+F7)" onClick={() => step(-1)}>
           <ChevronUp size={14} />
         </button>
-        <button className="icon-btn" title="Next difference (F7)" onClick={() => editor.current?.goToDiff("next")}>
+        <button className="icon-btn" title="Next difference (F7)" onClick={() => step(1)}>
           <ChevronDown size={14} />
         </button>
         <span className="muted small">
           {error ? <span className="error">{error}</span> : stats === null ? "Comparing…" : stats === 0 ? "Contents are identical" : `${stats} difference(s)`}
         </span>
-        {spec.right === "working" && <span className="muted small diff-hint">Right side is the local file — edits are saved as usual.</span>}
+        {editable && <span className="muted small diff-hint">Right side is the local file — edits are saved as usual.</span>}
       </div>
-      <div
-        ref={host}
-        className="diff-host"
-        onKeyDown={(e) => {
-          if (e.key === "F7") {
-            e.preventDefault();
-            editor.current?.goToDiff(e.shiftKey ? "previous" : "next");
-          }
-        }}
-      />
+      <div className="diff-host">
+        <div ref={leftHost} className="diff-side" />
+        <div
+          ref={gap}
+          className="diff-gap"
+          style={{ width: GAP }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            const b = (e.target as HTMLElement).closest<HTMLElement>("[data-chunk]");
+            if (b) apply(Number(b.dataset.chunk));
+          }}
+        />
+        <div ref={rightHost} className="diff-side" />
+        <div ref={differHost} className="diff-differ" aria-hidden />
+      </div>
     </div>
   );
 }
