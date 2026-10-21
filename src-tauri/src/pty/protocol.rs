@@ -41,6 +41,11 @@ pub struct SessionInfo {
     /// AI agent running in this terminal, as reported by its hooks.
     #[serde(default)]
     pub agent: Option<AgentStatus>,
+    /// A program runs in it (more than a shell waiting at its prompt), so
+    /// closing it should ask first. Filled in by `List`; `None` from a host
+    /// too old to tell.
+    #[serde(default)]
+    pub busy: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

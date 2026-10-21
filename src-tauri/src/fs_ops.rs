@@ -180,7 +180,7 @@ pub fn write_file(
             return Ok(WriteResult::Conflict { mtime: current });
         }
     }
-    let bytes = text::encode(content, encoding);
+    let bytes = text::encode(content, encoding)?;
     atomic_write(path, &bytes, existing.as_ref())?;
     Ok(WriteResult::Saved {
         mtime: mtime_ms(&fs::metadata(path)?),
@@ -383,9 +383,10 @@ pub fn move_into(sources: &[PathBuf], dest_dir: &Path) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Resolves path-like strings printed in a terminal (relative to `cwd` or
-/// absolute) to existing files. Unresolvable entries become `None`.
-pub fn resolve_paths(cwd: &Path, candidates: &[String]) -> Vec<Option<String>> {
+/// Resolves path-like strings printed in a terminal (absolute, or relative
+/// to the first of `bases` where they exist) to existing files.
+/// Unresolvable entries become `None`.
+pub fn resolve_paths(bases: &[PathBuf], candidates: &[String]) -> Vec<Option<String>> {
     candidates
         .iter()
         .map(|c| {
@@ -397,12 +398,16 @@ pub fn resolve_paths(cwd: &Path, candidates: &[String]) -> Vec<Option<String>> {
                 Some(rest) => dirs::home_dir()?.join(rest),
                 None => PathBuf::from(c),
             };
-            let p = if expanded.is_absolute() {
-                expanded
-            } else {
-                cwd.join(expanded)
-            };
-            p.is_file().then(|| p.to_string_lossy().into_owned())
+            if expanded.is_absolute() {
+                return expanded
+                    .is_file()
+                    .then(|| expanded.to_string_lossy().into_owned());
+            }
+            bases
+                .iter()
+                .map(|b| b.join(&expanded))
+                .find(|p| p.is_file())
+                .map(|p| p.to_string_lossy().into_owned())
         })
         .collect()
 }
@@ -458,6 +463,29 @@ mod tests {
             .file_type()
             .is_symlink());
         assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+    }
+
+    #[test]
+    fn resolves_terminal_paths_against_the_first_base_that_has_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let (now, start) = (dir.path().join("now"), dir.path().join("start"));
+        fs::create_dir_all(&now).unwrap();
+        fs::create_dir_all(&start).unwrap();
+        fs::write(now.join("A.cs"), "").unwrap();
+        fs::write(start.join("A.cs"), "").unwrap();
+        fs::write(start.join("B.cs"), "").unwrap();
+        let found = resolve_paths(
+            &[now.clone(), start.clone()],
+            &["A.cs".into(), "B.cs".into(), "C.cs".into()],
+        );
+        assert_eq!(
+            found,
+            vec![
+                Some(now.join("A.cs").to_string_lossy().into_owned()),
+                Some(start.join("B.cs").to_string_lossy().into_owned()),
+                None
+            ]
+        );
     }
 
     #[test]

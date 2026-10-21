@@ -156,12 +156,25 @@ export async function newTerminal(
       terminalOrder: [...ui.terminalOrder, info.id],
       activeTerminal: info.id,
       terminalVisible: true,
+      // Opened from the tree or a run configuration while Build or Git is showing.
+      bottomTab: "terminal",
     }));
     return info.id;
   } catch (e) {
     useTerminals.setState({ error: errorMessage(e) });
     return null;
   }
+}
+
+/** Those of `ids` running a program, not just a shell at its prompt (asked fresh from the host). */
+export async function busyTerminals(ids: string[]): Promise<string[]> {
+  const fresh = await api.ptyList().catch(() => null);
+  const byId = new Map((fresh ?? Object.values(useTerminals.getState().sessions)).map((s) => [s.id, s]));
+  // An older host does not tell: then anything still running counts.
+  return ids.filter((id) => {
+    const s = byId.get(id);
+    return !!s && (s.busy ?? s.running);
+  });
 }
 
 export async function closeTerminal(projectId: string, id: string): Promise<void> {

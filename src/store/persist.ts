@@ -1,7 +1,7 @@
 // Saves the workspace (and unsaved drafts) to disk, debounced, and restores
 // it at startup.
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { collectDrafts, onDraftsChanged } from "../lib/buffers";
+import { collectDrafts, ensureBuffer, getModel, onDraftsChanged } from "../lib/buffers";
 import { api } from "../lib/ipc";
 import { defaultUi, useWorkspace, type Project, type ProjectUi } from "./workspace";
 
@@ -37,10 +37,16 @@ function snapshot(): Persisted {
   };
 }
 
-export async function flush(): Promise<void> {
+let saving: Promise<unknown> = Promise.resolve();
+
+export function flush(): Promise<void> {
   if (timer) clearTimeout(timer);
   timer = null;
-  await api.saveState(snapshot());
+  // One save at a time, each taking its snapshot when it starts: overlapping
+  // saves (debounced + on close) could otherwise land older state last.
+  const next = saving.then(() => api.saveState(snapshot()));
+  saving = next.catch(() => {});
+  return next;
 }
 
 function schedule() {
@@ -66,6 +72,14 @@ async function doRestore(): Promise<void> {
     const ui: Record<string, ProjectUi> = {};
     for (const p of data.projects ?? []) ui[p.id] = { ...defaultUi(), ...(data.ui?.[p.id] ?? {}) };
     for (const [path, d] of Object.entries(data.drafts ?? {})) recoveredDrafts.set(path, d);
+    // Load every draft now, not when its tab is first shown: background tabs
+    // then show as unsaved, Save All includes them, and closing one asks first.
+    // The draft stays listed until its buffer holds it, so a save meanwhile keeps it.
+    for (const [path, d] of recoveredDrafts) {
+      void ensureBuffer(path, d).finally(() => {
+        if (getModel(path) && recoveredDrafts.get(path) === d) recoveredDrafts.delete(path);
+      });
+    }
     useWorkspace.setState({
       projects: data.projects ?? [],
       activeProjectId: data.activeProjectId ?? null,

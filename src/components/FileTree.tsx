@@ -213,7 +213,8 @@ export function FileTree({ project }: { project: Project }) {
     const result = await run(clipboard.cut ? "Move" : "Copy", () => fn(clipboard.paths, dir));
     if (!result) return;
     if (clipboard.cut) {
-      clipboard.paths.forEach((p) => {
+      // Paths already in `dir` were not moved.
+      clipboard.paths.filter((p) => dirname(p) !== dir).forEach((p) => {
         const to = join(dir, basename(p));
         renameBuffer(p, to);
         useWorkspace.getState().renamePaths(p, to);

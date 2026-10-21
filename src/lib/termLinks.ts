@@ -35,3 +35,23 @@ export function findPathCandidates(line: string): PathMatch[] {
   }
   return out;
 }
+
+/**
+ * Directory a shell reports as it changes: OSC 7 (`file://host/path`, fish,
+ * Starship, macOS zsh…) or OSC 9;9 (`9;C:\path`, Windows Terminal style).
+ */
+export function parseOscCwd(code: 7 | 9, data: string): string | null {
+  if (code === 9) {
+    if (!data.startsWith("9;")) return null;
+    return data.slice(2).replace(/^"(.*)"$/, "$1") || null;
+  }
+  try {
+    const url = new URL(data);
+    if (url.protocol !== "file:") return null;
+    const path = decodeURIComponent(url.pathname);
+    // file:///C:/Users/me → C:/Users/me
+    return /^\/[A-Za-z]:/.test(path) ? path.slice(1) : path || null;
+  } catch {
+    return null;
+  }
+}

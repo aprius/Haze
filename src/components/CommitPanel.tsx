@@ -118,6 +118,29 @@ export function CommitPanel({ project }: { project: Project }) {
     refreshTreeGit(project.id, project.path, 0);
   };
 
+  const rollbackChecked = () => void rollback(r.changes.filter((c) => checked.has(c.rel) && c.status !== "untracked"));
+
+  // The shortcuts shown in the menu and tooltips.
+  const onListKey = (e: React.KeyboardEvent) => {
+    // Keys on a focused checkbox are the checkbox's own.
+    if (e.target !== e.currentTarget) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const c = r.changes.find((x) => x.rel === selected);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      const shown = GROUPS.flatMap((g) => (collapsed[g.id] ? [] : r.changes.filter(g.match)));
+      const i = shown.findIndex((x) => x.rel === selected);
+      const next = shown[Math.max(0, Math.min(shown.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
+      if (next) setSelected(next.rel);
+    } else if (c && (e.key === "Enter" || (mod && !e.altKey && !e.shiftKey && e.code === "KeyD"))) showChangeDiff(project, root, c);
+    else if (c && e.key === "F4" && c.status !== "deleted") useWorkspace.getState().openFile(project.id, absPath(root, c.rel));
+    else if (c && e.key === " ") toggle(c.rel);
+    else if (mod && e.altKey && e.code === "KeyZ") rollbackChecked();
+    else if (mod && e.altKey && e.code === "KeyK") void commitChanges(project, true);
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
   const resolveSide = async (c: GitChange, side: "--ours" | "--theirs") => {
     const out = await runGit(project.id, ["checkout", side, "--", c.rel], { quiet: true });
     // The file may not exist on that side (deleted there): resolve by removing it.
@@ -178,7 +201,7 @@ export function CommitPanel({ project }: { project: Project }) {
           <button
             className="icon-btn"
             title="Rollback checked changes (Ctrl+Alt+Z)"
-            onClick={() => void rollback(r.changes.filter((c) => checked.has(c.rel) && c.status !== "untracked"))}
+            onClick={rollbackChecked}
           >
             <Undo2 size={14} />
           </button>
@@ -195,7 +218,7 @@ export function CommitPanel({ project }: { project: Project }) {
           </button>
         </div>
       )}
-      <div className="changes-list" tabIndex={0}>
+      <div className="changes-list" tabIndex={0} onKeyDown={onListKey}>
         {r.checkpoint && (
           <div className="since-section">
             <div className="change-group">
@@ -308,7 +331,8 @@ export function CommitPanel({ project }: { project: Project }) {
           spellCheck={false}
           onChange={(e) => patchRepo(project.id, { message: e.target.value })}
           onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+            const mod = e.ctrlKey || e.metaKey;
+            if ((mod && e.key === "Enter") || (mod && e.altKey && e.code === "KeyK")) {
               e.preventDefault();
               void commitChanges(project, e.altKey);
             }

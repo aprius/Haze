@@ -10,7 +10,8 @@ export interface DirEntry {
   nestedUnder: string | null;
 }
 
-export type TextEncoding = "utf8" | "utf8-bom" | "utf16le" | "utf16be";
+/** `*-invalid`: UTF-8 with a few invalid bytes, kept as U+F780–U+F7FF and saved back as those bytes. */
+export type TextEncoding = "utf8" | "utf8-bom" | "utf16le" | "utf16be" | "windows1252" | "utf8-invalid" | "utf8-bom-invalid";
 export type Eol = "lf" | "crlf";
 
 export type FileContent =
@@ -66,6 +67,8 @@ export interface SessionInfo {
   running: boolean;
   exitCode: number | null;
   agent: AgentStatus | null;
+  /** A program runs in it, beyond a shell at its prompt (from `ptyList`; absent from an older host). */
+  busy?: boolean | null;
 }
 
 export type AgentState = "idle" | "working" | "waiting" | "done" | "error";
@@ -296,6 +299,8 @@ export interface Branch {
 export interface BranchesInfo {
   current: string | null;
   detached: boolean;
+  /** Commit HEAD points to (null before the first commit). */
+  head: string | null;
   branches: Branch[];
   remotes: string[];
   operation: string | null;
@@ -342,8 +347,9 @@ export const api = {
   trashPaths: (paths: string[]) => invoke<void>("trash_paths", { paths }),
   copyPaths: (sources: string[], destDir: string) => invoke<string[]>("copy_paths", { sources, destDir }),
   movePaths: (sources: string[], destDir: string) => invoke<string[]>("move_paths", { sources, destDir }),
-  resolvePaths: (cwd: string, candidates: string[]) =>
-    invoke<(string | null)[]>("resolve_paths", { cwd, candidates }),
+  /** Relative candidates are tried in `pid`'s current directory first, then in `cwds`. */
+  resolvePaths: (cwds: string[], pid: number | null, candidates: string[]) =>
+    invoke<(string | null)[]>("resolve_paths", { cwds, pid, candidates }),
 
   searchText: (id: number, query: SearchQuery, scope: SearchScope, maxMatches?: number) =>
     invoke<SearchResults>("search_text", { id, query, scope, maxMatches: maxMatches ?? null }),
@@ -370,7 +376,8 @@ export const api = {
   gitFileAt: (root: string, rev: string, rel: string) => invoke<string | null>("git_file_at", { root, rev, rel }),
   gitBranches: (root: string) => invoke<BranchesInfo>("git_branches", { root }),
   gitStashes: (root: string) => invoke<StashEntry[]>("git_stashes", { root }),
-  gitBlame: (root: string, rel: string, contents: string | null) => invoke<BlameLine[]>("git_blame", { root, rel, contents }),
+  gitBlame: (root: string, rel: string, contents: string | null, encoding: TextEncoding | null) =>
+    invoke<BlameLine[]>("git_blame", { root, rel, contents, encoding }),
   gitRun: (root: string, args: string[]) => invoke<GitOutput>("git_run", { root, args }),
   gitRebaseInteractive: (root: string, base: string | null, steps: RebaseStep[]) =>
     invoke<GitOutput>("git_rebase_interactive", { root, base, steps }),

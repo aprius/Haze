@@ -155,10 +155,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   moveProject(id, delta) {
     set((s) => {
+      // Swap with the neighbour shown in the rail: open projects, favorites first.
+      const me = s.projects.find((p) => p.id === id);
+      if (!me) return {};
+      const shown = s.projects.filter((p) => p.open && p.favorite === me.favorite);
+      const other = shown[shown.indexOf(me) + delta];
+      if (!other) return {};
       const list = [...s.projects];
-      const i = list.findIndex((p) => p.id === id);
-      const j = i + delta;
-      if (i < 0 || j < 0 || j >= list.length) return {};
+      const i = list.indexOf(me);
+      const j = list.indexOf(other);
       [list[i], list[j]] = [list[j], list[i]];
       return { projects: list };
     });

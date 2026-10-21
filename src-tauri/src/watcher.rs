@@ -2,7 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -29,42 +30,74 @@ pub struct FsChange {
     /// Paths that disappeared (deleted, or renamed from).
     pub removed: Vec<String>,
     pub overflow: bool,
-    /// Git metadata (index, HEAD, refs) changed.
+    /// Git metadata (index, HEAD, refs) changed. Edits in the working tree are
+    /// only in `files`: the UI knows which of them git ignores.
     pub git: bool,
 }
 
 pub type ChangeSink = std::sync::Arc<dyn Fn(FsChange) + Send + Sync>;
 
+struct Watch {
+    /// Tells a watch apart from a later one of the same root.
+    id: u64,
+    /// `None` while it is being set up.
+    watcher: Option<RecommendedWatcher>,
+}
+
 #[derive(Default)]
 pub struct Watchers {
-    active: Mutex<HashMap<String, RecommendedWatcher>>,
+    active: Arc<Mutex<HashMap<String, Watch>>>,
+    next: AtomicU64,
 }
 
 impl Watchers {
-    pub fn watch(&self, root: &str, sink: ChangeSink) -> Result<()> {
-        let mut active = self.active.lock();
-        if active.contains_key(root) {
-            return Ok(());
+    /// Returns at once: watching recursively walks the whole tree (seconds for
+    /// a large repository on Linux), which must not hold up the caller.
+    pub fn watch(&self, root: &str, sink: ChangeSink) {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut active = self.active.lock();
+            if active.contains_key(root) {
+                return;
+            }
+            active.insert(root.to_string(), Watch { id, watcher: None });
         }
-        let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
-        let mut watcher = notify::recommended_watcher(tx)?;
-        watcher.watch(Path::new(root), RecursiveMode::Recursive)?;
-        // A linked worktree (or a project inside a repository) keeps its git
-        // metadata outside the root; commits made in a terminal show up there.
-        let git_dir = outside_git_dir(Path::new(root));
-        if let Some(dir) = &git_dir {
-            let _ = watcher.watch(dir, RecursiveMode::Recursive);
-        }
-        let root_owned = root.to_string();
-        thread::spawn(move || debounce_loop(root_owned, git_dir, rx, sink));
-        active.insert(root.to_string(), watcher);
-        Ok(())
+        let active = self.active.clone();
+        let root = root.to_string();
+        thread::spawn(move || {
+            let watcher = start(&root, sink);
+            let mut active = active.lock();
+            match (active.get_mut(&root), watcher) {
+                // Unwatched (and maybe watched again) meanwhile: drop this one.
+                (Some(w), Ok(watcher)) if w.id == id => w.watcher = Some(watcher),
+                (Some(w), Err(e)) if w.id == id => {
+                    eprintln!("watching {root} failed: {e:#}");
+                    active.remove(&root);
+                }
+                _ => {}
+            }
+        });
     }
 
     pub fn unwatch(&self, root: &str) {
         // Dropping the watcher closes the channel, which ends the debounce thread.
         self.active.lock().remove(root);
     }
+}
+
+fn start(root: &str, sink: ChangeSink) -> Result<RecommendedWatcher> {
+    let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
+    let mut watcher = notify::recommended_watcher(tx)?;
+    watcher.watch(Path::new(root), RecursiveMode::Recursive)?;
+    // A linked worktree (or a project inside a repository) keeps its git
+    // metadata outside the root; commits made in a terminal show up there.
+    let git_dir = outside_git_dir(Path::new(root));
+    if let Some(dir) = &git_dir {
+        let _ = watcher.watch(dir, RecursiveMode::Recursive);
+    }
+    let root = root.to_string();
+    thread::spawn(move || debounce_loop(root, git_dir, rx, sink));
+    Ok(watcher)
 }
 
 /// The repository's git dir when it is not `<root>/.git`.
@@ -129,8 +162,12 @@ fn debounce_loop(
                     Kind::Git => git = true,
                     Kind::GitInternal => {}
                     Kind::Work => {
-                        if let Some(parent) = p.parent() {
-                            dirs.insert(parent.to_string_lossy().into_owned());
+                        // Editing a file leaves its directory listing (and the
+                        // Go to File index) as it was.
+                        if changes_entries(&ev.kind) {
+                            if let Some(parent) = p.parent() {
+                                dirs.insert(parent.to_string_lossy().into_owned());
+                            }
                         }
                         let key = p.to_string_lossy().into_owned();
                         match lifecycle(&ev.kind, i, n) {
@@ -149,12 +186,10 @@ fn debounce_loop(
                 }
             }
         }
-        if dirs.is_empty() && !git && !overflow {
+        if files.is_empty() && !git && !overflow {
             continue;
         }
         overflow |= dirs.len() > MAX_DIRS;
-        // Working tree edits change `git status` too.
-        let git = git || overflow || !dirs.is_empty();
         let change = FsChange {
             root: root.clone(),
             dirs: if overflow {
@@ -190,6 +225,20 @@ fn changes_content(kind: &EventKind) -> bool {
     match kind {
         EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
         EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
+/// Whether the event can add, remove or rename directory entries (anything
+/// but a content or metadata change of an existing path).
+fn changes_entries(kind: &EventKind) -> bool {
+    match kind {
+        EventKind::Access(_) | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {
+            false
+        }
+        // Windows reports content edits this way (adds, removals and renames have
+        // their own kinds); kqueue uses it for a directory whose entries changed.
+        EventKind::Modify(ModifyKind::Any) => !cfg!(windows),
         _ => true,
     }
 }
@@ -251,6 +300,26 @@ mod tests {
     }
 
     #[test]
+    fn only_entry_changes_relist_directories() {
+        use notify::event::{CreateKind, DataChange, MetadataKind, RemoveKind};
+        assert!(changes_entries(&EventKind::Create(CreateKind::File)));
+        assert!(changes_entries(&EventKind::Remove(RemoveKind::Any)));
+        assert!(changes_entries(&EventKind::Modify(ModifyKind::Name(
+            RenameMode::Both
+        ))));
+        assert!(changes_entries(&EventKind::Any));
+        assert!(!changes_entries(&EventKind::Modify(ModifyKind::Data(
+            DataChange::Content
+        ))));
+        assert!(!changes_entries(&EventKind::Modify(ModifyKind::Metadata(
+            MetadataKind::Any
+        ))));
+        assert!(!changes_entries(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+    }
+
+    #[test]
     fn finds_git_dir_of_linked_worktrees() {
         let tmp = tempfile::tempdir().unwrap();
         let main = tmp.path().join("app");
@@ -266,6 +335,10 @@ mod tests {
         let dir = outside_git_dir(&wt).expect("worktree git dir");
         assert!(dir.ends_with("worktrees/app-task"), "{dir:?}");
         assert!(matches!(classify_git(Path::new("index")), Kind::Git));
+        assert!(matches!(
+            classify_git(Path::new("refs/heads/task")),
+            Kind::Git
+        ));
         assert!(matches!(
             classify_git(Path::new("logs/HEAD")),
             Kind::GitInternal

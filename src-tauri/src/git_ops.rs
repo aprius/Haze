@@ -52,9 +52,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<GitOutput> {
 }
 
 pub fn toplevel(root: &Path) -> Result<std::path::PathBuf> {
-    Ok(run_ok(root, &["rev-parse", "--show-toplevel"])?
-        .trim()
-        .into())
+    crate::git::toplevel_of(root)
 }
 
 // ---------------------------------------------------------------- local changes
@@ -353,6 +351,8 @@ pub struct Branch {
 pub struct Branches {
     pub current: Option<String>,
     pub detached: bool,
+    /// Commit HEAD points to (`None` before the first commit).
+    pub head: Option<String>,
     pub branches: Vec<Branch>,
     pub remotes: Vec<String>,
     /// A merge, rebase, cherry-pick or revert is in progress.
@@ -408,9 +408,15 @@ pub fn branches(root: &Path) -> Result<Branches> {
             kind: kind.into(),
         });
     }
-    let current = list.iter().find(|b| b.current).map(|b| b.name.clone());
-    let detached =
-        current.is_none() && run_ok(root, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok();
+    let current_branch = list.iter().find(|b| b.current);
+    let current = current_branch.map(|b| b.name.clone());
+    let head = match current_branch {
+        Some(b) => Some(b.hash.clone()),
+        None => run_ok(root, &["rev-parse", "--verify", "-q", "HEAD"])
+            .ok()
+            .map(|h| h.trim().to_string()),
+    };
+    let detached = current.is_none() && head.is_some();
     let remotes = run_ok(root, &["remote"])?
         .lines()
         .map(str::to_string)
@@ -431,6 +437,7 @@ pub fn branches(root: &Path) -> Result<Branches> {
     Ok(Branches {
         current,
         detached,
+        head,
         branches: list,
         remotes,
         operation,
@@ -522,8 +529,9 @@ pub fn parse_blame(out: &str) -> Vec<BlameLine> {
     lines
 }
 
-/// Blame for `rel`; `contents` (unsaved editor text) is blamed instead of the disk file when given.
-pub fn blame(root: &Path, rel: &str, contents: Option<&str>) -> Result<Vec<BlameLine>> {
+/// Blame for `rel`; `contents` (unsaved editor text, in the file's encoding)
+/// is blamed instead of the disk file when given.
+pub fn blame(root: &Path, rel: &str, contents: Option<&[u8]>) -> Result<Vec<BlameLine>> {
     let mut cmd = git(root);
     cmd.args(["blame", "--line-porcelain"]);
     if contents.is_some() {
@@ -535,11 +543,7 @@ pub fn blame(root: &Path, rel: &str, contents: Option<&str>) -> Result<Vec<Blame
         .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
     if let Some(c) = contents {
-        child
-            .stdin
-            .take()
-            .context("no stdin")?
-            .write_all(c.as_bytes())?;
+        child.stdin.take().context("no stdin")?.write_all(c)?;
     } else {
         drop(child.stdin.take());
     }
@@ -891,6 +895,13 @@ mod tests {
         assert_eq!(b.current.as_deref(), Some("main"));
         assert_eq!(b.branches.iter().filter(|x| x.kind == "local").count(), 2);
         assert_eq!(b.operation, None);
+        let main = r.git(&["rev-parse", "HEAD"]).trim().to_string();
+        assert_eq!(b.head.as_deref(), Some(main.as_str()));
+        r.git(&["checkout", "-q", "--detach"]);
+        let b = branches(r.path()).unwrap();
+        assert!(b.detached);
+        assert_eq!(b.head.as_deref(), Some(main.as_str()));
+        r.git(&["checkout", "-q", "main"]);
 
         r.write("a.cs", "changed\n");
         r.git(&["stash", "push", "-q", "-m", "wip"]);
@@ -898,7 +909,7 @@ mod tests {
         assert_eq!(s.len(), 1);
         assert!(s[0].message.contains("wip"));
 
-        let blame = blame(r.path(), "a.cs", Some("line1\nline2\nnew\n")).unwrap();
+        let blame = blame(r.path(), "a.cs", Some(b"line1\nline2\nnew\n")).unwrap();
         assert_eq!(blame.len(), 3);
         assert_eq!(
             blame.iter().map(|b| b.line).collect::<Vec<_>>(),

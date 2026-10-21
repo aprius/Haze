@@ -7,7 +7,7 @@ import { basename, dirname } from "../lib/path";
 import { repo, runGit, useGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openDiff } from "./DiffView";
-import { branchMenu, checkout, listWorktrees, newBranch, newWorktree, onLogFilter, openWorktree, type Worktree } from "./GitDialogs";
+import { branchMenu, checkout, listWorktrees, newBranch, newWorktree, onLogFilter, openWorktree, setLogFilter, takeLogFilter, type Worktree } from "./GitDialogs";
 import { choose, confirmAction, openMenu, prompt, toast } from "./Overlays";
 import { openRebaseDialog } from "./RebaseDialog";
 import { ToolTabs } from "./TerminalPanel";
@@ -333,16 +333,18 @@ export function GitPanel({ project }: { project: Project }) {
   const [height, setHeight] = useState(300);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Branch "Compare with" and file "Show History" set filters from outside.
-  useEffect(
-    () =>
-      onLogFilter((pid, f) => {
-        if (pid !== project.id) return;
-        setView("log");
-        setQuery((q) => ({ ...q, limit: PAGE, ...(f.refs ? { refs: f.refs } : {}), ...(f.path !== undefined ? { path: f.path } : {}) }));
-      }),
-    [project.id],
-  );
+  // Branch "Compare with" and file "Show History" set filters from outside,
+  // usually just before this panel mounts.
+  useEffect(() => {
+    const apply = () => {
+      const f = takeLogFilter(project.id);
+      if (!f) return;
+      setView("log");
+      setQuery((q) => ({ ...q, limit: PAGE, ...(f.refs ? { refs: f.refs } : {}), ...(f.path !== undefined ? { path: f.path } : {}) }));
+    };
+    apply();
+    return onLogFilter((pid) => pid === project.id && apply());
+  }, [project.id]);
 
   const load = useCallback(async () => {
     if (!root) return;
@@ -378,7 +380,8 @@ export function GitPanel({ project }: { project: Project }) {
 
   const commits = page?.commits ?? [];
   const graph = page?.graph ?? [];
-  const lanes = graph.reduce((m, g) => Math.max(m, g.lane + 1, ...g.edges.map((e) => Math.max(e.from, e.to) + 1)), 1);
+  // Scrolling re-renders on every frame; this walks every loaded commit.
+  const lanes = useMemo(() => graph.reduce((m, g) => Math.max(m, g.lane + 1, ...g.edges.map((e) => Math.max(e.from, e.to) + 1)), 1), [graph]);
   const graphWidth = Math.min(lanes, 12) * LANE_W + 10;
   const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 10);
   const last = Math.min(commits.length, Math.ceil((scrollTop + height) / ROW_H) + 10);
@@ -576,6 +579,5 @@ export function showHistory(project: Project, absolute: string): void {
   const norm = (p: string) => p.replace(/\\/g, "/");
   const rel = norm(absolute).startsWith(norm(root) + "/") ? norm(absolute).slice(norm(root).length + 1) : norm(absolute);
   useWorkspace.getState().updateUi(project.id, { terminalVisible: true, bottomTab: "git" });
-  // The panel may mount now; apply the filter after it subscribes.
-  setTimeout(() => import("./GitDialogs").then((m) => m.setLogFilter(project.id, { path: rel })), 50);
+  setLogFilter(project.id, { path: rel });
 }

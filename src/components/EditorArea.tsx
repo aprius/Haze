@@ -4,7 +4,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
-import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, saveBuffer, useBuffers, type BufferMeta } from "../lib/buffers";
+import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers, type BufferMeta } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
 import { languageFor, monaco } from "../lib/monaco";
 import { basename, dirname, extname, relative } from "../lib/path";
@@ -13,7 +13,7 @@ import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
 import { setSelection } from "../store/tree";
 import { activeProject, projectForPath, useWorkspace, type Project } from "../store/workspace";
-import { repo } from "../store/git";
+import { absPath, repo } from "../store/git";
 import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
@@ -60,7 +60,7 @@ export function copyContext(): void {
   const ed = currentEditor;
   const model = ed?.getModel();
   const path = currentPath;
-  const project = path ? useWorkspace.getState().projects.find((p) => path.startsWith(p.path)) : null;
+  const project = path ? projectForPath(path) : null;
   if (!ed || !model || !path) return;
   const rel = project ? relative(project.path, path) : path;
   const sel = ed.getSelection();
@@ -116,7 +116,9 @@ function installRiderKeymap() {
     openCodeEditor(_source, resource, selectionOrPosition) {
       if (resource.scheme !== "file") return false;
       const path = resource.fsPath;
-      const project = projectForPath(path) ?? activeProject();
+      // The editor asking is the visible project's; opening the file in another
+      // project (one nested in this folder, say) would show nothing.
+      const project = activeProject() ?? projectForPath(path);
       if (!project) return false;
       const pos =
         selectionOrPosition && "startLineNumber" in selectionOrPosition
@@ -157,16 +159,17 @@ async function renameAt(editor: monaco.editor.ICodeEditor) {
 }
 
 // Annotate (git blame): model decorations, so they survive switching tabs.
-const blameDecorations = new Map<string, string[]>();
+// Keyed by model: a file closed and opened again gets a new one without them.
+const blameDecorations = new WeakMap<monaco.editor.ITextModel, string[]>();
 
 async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) {
   const model = editor.getModel();
   if (!model || model.uri.scheme !== "file") return;
   const path = model.uri.fsPath;
-  const existing = blameDecorations.get(path);
+  const existing = blameDecorations.get(model);
   if (existing) {
     model.deltaDecorations(existing, []);
-    blameDecorations.delete(path);
+    blameDecorations.delete(model);
     return;
   }
   const root = repo(project.id).root;
@@ -175,7 +178,7 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
   try {
     const meta = useBuffers.getState().meta[path];
     const dirty = meta?.status === "text" && meta.dirty;
-    const lines = await api.gitBlame(root, rel, dirty ? model.getValue() : null);
+    const lines = await api.gitBlame(root, rel, dirty ? model.getValue() : null, meta?.status === "text" ? meta.encoding : null);
     const uncommitted = "0".repeat(40);
     const ids = model.deltaDecorations(
       [],
@@ -194,7 +197,7 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
           };
         }),
     );
-    blameDecorations.set(path, ids);
+    blameDecorations.set(model, ids);
   } catch (e) {
     toast(`Annotate failed: ${errorMessage(e)}`, "error");
   }
@@ -265,10 +268,30 @@ export async function saveAll(): Promise<void> {
   }
 }
 
+/** The file a tab edits: the file itself, or the local side of a working-copy diff. */
+function editedFile(tab: string): string | null {
+  const diff = parseDiffPath(tab);
+  if (diff) return diff.right === "working" ? absPath(diff.root, diff.rel) : null;
+  return tab.startsWith("haze-") ? null : tab;
+}
+
 /** Closes tabs, asking about unsaved changes. Returns false if cancelled. */
 export async function closeTabsWithPrompt(projectId: string, paths: string[]): Promise<boolean> {
+  const closing = new Set(paths);
+  // Files another tab still shows (here or in another project) keep their buffer.
+  const kept = new Set(
+    Object.entries(useWorkspace.getState().ui).flatMap(([id, u]) =>
+      u.tabs.filter((t) => id !== projectId || !closing.has(t.path)).map((t) => editedFile(t.path)),
+    ),
+  );
+  const files = [...new Set(paths.map(editedFile))].filter((f): f is string => !!f && !kept.has(f));
+  // A restored draft is loaded in the background; wait for it so it counts as unsaved.
+  for (const f of files) {
+    const draft = recoveredDrafts.get(f);
+    if (draft) await ensureBuffer(f, draft);
+  }
   const meta = useBuffers.getState().meta;
-  const dirty = paths.filter((p) => isDirty(meta[p]));
+  const dirty = files.filter((p) => isDirty(meta[p]));
   if (dirty.length) {
     const names = dirty.map(basename).join(", ");
     const answer = await choose("Unsaved changes", `Save changes to ${names}?`, [
@@ -292,13 +315,10 @@ export async function closeTabsWithPrompt(projectId: string, paths: string[]): P
     }
   }
   useWorkspace.getState().closeTabs(projectId, paths);
-  // Keep buffers that another project still shows.
-  const open = new Set(Object.values(useWorkspace.getState().ui).flatMap((u) => u.tabs.map((t) => t.path)));
-  for (const p of paths) {
-    if (!open.has(p)) {
-      disposeBuffer(p);
-      viewStates.delete(p);
-    }
+  for (const f of files) {
+    recoveredDrafts.delete(f);
+    disposeBuffer(f);
+    viewStates.delete(f);
   }
   return true;
 }
@@ -347,7 +367,7 @@ function TabBar({ project }: { project: Project }) {
             }}
           >
             <span className="editor-tab-name">{tabTitle(t.path)}</span>
-            {isDirty(m) ? (
+            {isDirty(m) || isDirty(meta[editedFile(t.path) ?? ""]) ? (
               <span className="dirty-dot" title="Unsaved changes" />
             ) : null}
             <button
@@ -460,7 +480,8 @@ export function EditorArea({ project }: { project: Project }) {
       });
     });
     editor.onDidChangeModelContent(() => {
-      // Editing a preview tab keeps it, like Rider.
+      // Editing a preview tab keeps it, like Rider; an agent changing the file on disk does not.
+      if (reloadingFromDisk()) return;
       const path = shownPath.current;
       const ws = useWorkspace.getState();
       if (path && ws.ui[project.id]?.tabs.find((t) => t.path === path)?.preview) ws.pinTab(project.id, path);
@@ -519,8 +540,9 @@ export function EditorArea({ project }: { project: Project }) {
   useEffect(() => {
     if (!active || isImagePath(active) || active.startsWith("haze-")) return;
     const draft = recoveredDrafts.get(active);
-    recoveredDrafts.delete(active);
-    void ensureBuffer(active, draft);
+    void ensureBuffer(active, draft).finally(() => {
+      if (draft && getModel(active) && recoveredDrafts.get(active) === draft) recoveredDrafts.delete(active);
+    });
   }, [active]);
 
   // Show the active model.

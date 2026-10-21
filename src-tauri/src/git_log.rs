@@ -194,6 +194,34 @@ pub fn layout(commits: &[Commit]) -> Vec<GraphRow> {
     rows
 }
 
+const FORMAT: &str = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
+
+/// The commit a "Text or hash" filter names, when it is a hash (prefix).
+fn commit_named_by(root: &Path, text: &str) -> Option<Commit> {
+    if !(4..=40).contains(&text.len()) || !text.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let out = git_command()
+        .arg("-C")
+        .arg(root)
+        .args([
+            "log",
+            "-1",
+            "--no-walk",
+            FORMAT,
+            &format!("{text}^{{commit}}"),
+            "--",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_log(&String::from_utf8_lossy(&out.stdout))
+        .into_iter()
+        .next()
+}
+
 pub fn log(root: &Path, q: &LogQuery) -> Result<LogPage> {
     let limit = q.limit.clamp(1, 100_000);
     let mut cmd = git_command();
@@ -203,7 +231,7 @@ pub fn log(root: &Path, q: &LogQuery) -> Result<LogPage> {
         "--date-order",
         "-z",
         &format!("--max-count={}", limit + 1),
-        "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e",
+        FORMAT,
     ]);
     if q.first_parent {
         cmd.arg("--first-parent");
@@ -240,6 +268,16 @@ pub fn log(root: &Path, q: &LogQuery) -> Result<LogPage> {
     let mut commits = parse_log(&text);
     let has_more = commits.len() > limit;
     commits.truncate(limit);
+    // `--grep` only searches messages; a hash typed in the filter shows that commit too.
+    if let Some(c) = q
+        .text
+        .as_deref()
+        .and_then(|t| commit_named_by(root, t.trim()))
+    {
+        if !commits.iter().any(|x| x.hash == c.hash) {
+            commits.insert(0, c);
+        }
+    }
     let graph = layout(&commits);
     Ok(LogPage {
         commits,
@@ -370,5 +408,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(filtered.commits.len(), 2);
+        let first = &page.commits[3];
+        let by_hash = log(
+            root,
+            &LogQuery {
+                limit: 100,
+                text: Some(first.hash[..8].into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(by_hash.commits.len(), 1);
+        assert_eq!(by_hash.commits[0].subject, "first");
     }
 }

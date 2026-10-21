@@ -157,7 +157,11 @@ export function Dialogs() {
     useDialog.setState({ current: null });
     req.resolve({ button: button === "cancel" ? null : button, value });
   };
-  const primary = req.buttons.find((b) => b.primary || b.danger)?.value ?? req.buttons[req.buttons.length - 1]?.value;
+  // Enter picks the primary button ("Save", not "Don't Save"); a lone danger
+  // button (Delete…) is the default only when nothing is marked primary.
+  const dangers = req.buttons.filter((b) => b.danger);
+  const primary =
+    req.buttons.find((b) => b.primary)?.value ?? (dangers.length === 1 ? dangers[0].value : req.buttons[req.buttons.length - 1]?.value);
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && finish(null)}>
@@ -166,7 +170,8 @@ export function Dialogs() {
         role="dialog"
         onKeyDown={(e) => {
           if (e.key === "Escape") finish(null);
-          if (e.key === "Enter" && !e.nativeEvent.isComposing) finish(primary ?? null);
+          // A focused button (tabbed to "Cancel") handles Enter itself.
+          if (e.key === "Enter" && !e.nativeEvent.isComposing && !(e.target instanceof HTMLButtonElement)) finish(primary ?? null);
           e.stopPropagation();
         }}
         tabIndex={-1}

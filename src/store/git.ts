@@ -72,15 +72,34 @@ export function absPath(root: string, rel: string): string {
 }
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Projects with a refresh requested by an operation (not the watcher) still to run. */
+const explicit = new Set<string>();
+/** What `git log --all` shows depends only on these; editing files changes none of them. */
+const historyKeys = new Map<string, string>();
 
-/** Reloads changes, branches and stashes (debounced when `delay` > 0). */
-export function refreshRepo(projectId: string, projectPath: string, delay = 0): void {
+function historyKey(branches: BranchesInfo | null, stashes: StashEntry[], checkpoints: Checkpoint[]): string {
+  return [
+    branches?.head ?? "",
+    ...(branches?.branches ?? []).map((b) => `${b.refname}=${b.hash}`),
+    ...stashes.map((s) => s.hash),
+    ...checkpoints.map((c) => c.hash),
+  ].join("\n");
+}
+
+/**
+ * Reloads changes, branches and stashes (debounced when `delay` > 0). The log
+ * reloads too (`revision`), except after a watcher refresh that left the
+ * history as it was: an agent editing files would reload it constantly.
+ */
+export function refreshRepo(projectId: string, projectPath: string, delay = 0, fromWatcher = false): void {
+  if (!fromWatcher) explicit.add(projectId);
   const t = timers.get(projectId);
   if (t) clearTimeout(t);
   timers.set(
     projectId,
     setTimeout(async () => {
       timers.delete(projectId);
+      const force = explicit.delete(projectId);
       let root = repo(projectId).root;
       if (!root) {
         root = await api.gitToplevel(projectPath).catch(() => null);
@@ -103,7 +122,19 @@ export function refreshRepo(projectId: string, projectPath: string, delay = 0): 
       reviewedRels.forEach((rel, i) => {
         if ((prints[i] ?? "missing") === cur.reviewed[rel]) reviewed[rel] = cur.reviewed[rel];
       });
-      patchRepo(projectId, (r) => ({ changes, branches, stashes, checkpoints, checkpoint, since, reviewed, revision: r.revision + 1 }));
+      const key = historyKey(branches, stashes, checkpoints);
+      const moved = historyKeys.get(projectId) !== key;
+      historyKeys.set(projectId, key);
+      patchRepo(projectId, (r) => ({
+        changes,
+        branches,
+        stashes,
+        checkpoints,
+        checkpoint,
+        since,
+        reviewed,
+        revision: force || moved ? r.revision + 1 : r.revision,
+      }));
     }, delay),
   );
 }

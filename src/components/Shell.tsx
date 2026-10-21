@@ -4,16 +4,18 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { FolderOpen, GitBranch, Plus, Settings, Star, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
+import { api, type TextEncoding } from "../lib/ipc";
 import { basename } from "../lib/path";
 import { useGit } from "../store/git";
-import { useTerminals } from "../store/terminals";
+import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
 import { useTree } from "../store/tree";
 import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
 import { useWorkspace, type Project } from "../store/workspace";
 import { closeTabsWithPrompt, useCursor } from "./EditorArea";
-import { openMenu } from "./Overlays";
+import { confirmAction, openMenu } from "./Overlays";
+import { disposeView, toggleTerminal } from "./TerminalPanel";
 
 export async function openFolder(): Promise<void> {
   const dir = await open({ directory: true, multiple: false, title: "Open Folder" });
@@ -49,6 +51,30 @@ async function closeProject(project: Project) {
   // closing the tabs just asks first.
   if (ui && !(await closeTabsWithPrompt(project.id, ui.tabs.map((t) => t.path)))) return;
   useWorkspace.getState().closeProject(project.id);
+}
+
+/** Removes a project from the list, with its terminals: nothing would show them any more. */
+async function removeFromList(project: Project) {
+  const sessions = await api.ptyList().catch(() => Object.values(useTerminals.getState().sessions));
+  const ids = sessions.filter((s) => s.projectId === project.id).map((s) => s.id);
+  const busy = await busyTerminals(ids);
+  if (
+    busy.length &&
+    !(await confirmAction(
+      "Remove from List",
+      `${project.name} has ${busy.length} terminal(s) still running. Terminate them and remove the project?`,
+      "Terminate and Remove",
+      true,
+    ))
+  )
+    return;
+  const ui = useWorkspace.getState().ui[project.id];
+  if (ui && !(await closeTabsWithPrompt(project.id, ui.tabs.map((t) => t.path)))) return;
+  for (const id of ids) {
+    disposeView(id);
+    await closeTerminal(project.id, id);
+  }
+  useWorkspace.getState().removeProject(project.id);
 }
 
 /** Dot on a project's avatar when one of its agents needs a look. */
@@ -140,7 +166,7 @@ export function Welcome() {
                     e.preventDefault();
                     openMenu(e, [
                       { label: p.favorite ? "Remove from Favorites" : "Add to Favorites", action: () => ws().toggleFavorite(p.id) },
-                      { label: "Remove from List", danger: true, action: () => ws().removeProject(p.id) },
+                      { label: "Remove from List", danger: true, action: () => void removeFromList(p) },
                     ]);
                   }}
                 >
@@ -196,13 +222,22 @@ export function Splitter({
   );
 }
 
+const ENCODING_LABELS: Record<TextEncoding, string> = {
+  utf8: "UTF-8",
+  "utf8-bom": "UTF-8 BOM",
+  utf16le: "UTF-16LE",
+  utf16be: "UTF-16BE",
+  windows1252: "Windows-1252",
+  "utf8-invalid": "UTF-8 (invalid bytes)",
+  "utf8-bom-invalid": "UTF-8 BOM (invalid bytes)",
+};
+
 export function StatusBar({ project }: { project: Project | null }) {
   const git = useTree((s) => (project ? s.git[project.id] : undefined));
   const operation = useGit((s) => (project ? s.repos[project.id]?.branches?.operation : null));
   const ui = useWorkspace((s) => (project ? s.ui[project.id] : undefined));
   const meta = useBuffers((s) => (ui?.activeTab ? s.meta[ui.activeTab] : undefined));
   const cursor = useCursor();
-  const updateUi = useWorkspace((s) => s.updateUi);
   return (
     <div className="status-bar">
       {project && (
@@ -231,13 +266,15 @@ export function StatusBar({ project }: { project: Project | null }) {
             {cursor.selected > 0 && ` (${cursor.selected} chars)`}
           </span>
           <span className="status-item">{meta.eol.toUpperCase()}</span>
-          <span className="status-item">{meta.encoding.toUpperCase().replace("UTF", "UTF-").replace("-BOM", " BOM")}</span>
+          <span className="status-item" title={meta.encoding.endsWith("-invalid") ? "Invalid UTF-8 bytes are kept as they are when saving" : undefined}>
+            {ENCODING_LABELS[meta.encoding]}
+          </span>
         </>
       )}
       {project && (
         <button
-          className={"status-item status-btn" + (ui?.terminalVisible ? " on" : "")}
-          onClick={() => updateUi(project.id, (u) => ({ terminalVisible: !u.terminalVisible }))}
+          className={"status-item status-btn" + (ui?.terminalVisible && ui.bottomTab === "terminal" ? " on" : "")}
+          onClick={() => toggleTerminal(project.id, false)}
           title="Terminal (Alt+F12)"
         >
           <TerminalSquare size={12} /> Terminal

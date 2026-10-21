@@ -7,6 +7,7 @@ mod git_log;
 mod git_ops;
 mod lsp;
 mod nesting;
+mod procinfo;
 pub mod pty;
 mod search;
 mod state;
@@ -116,9 +117,23 @@ async fn move_paths(sources: Vec<String>, dest_dir: String) -> CmdResult<Vec<Str
     .await
 }
 
+/// `pid` is the terminal's process: its current directory (after `cd`) comes
+/// first, then `cwds` (one the shell reported, the one it started in).
 #[tauri::command]
-async fn resolve_paths(cwd: String, candidates: Vec<String>) -> CmdResult<Vec<Option<String>>> {
-    blocking(move || Ok(fs_ops::resolve_paths(cwd.as_ref(), &candidates))).await
+async fn resolve_paths(
+    cwds: Vec<String>,
+    pid: Option<u32>,
+    candidates: Vec<String>,
+) -> CmdResult<Vec<Option<String>>> {
+    blocking(move || {
+        let bases: Vec<PathBuf> = pid
+            .and_then(procinfo::cwd_of)
+            .into_iter()
+            .chain(cwds.into_iter().map(PathBuf::from))
+            .collect();
+        Ok(fs_ops::resolve_paths(&bases, &candidates))
+    })
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -160,7 +175,9 @@ fn watch_project(
         }
         let _ = app.emit("fs://changed", change);
     });
-    watchers.watch(&root, sink).map_err(err)
+    // Ordered with unwatch_project (both run on the main thread); the slow part runs on its own thread.
+    watchers.watch(&root, sink);
+    Ok(())
 }
 
 #[tauri::command]
@@ -316,8 +333,16 @@ async fn git_blame(
     root: String,
     rel: String,
     contents: Option<String>,
+    encoding: Option<text::TextEncoding>,
 ) -> CmdResult<Vec<git_ops::BlameLine>> {
-    blocking(move || git_ops::blame(root.as_ref(), &rel, contents.as_deref())).await
+    blocking(move || {
+        // git compares bytes: UTF-16 or BOM text sent as UTF-8 would match no line.
+        let bytes = contents
+            .map(|c| text::encode(&c, encoding.unwrap_or(text::TextEncoding::Utf8)))
+            .transpose()?;
+        git_ops::blame(root.as_ref(), &rel, bytes.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -558,7 +583,9 @@ pub fn run() {
         .manage(dotnet::Builds::default())
         .setup(|app| {
             let handle = app.handle().clone();
-            let client = PtyClient::new(Arc::new(move |ev| forward_pty_event(&handle, ev)));
+            let client = PtyClient::new(pty::client::batched(Arc::new(move |ev| {
+                forward_pty_event(&handle, ev)
+            })));
             app.manage(Pty(Arc::new(client)));
             Ok(())
         })

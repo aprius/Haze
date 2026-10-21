@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 
 use anyhow::{bail, Context, Result};
@@ -30,7 +30,10 @@ pub enum LspEvent {
 
 struct Server {
     child: Child,
-    stdin: ChildStdin,
+    /// Framed messages for the writer thread. `lsp_send` runs on the UI
+    /// thread, and a server busy loading a solution stops reading its stdin:
+    /// writing directly would freeze the window once the pipe is full.
+    input: mpsc::Sender<Vec<u8>>,
 }
 
 #[derive(Default)]
@@ -126,12 +129,11 @@ pub fn read_message<R: BufRead>(r: &mut R) -> Result<Option<serde_json::Value>> 
     Ok(Some(serde_json::from_slice(&buf)?))
 }
 
-pub fn write_message<W: Write>(w: &mut W, msg: &serde_json::Value) -> Result<()> {
+pub fn frame_message(msg: &serde_json::Value) -> Result<Vec<u8>> {
     let body = serde_json::to_vec(msg)?;
-    write!(w, "Content-Length: {}\r\n\r\n", body.len())?;
-    w.write_all(&body)?;
-    w.flush()?;
-    Ok(())
+    let mut frame = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
+    frame.extend_from_slice(&body);
+    Ok(frame)
 }
 
 impl LspServers {
@@ -151,13 +153,26 @@ impl LspServers {
         let mut child = command
             .spawn()
             .with_context(|| format!("starting {}", cmd.program))?;
-        let stdin = child.stdin.take().context("no stdin")?;
+        let mut stdin = child.stdin.take().context("no stdin")?;
         let stdout = child.stdout.take().context("no stdout")?;
         let stderr = child.stderr.take().context("no stderr")?;
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        let (input, frames) = mpsc::channel::<Vec<u8>>();
         self.servers
             .lock()
-            .insert(id, Arc::new(Mutex::new(Server { child, stdin })));
+            .insert(id, Arc::new(Mutex::new(Server { child, input })));
+
+        thread::spawn(move || {
+            for frame in frames {
+                if stdin
+                    .write_all(&frame)
+                    .and_then(|()| stdin.flush())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
 
         // Drain stderr so the server never blocks on a full pipe.
         thread::spawn(move || {
@@ -185,8 +200,9 @@ impl LspServers {
         let Some(server) = server else {
             bail!("language server {id} is not running")
         };
-        let mut s = server.lock();
-        write_message(&mut s.stdin, msg)
+        let frame = frame_message(msg)?;
+        let sent = server.lock().input.send(frame);
+        sent.map_err(|_| anyhow::anyhow!("language server {id} stopped reading"))
     }
 
     pub fn stop(&self, id: u64) {
@@ -212,9 +228,8 @@ mod tests {
     #[test]
     fn frames_round_trip() {
         let msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"x": "ü"}});
-        let mut buf = Vec::new();
-        write_message(&mut buf, &msg).unwrap();
-        write_message(&mut buf, &msg).unwrap();
+        let mut buf = frame_message(&msg).unwrap();
+        buf.extend(frame_message(&msg).unwrap());
         let mut r = BufReader::new(&buf[..]);
         assert_eq!(read_message(&mut r).unwrap(), Some(msg.clone()));
         assert_eq!(read_message(&mut r).unwrap(), Some(msg));
