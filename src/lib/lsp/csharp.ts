@@ -7,7 +7,8 @@ import { errorMessage, type FsChange } from "../ipc";
 import { api } from "../ipc";
 import { monaco } from "../monaco";
 import { isWithin } from "../path";
-import { setCsharpStatus } from "../../store/dotnet";
+import { setCsharpStatus, useDotnet } from "../../store/dotnet";
+import { useWorkspace } from "../../store/workspace";
 import { LspClient } from "./client";
 import {
   markupToString,
@@ -259,6 +260,24 @@ function ready(model: monaco.editor.ITextModel): CsharpSession | undefined {
   return s?.ready && s.client.alive ? s : undefined;
 }
 
+/** Session for a model's file, or an error saying why there is none. */
+function requireSession(model: monaco.editor.ITextModel): CsharpSession {
+  const s = sessionForPath(model.uri.fsPath);
+  if (s) return s;
+  const project = useWorkspace
+    .getState()
+    .projects.filter((p) => p.open && isWithin(model.uri.fsPath, p.path))
+    .sort((a, b) => b.path.length - a.path.length)[0];
+  const { info, csharp } = useDotnet.getState();
+  const status = project && csharp[project.id];
+  let why = "C# support is not running for this project";
+  if (project && !info[project.id]?.projects.length) why += ": no .csproj or .sln was found in it";
+  else if (status?.state === "missing")
+    why += ": no C# language server was found. Install it with “dotnet tool install --global roslyn-language-server --prerelease”, then restart C# from the run bar";
+  else if (status?.message) why += `: ${status.message}`;
+  throw new Error(why);
+}
+
 const docParams = (model: monaco.editor.ITextModel, position: monaco.IPosition) => ({
   textDocument: { uri: model.uri.toString() },
   position: toLspPosition(position),
@@ -280,8 +299,7 @@ function toFound(l: LspLocation): FoundLocation {
 }
 
 async function locationsQuery(method: string, model: monaco.editor.ITextModel, pos: monaco.IPosition, extra: object = {}): Promise<FoundLocation[]> {
-  const s = sessionForPath(model.uri.fsPath);
-  if (!s) throw new Error("C# support is not running for this project");
+  const s = requireSession(model);
   await s.whenReady();
   const res = await s.request<unknown>(method, { ...docParams(model, pos), ...extra });
   return toLocations(res).map(toFound);
@@ -294,8 +312,7 @@ export const findImplementations = (model: monaco.editor.ITextModel, pos: monaco
   locationsQuery("textDocument/implementation", model, pos);
 
 export async function prepareRename(model: monaco.editor.ITextModel, pos: monaco.IPosition): Promise<{ range: monaco.IRange; placeholder: string } | null> {
-  const s = sessionForPath(model.uri.fsPath);
-  if (!s) throw new Error("C# support is not running for this project");
+  const s = requireSession(model);
   await s.whenReady();
   const res = await s
     .request<{ range?: LspRange; placeholder?: string; start?: unknown } | null>("textDocument/prepareRename", docParams(model, pos))
@@ -318,8 +335,7 @@ export async function prepareRename(model: monaco.editor.ITextModel, pos: monaco
 }
 
 export async function renameSymbol(model: monaco.editor.ITextModel, pos: monaco.IPosition, newName: string): Promise<WorkspaceEdit | null> {
-  const s = sessionForPath(model.uri.fsPath);
-  if (!s) throw new Error("C# support is not running for this project");
+  const s = requireSession(model);
   return s.request<WorkspaceEdit | null>("textDocument/rename", { ...docParams(model, pos), newName });
 }
 
