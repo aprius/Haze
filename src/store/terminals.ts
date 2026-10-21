@@ -191,6 +191,7 @@ export async function closeTerminal(projectId: string, id: string): Promise<void
     const order = ui.terminalOrder.filter((t) => t !== id);
     const active =
       ui.activeTerminal === id ? (order[Math.max(0, Math.min(idx - 1, order.length - 1))] ?? null) : ui.activeTerminal;
-    return { terminalOrder: order, activeTerminal: active };
+    // Closing the last tab hides the panel rather than letting it spawn a fresh shell.
+    return { terminalOrder: order, activeTerminal: active, ...(order.length === 0 && { terminalVisible: false }) };
   });
 }
