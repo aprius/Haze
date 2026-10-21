@@ -39,7 +39,11 @@ export class CsharpSession {
   client!: LspClient;
   kind = "";
   caps: ServerCapabilities = {};
+  /** Projects loaded (status only: queries are answered from whatever is loaded). */
   ready = false;
+  /** Initialized and able to answer queries. */
+  usable = false;
+  private progress = new Map<string | number, string>();
   private readyWaiters: (() => void)[] = [];
   private synced = new Map<string, monaco.IDisposable>();
   private disposed = false;
@@ -101,6 +105,7 @@ export class CsharpSession {
     });
     this.caps = init.capabilities;
     await this.client.notify("initialized", {});
+    this.usable = true;
     setCsharpStatus(this.projectId, { state: "loading", kind: this.kind, message: "Loading projects…" });
     // csharp-ls has no "projects loaded" notification; it answers once ready.
     if (this.kind !== "roslyn") this.markReady();
@@ -116,32 +121,47 @@ export class CsharpSession {
     });
     c.onNotification("workspace/projectInitializationComplete", () => this.markReady());
     c.onNotification("$/progress", (p) => {
-      const v = (p as { value?: { kind?: string; title?: string; message?: string } }).value;
-      if (!this.ready && v?.kind !== "end" && (v?.message || v?.title)) {
+      const { token, value: v } = p as { token: string | number; value?: { kind?: string; title?: string; message?: string } };
+      if (v?.kind === "begin") this.progress.set(token, v.title ?? "");
+      if (this.ready) return;
+      if (v?.kind === "end") {
+        // Roslyn sends projectInitializationComplete only when every project
+        // loaded; the end of its "Loading…" progress also covers failures.
+        if (/^Load/i.test(this.progress.get(token) ?? "")) this.markReady(v.message);
+        this.progress.delete(token);
+      } else if (v?.message || v?.title) {
         setCsharpStatus(this.projectId, { state: "loading", kind: this.kind, message: v.message ?? v.title });
       }
     });
-    c.onNotification("window/showMessage", (p) => {
+    const showError = (p: unknown) => {
       const m = p as { type: number; message: string };
-      if (m.type === 1) setCsharpStatus(this.projectId, { state: this.ready ? "ready" : "loading", kind: this.kind, message: m.message });
-    });
+      if (m.type === 1) setCsharpStatus(this.projectId, { state: this.ready ? "ready" : "loading", kind: this.kind, message: m.message.split("\n")[0] });
+    };
+    c.onNotification("window/showMessage", showError);
+    c.onNotification("window/logMessage", showError);
     c.onExit((reason) => {
       this.ready = false;
+      this.usable = false;
       this.synced.forEach((d) => d.dispose());
       this.synced.clear();
       if (!this.disposed) setCsharpStatus(this.projectId, { state: "stopped", kind: this.kind, message: exitMessage(reason) });
     });
   }
 
-  private markReady() {
+  private markReady(message?: string) {
     if (this.ready) return;
     this.ready = true;
-    setCsharpStatus(this.projectId, { state: "ready", kind: this.kind });
+    setCsharpStatus(this.projectId, { state: "ready", kind: this.kind, message });
     this.readyWaiters.splice(0).forEach((r) => r());
   }
 
-  whenReady(): Promise<void> {
-    return this.ready ? Promise.resolve() : new Promise((r) => this.readyWaiters.push(r));
+  /** Waits for the projects to load, at most `ms`: a project that never loads must not block queries. */
+  whenReady(ms = 15000): Promise<void> {
+    if (this.ready) return Promise.resolve();
+    return new Promise((r) => {
+      this.readyWaiters.push(r);
+      setTimeout(r, ms);
+    });
   }
 
   owns(path: string): boolean {
@@ -268,7 +288,7 @@ export function notifyFileChanges(change: FsChange): void {
 function ready(model: monaco.editor.ITextModel): CsharpSession | undefined {
   if (model.uri.scheme !== "file") return undefined;
   const s = sessionForPath(model.uri.fsPath);
-  return s?.ready && s.client.alive ? s : undefined;
+  return s?.usable && s.client.alive ? s : undefined;
 }
 
 /** Session for a model's file, or an error saying why there is none. */
@@ -361,7 +381,7 @@ export interface WorkspaceSymbolHit {
 
 export async function workspaceSymbols(projectId: string, query: string): Promise<WorkspaceSymbolHit[]> {
   const s = sessions.get(projectId);
-  if (!s?.ready || !query) return [];
+  if (!s?.usable || !query) return [];
   const res = await s.request<{ name: string; kind: number; containerName?: string; location: LspLocation | { uri: string } }[] | null>(
     "workspace/symbol",
     { query },
@@ -527,7 +547,7 @@ export function registerProviders(): void {
     async resolveCompletionItem(item, token) {
       const h = item as HazeCompletion;
       const s = sessionForPath(h.path);
-      if (!s?.ready || !s.caps.completionProvider?.resolveProvider) return item;
+      if (!s?.usable || !s.caps.completionProvider?.resolveProvider) return item;
       const r = await s.request<LspCompletionItem>("completionItem/resolve", h.lsp, token).catch(() => null);
       if (!r) return item;
       return {
