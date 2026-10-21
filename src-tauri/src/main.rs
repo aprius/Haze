@@ -14,5 +14,9 @@ fn main() {
         }
         return;
     }
+    if args.get(1).map(String::as_str) == Some(haze_lib::git_auth::CREDENTIAL_FLAG) {
+        let action = args.get(2).map(String::as_str);
+        std::process::exit(haze_lib::git_auth::run_credential_helper(action));
+    }
     haze_lib::run();
 }

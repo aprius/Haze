@@ -1,4 +1,4 @@
-// Settings: fonts, AI agent hooks (opt-in, per agent), notifications, file nesting.
+// Settings: fonts, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting.
 import { useEffect, useState } from "react";
 import { create } from "zustand";
 import {
@@ -16,6 +16,7 @@ import { api, errorMessage, type HookStatus } from "../lib/ipc";
 import { useTree } from "../store/tree";
 import { popupClosed } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
+import { GitAccountsSection } from "./GitAccounts";
 import { toast } from "./Overlays";
 
 const useSettings = create<{ open: boolean }>(() => ({ open: false }));
@@ -218,6 +219,7 @@ export function SettingsDialog() {
           />
           Desktop notification when an agent needs you or finishes (while Haze is in the background)
         </label>
+        <GitAccountsSection />
         <div className="settings-section">Project view</div>
         <label className="find-check">
           <input
