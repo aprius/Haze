@@ -25,6 +25,13 @@
   --git-ignored: #a59fa0;
   --git-deleted: #918c8e;
   --git-conflict: #e14775;
+  /* Diff blocks: Monokai Pro's green / orange / red, softer on the light filter. */
+  --diff-added: #269d69;
+  --diff-modified: #e16032;
+  --diff-deleted: #e14775;
+  --diff-tint: 14%;
+  --diff-word: 28%;
+  --diff-edge: 55%;
   color-scheme: light;
 }
 
@@ -54,6 +61,12 @@
   --git-ignored: #727072;
   --git-deleted: #939293;
   --git-conflict: #ff6188;
+  --diff-added: #a9dc76;
+  --diff-modified: #fc9867;
+  --diff-deleted: #ff6188;
+  --diff-tint: 15%;
+  --diff-word: 30%;
+  --diff-edge: 60%;
   color-scheme: dark;
 }
 
@@ -2004,13 +2017,6 @@ kbd {
   min-width: 0;
 }
 
-/* Rider-style diff: green added, blue modified, grey deleted. */
-.diff-view {
-  --rd-added: var(--git-added);
-  --rd-modified: var(--git-modified);
-  --rd-deleted: var(--git-deleted);
-}
-
 .diff-gap {
   position: relative;
   flex: none;
@@ -2031,34 +2037,34 @@ kbd {
 }
 
 /* The same tint in the editors and in the connectors, so a block reads as one band. */
-.rd-added { --rd: var(--rd-added); }
-.rd-modified { --rd: var(--rd-modified); }
-.rd-deleted { --rd: var(--rd-deleted); }
+.rd-added { --rd: var(--diff-added); }
+.rd-modified { --rd: var(--diff-modified); }
+.rd-deleted { --rd: var(--diff-deleted); }
 
 .rd-link {
-  fill: color-mix(in srgb, var(--rd) 18%, transparent);
+  fill: color-mix(in srgb, var(--rd) var(--diff-tint), transparent);
 }
 
 .rd-edge {
   fill: none;
-  stroke: color-mix(in srgb, var(--rd) 65%, transparent);
+  stroke: color-mix(in srgb, var(--rd) var(--diff-edge), transparent);
   stroke-width: 1;
 }
 
 .rd-line {
-  background: color-mix(in srgb, var(--rd) 18%, transparent);
+  background: color-mix(in srgb, var(--rd) var(--diff-tint), transparent);
 }
 
 .rd-top {
-  box-shadow: inset 0 1px color-mix(in srgb, var(--rd) 65%, transparent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--rd) var(--diff-edge), transparent);
 }
 
 .rd-bottom {
-  box-shadow: inset 0 -1px color-mix(in srgb, var(--rd) 65%, transparent);
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--rd) var(--diff-edge), transparent);
 }
 
 .rd-char {
-  background: color-mix(in srgb, var(--rd-modified) 34%, transparent);
+  background: color-mix(in srgb, var(--diff-modified) var(--diff-word), transparent);
   border-radius: 2px;
 }
 
@@ -2247,15 +2253,15 @@ kbd {
 }
 
 .merge-conflict {
-  background: rgba(219, 59, 75, 0.14);
+  background: color-mix(in srgb, var(--diff-deleted) var(--diff-tint), transparent);
 }
 
 .merge-conflict-side {
-  background: rgba(229, 160, 58, 0.16);
+  background: color-mix(in srgb, var(--diff-modified) var(--diff-tint), transparent);
 }
 
 .merge-resolved {
-  background: rgba(95, 184, 101, 0.14);
+  background: color-mix(in srgb, var(--diff-added) var(--diff-tint), transparent);
 }
 
 .merge-conflicts {
