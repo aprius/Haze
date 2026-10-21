@@ -30,7 +30,7 @@ function startRouting() {
   routing ??= onLspEvent((e) => {
     const c = clients.get(e.server);
     if (!c) return;
-    if (e.t === "exit") c.handleExit();
+    if (e.t === "exit") c.handleExit(e.reason);
     else c.handleMessage(e.message as RpcMessage);
   });
   return routing;
@@ -41,7 +41,7 @@ export class LspClient {
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private requestHandlers = new Map<string, RequestHandler>();
   private notificationHandlers = new Map<string, NotificationHandler>();
-  private exitHandlers: (() => void)[] = [];
+  private exitHandlers: ((reason: string | null) => void)[] = [];
   alive = true;
 
   private constructor(readonly serverId: number) {}
@@ -61,7 +61,8 @@ export class LspClient {
     this.notificationHandlers.set(method, h);
   }
 
-  onExit(h: () => void): void {
+  /** `reason` is the end of the server's stderr, when it said why. */
+  onExit(h: (reason: string | null) => void): void {
     this.exitHandlers.push(h);
   }
 
@@ -111,12 +112,14 @@ export class LspClient {
     await api.lspSend(this.serverId, reply).catch(() => {});
   }
 
-  handleExit(): void {
+  handleExit(reason: string | null = null): void {
+    if (!this.alive && !clients.has(this.serverId)) return;
     this.alive = false;
     clients.delete(this.serverId);
-    for (const p of this.pending.values()) p.reject(new LspError("language server exited", -32099));
+    const message = reason ? `language server exited: ${reason}` : "language server exited";
+    for (const p of this.pending.values()) p.reject(new LspError(message, -32099));
     this.pending.clear();
-    this.exitHandlers.forEach((h) => h());
+    this.exitHandlers.forEach((h) => h(reason));
   }
 
   async shutdown(): Promise<void> {

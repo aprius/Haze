@@ -214,7 +214,7 @@ export interface ServerCommand {
   args: string[];
 }
 
-export type LspEvent = { t: "message"; server: number; message: unknown } | { t: "exit"; server: number; code: number | null };
+export type LspEvent = { t: "message"; server: number; message: unknown } | { t: "exit"; server: number; code: number | null; reason: string | null };
 
 export interface LogQuery {
   limit: number;
