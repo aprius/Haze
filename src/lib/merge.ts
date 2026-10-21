@@ -80,16 +80,35 @@ export interface ResultEdit {
 }
 
 /**
+ * Where conflict `c` sits in the initial result (its lines): its base lines,
+ * or with an empty base the line it goes before. An empty base after the last
+ * line (no final newline) is marked by the end of the last line instead.
+ */
+export function conflictRange(c: ConflictBlock, result: readonly string[]): ResultEdit {
+  const n = Math.max(1, result.length);
+  if (c.base.length === 0 && c.resultStart >= n) {
+    const end = (result[n - 1] ?? "").length + 1;
+    return { startLine: n, startColumn: end, endLine: n, endColumn: end, text: "" };
+  }
+  return { startLine: c.resultStart + 1, startColumn: 1, endLine: c.resultStart + Math.max(1, c.base.length), endColumn: 1, text: "" };
+}
+
+/**
  * The edit on the result that resolves conflict `c` with `choice`, where the
  * conflict currently spans lines `start..end` of `result` (its lines). With an
  * empty base the conflict holds no line of its own, so the chosen lines are
- * inserted before `start`.
+ * inserted before `start`, or after the last line when `start` is past it.
  */
 export function resolveEdit(c: ConflictBlock, choice: "ours" | "theirs" | "both", start: number, end: number, result: readonly string[], eol: string): ResultEdit {
   const chosen = resolution(c, choice);
   const text = chosen.join(eol);
   const edit = (startLine: number, startColumn: number, endLine: number, endColumn: number, text: string) => ({ startLine, startColumn, endLine, endColumn, text });
-  if (c.base.length === 0) return edit(start, 1, start, 1, text ? text + eol : "");
+  if (c.base.length === 0) {
+    if (start <= result.length) return edit(start, 1, start, 1, text ? text + eol : "");
+    const n = Math.max(1, result.length);
+    const endOfFile = (result[n - 1] ?? "").length + 1;
+    return edit(n, endOfFile, n, endOfFile, text ? eol + text : "");
+  }
   const endColumn = (result[end - 1] ?? "").length + 1;
   if (chosen.length === 0) return end < result.length ? edit(start, 1, end + 1, 1, "") : edit(start, 1, end, endColumn, "");
   return edit(start, 1, end, endColumn, text);

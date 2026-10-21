@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMerge, resolution, resolveEdit } from "./merge";
+import { buildMerge, conflictRange, resolution, resolveEdit } from "./merge";
 import { applyEdit } from "./testEdit";
 
 describe("buildMerge", () => {
@@ -36,15 +36,16 @@ describe("buildMerge", () => {
 });
 
 describe("resolveEdit", () => {
-  // Resolves the only conflict where the merge window tracks it: base lines
-  // from resultStart, or the line after it when the base is empty.
+  // Resolves the only conflict the way the merge window does: from the range
+  // it marks, where a mark at the end of the last line means "after it".
   const resolve = (ours: string, base: string, theirs: string, choice: "ours" | "theirs" | "both") => {
     const m = buildMerge(ours, base, theirs);
     expect(m.conflicts).toHaveLength(1);
     const c = m.conflicts[0];
-    const start = c.resultStart + 1;
-    const e = resolveEdit(c, choice, start, c.resultStart + Math.max(1, c.base.length), m.result.split(m.eol), m.eol);
-    return applyEdit(m.result, e, m.eol);
+    const lines = m.result.split(m.eol);
+    const r = conflictRange(c, lines);
+    const start = c.base.length === 0 && r.startColumn > 1 ? r.startLine + 1 : r.startLine;
+    return applyEdit(m.result, resolveEdit(c, choice, start, r.endLine, lines, m.eol), m.eol);
   };
   const base = "one\nvalue = 1\nend\n";
   const ours = "one\nvalue = 2\nend\n";
@@ -64,6 +65,23 @@ describe("resolveEdit", () => {
   it("inserts both sides' additions where the base had nothing", () => {
     expect(resolve("a\nX\nb\n", "a\nb\n", "a\nY\nb\n", "ours")).toBe("a\nX\nb\n");
     expect(resolve("a\nX\nb\n", "a\nb\n", "a\nY\nb\n", "both")).toBe("a\nX\nY\nb\n");
+  });
+
+  it("adds after the last line when both sides append to a file without a final newline", () => {
+    expect(resolve("a\nX", "a", "a\nY", "ours")).toBe("a\nX");
+    expect(resolve("a\nX", "a", "a\nY", "theirs")).toBe("a\nY");
+    expect(resolve("a\nX", "a", "a\nY", "both")).toBe("a\nX\nY");
+    expect(resolve("a\r\nX", "a", "a\r\nY", "both")).toBe("a\r\nX\r\nY");
+  });
+
+  it("marks a conflict's base lines, or where an empty base goes", () => {
+    const at = (ours: string, base: string, theirs: string) => {
+      const m = buildMerge(ours, base, theirs);
+      return conflictRange(m.conflicts[0], m.result.split(m.eol));
+    };
+    expect(at("a\nB\nC\nd\n", "a\nb\nc\nd\n", "a\nX\nY\nd\n")).toMatchObject({ startLine: 2, startColumn: 1, endLine: 3 });
+    expect(at("a\nX\nb\n", "a\nb\n", "a\nY\nb\n")).toMatchObject({ startLine: 2, startColumn: 1, endLine: 2 });
+    expect(at("ab\nX", "ab", "ab\nY")).toMatchObject({ startLine: 1, startColumn: 3, endLine: 1, endColumn: 3 });
   });
 
   it("keeps CRLF line endings", () => {

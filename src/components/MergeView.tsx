@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getModel, reloadBuffer } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
-import { buildMerge, resolution, resolveEdit, type ConflictBlock } from "../lib/merge";
+import { buildMerge, conflictRange, resolution, resolveEdit, type ConflictBlock, type ResultEdit } from "../lib/merge";
 import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
@@ -22,6 +22,8 @@ export function openMerge(projectId: string, spec: MergeSpec): void {
 }
 
 type Choice = "ours" | "theirs" | "both";
+
+const rangeOf = (e: ResultEdit) => new monaco.Range(e.startLine, e.startColumn, e.endLine, e.endColumn);
 
 interface Pane {
   editor: monaco.editor.IStandaloneCodeEditor;
@@ -93,10 +95,11 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
         p.right.editor.setModel(mkModel(theirs ?? ""));
         const result = mkModel(model.result);
         p.center.editor.setModel(result);
+        const lines = result.getLinesContent();
         tracked.current = result.deltaDecorations(
           [],
           model.conflicts.map((c) => ({
-            range: new monaco.Range(c.resultStart + 1, 1, c.resultStart + Math.max(1, c.base.length), 1),
+            range: rangeOf(conflictRange(c, lines)),
             options: {
               stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
               isWholeLine: true,
@@ -145,10 +148,11 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     if (!p || !model) return;
     const r = model.getDecorationRange(tracked.current[c.id]);
     if (!r) return;
-    const e = resolveEdit(c, choice, r.startLineNumber, r.endLineNumber, model.getLinesContent(), model.getEOL());
-    p.center.editor.executeEdits("merge", [{ range: new monaco.Range(e.startLine, e.startColumn, e.endLine, e.endColumn), text: e.text }]);
+    // An empty base past the last line is marked at the end of that line.
+    const start = c.base.length === 0 && r.startColumn > 1 ? r.startLineNumber + 1 : r.startLineNumber;
+    const e = resolveEdit(c, choice, start, r.endLineNumber, model.getLinesContent(), model.getEOL());
+    p.center.editor.executeEdits("merge", [{ range: rangeOf(e), text: e.text }]);
     const lines = resolution(c, choice).length;
-    const start = r.startLineNumber;
     const [id] = model.deltaDecorations(
       [tracked.current[c.id]],
       [
