@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers, type BufferMeta } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
-import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
+import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, relative } from "../lib/path";
 import { findImplementations, findUsages, prepareRename, renameSymbol } from "../lib/lsp/csharp";
@@ -510,6 +510,7 @@ export function EditorArea({ project }: { project: Project }) {
       renderWhitespace: "selection",
       smoothScrolling: true,
       stickyScroll: { enabled: true },
+      suggest: suggestOptions,
       bracketPairColorization: { enabled: true },
       theme: monacoTheme(),
     });

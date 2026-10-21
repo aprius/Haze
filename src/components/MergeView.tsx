@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { getModel, reloadBuffer } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
 import { buildMerge, conflictRange, resolution, resolveEdit, type ConflictBlock, type ResultEdit } from "../lib/merge";
-import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
+import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
 import { mergePath, type MergeSpec } from "../lib/diffSpec";
@@ -54,6 +54,7 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
       ...codeFontOptions(),
       scrollBeyondLastLine: false,
       glyphMargin: false,
+      suggest: suggestOptions,
       theme: monacoTheme(),
     });
     const mk = (host: HTMLDivElement, readOnly: boolean): Pane => {
