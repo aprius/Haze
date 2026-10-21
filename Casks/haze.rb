@@ -19,8 +19,6 @@ cask "haze" do
 
   app "Haze.app"
 
-  # Bản build không ký bằng Apple Developer ID: gỡ cờ quarantine để Gatekeeper
-  # không chặn lần mở đầu tiên.
   postflight do
     system_command "/usr/bin/xattr",
                    args: ["-dr", "com.apple.quarantine", "#{appdir}/Haze.app"],
