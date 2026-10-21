@@ -29,7 +29,13 @@ pub struct FsChange {
     pub created: Vec<String>,
     /// Paths that disappeared (deleted, or renamed from).
     pub removed: Vec<String>,
+    /// Too much changed for per-directory updates: the UI refreshes
+    /// everything. `files`, `created` and `removed` then keep only what
+    /// language servers reload on (see `keep_on_overflow`).
     pub overflow: bool,
+    /// Events were dropped (the OS queue overflowed): even those lists are
+    /// incomplete.
+    pub lost: bool,
     /// Git metadata (index, HEAD, refs) changed. Edits in the working tree are
     /// only in `files`: the UI knows which of them git ignores.
     pub git: bool,
@@ -140,14 +146,14 @@ fn debounce_loop(
         let mut created = HashSet::new();
         let mut removed = HashSet::new();
         let mut git = false;
-        let mut overflow = false;
+        let mut lost = false;
         for ev in batch {
             let Ok(ev) = ev else {
-                overflow = true;
+                lost = true;
                 continue;
             };
             if ev.need_rescan() {
-                overflow = true;
+                lost = true;
             }
             if !changes_content(&ev.kind) {
                 continue;
@@ -186,10 +192,17 @@ fn debounce_loop(
                 }
             }
         }
-        if files.is_empty() && !git && !overflow {
+        if files.is_empty() && !git && !lost {
             continue;
         }
-        overflow |= dirs.len() > MAX_DIRS;
+        let overflow = lost || dirs.len() > MAX_DIRS;
+        let keep = |set: HashSet<String>| -> Vec<String> {
+            if overflow {
+                set.into_iter().filter(|f| keep_on_overflow(f)).collect()
+            } else {
+                set.into_iter().collect()
+            }
+        };
         let change = FsChange {
             root: root.clone(),
             dirs: if overflow {
@@ -197,26 +210,36 @@ fn debounce_loop(
             } else {
                 dirs.into_iter().collect()
             },
-            created: if overflow {
-                vec![]
-            } else {
-                created.into_iter().collect()
-            },
-            removed: if overflow {
-                vec![]
-            } else {
-                removed.into_iter().collect()
-            },
-            files: if overflow {
-                vec![]
-            } else {
-                files.into_iter().collect()
-            },
+            created: keep(created),
+            removed: keep(removed),
+            files: keep(files),
             overflow,
+            lost,
             git,
         };
         sink(change);
     }
+}
+
+/// Files language servers reload on (sources, project files, restore
+/// output), still listed when a change is too large for anything else: a
+/// checkout or a Unity reimport must not leave Roslyn on the old code.
+fn keep_on_overflow(path: &str) -> bool {
+    const EXTS: &[&str] = &[
+        ".cs",
+        ".csx",
+        ".razor",
+        ".cshtml",
+        ".csproj",
+        ".props",
+        ".targets",
+        ".sln",
+        ".slnx",
+        ".editorconfig",
+    ];
+    let lower = path.to_ascii_lowercase();
+    let name = lower.rsplit(['/', '\\']).next().unwrap_or(&lower);
+    EXTS.iter().any(|e| name.ends_with(e)) || name == "project.assets.json" || name == "global.json"
 }
 
 /// Reads (open, close-after-read) are reported too; reacting to them would
@@ -301,6 +324,15 @@ fn classify_git(rel: &Path) -> Kind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_sources_on_overflow() {
+        assert!(keep_on_overflow("/p/Assets/Player.cs"));
+        assert!(keep_on_overflow(r"C:\p\Game.CSPROJ"));
+        assert!(keep_on_overflow("/p/obj/project.assets.json"));
+        assert!(!keep_on_overflow("/p/Library/Bee/tundra.json"));
+        assert!(!keep_on_overflow("/p/Assets/Player.cs.meta"));
+    }
 
     fn git(dir: &Path, args: &[&str]) {
         let ok = crate::git::git_command()

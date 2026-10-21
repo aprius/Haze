@@ -225,6 +225,14 @@ async fn search_nav(
     blocking(move || search::search(&query, &scope, id, &current, max_matches.unwrap_or(500))).await
 }
 
+/// Stops nav search `id` if it is still running (Monaco no longer wants it).
+#[tauri::command]
+fn cancel_nav(generation: State<'_, NavSearchGeneration>, id: u64) {
+    let _ = generation
+        .0
+        .compare_exchange(id, 0, Ordering::Relaxed, Ordering::Relaxed);
+}
+
 #[tauri::command]
 async fn replace_in_files(
     history: State<'_, Arc<search::ReplaceHistory>>,
@@ -675,6 +683,7 @@ pub fn run() {
             unwatch_project,
             search_text,
             search_nav,
+            cancel_nav,
             replace_in_files,
             undo_replace,
             find_files,

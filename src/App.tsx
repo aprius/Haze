@@ -19,6 +19,7 @@ import { RunBar, runConfig, runConfigs } from "./components/RunBar";
 import { TerminalPanel, toggleTerminal } from "./components/TerminalPanel";
 import { UsagesPopup } from "./components/UsagesPopup";
 import { notifyFileChanges, startCsharp, stopCsharp } from "./lib/lsp/csharp";
+import { invalidateTextNav } from "./lib/textNav";
 import { defaultBuildTarget, loadDotnetInfo, startBuild, useDotnet } from "./store/dotnet";
 import { handleDiskChanges } from "./lib/buffers";
 import { matches, type Command } from "./lib/keymap";
@@ -286,6 +287,7 @@ export default function App() {
       if (affectsGit(project.id, change)) refreshRepo(project.id, project.path, 400, true);
       void handleDiskChanges(change.overflow ? "all" : change.files);
       notifyFileChanges(change);
+      invalidateTextNav(change.root);
       if (change.overflow || change.files.some((f) => /\.(csproj|fsproj|sln|slnx)$|launchSettings\.json$/i.test(f))) {
         void loadDotnetInfo(project.id, project.path).then((info) => {
           if (info && info.projects.length) void startCsharp(project.id, project.path);

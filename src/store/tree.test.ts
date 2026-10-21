@@ -9,6 +9,7 @@ const change = (files: string[], extra: Partial<FsChange> = {}): FsChange => ({
   created: [],
   removed: [],
   overflow: false,
+  lost: false,
   git: false,
   ...extra,
 });
