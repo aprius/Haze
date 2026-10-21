@@ -45,7 +45,10 @@ export interface FsChange {
   files: string[];
   created: string[];
   removed: string[];
+  /** Too much changed: refresh everything. files/created/removed then list only sources and project files. */
   overflow: boolean;
+  /** Events were dropped, so even those lists are incomplete. */
+  lost: boolean;
   git: boolean;
 }
 
@@ -369,6 +372,10 @@ export const api = {
 
   searchText: (id: number, query: SearchQuery, scope: SearchScope, maxMatches?: number) =>
     invoke<SearchResults>("search_text", { id, query, scope, maxMatches: maxMatches ?? null }),
+  /** A search of its own generation, so it never cancels Find in Files (see textNav.ts). */
+  searchNav: (id: number, query: SearchQuery, scope: SearchScope, maxMatches?: number) =>
+    invoke<SearchResults>("search_nav", { id, query, scope, maxMatches: maxMatches ?? null }),
+  cancelNav: (id: number) => invoke<void>("cancel_nav", { id }),
   replaceInFiles: (query: SearchQuery, targets: ReplaceTarget[]) =>
     invoke<ReplaceOutcome>("replace_in_files", { query, targets }),
   undoReplace: (id: number) => invoke<{ path: string; reason: string }[]>("undo_replace", { id }),

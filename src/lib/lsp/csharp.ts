@@ -26,7 +26,9 @@ import {
 } from "./convert";
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
 
-const WATCHED = /\.(cs|csx|csproj|props|targets|sln|slnx|editorconfig|json)$/i;
+// What Roslyn reloads on: sources, project files and restore output. Other
+// JSON (Unity's Library writes plenty) would only be parsed and dropped.
+const WATCHED = /(\.(cs|csx|razor|cshtml|csproj|props|targets|sln|slnx|editorconfig)|[\\/](project\.assets|global)\.json)$/i;
 
 interface ServerCapabilities {
   textDocumentSync?: number | { change?: number };
@@ -47,6 +49,8 @@ export class CsharpSession {
   private readyWaiters: (() => void)[] = [];
   private synced = new Map<string, monaco.IDisposable>();
   private disposed = false;
+  /** Called when the server exits on its own after starting (see startCsharp). */
+  onCrash?: () => void;
 
   constructor(
     readonly projectId: string,
@@ -144,7 +148,10 @@ export class CsharpSession {
       this.usable = false;
       this.synced.forEach((d) => d.dispose());
       this.synced.clear();
-      if (!this.disposed) setCsharpStatus(this.projectId, { state: "stopped", kind: this.kind, message: exitMessage(reason) });
+      if (!this.disposed) {
+        setCsharpStatus(this.projectId, { state: "stopped", kind: this.kind, message: exitMessage(reason) });
+        this.onCrash?.();
+      }
     });
   }
 
@@ -254,6 +261,28 @@ export function sessionForPath(path: string): CsharpSession | undefined {
   return best;
 }
 
+// A server that crashes after starting is started again, a few times in a row
+// at most (one that fails at startup has a cause a restart will not fix).
+// A server that ran for a while before crashing starts the count again.
+const MAX_RESTARTS = 3;
+const STABLE_MS = 5 * 60_000;
+const crashes = new Map<string, number>();
+const restartTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleRestart(projectId: string, root: string, delay: number, message?: string): void {
+  clearTimeout(restartTimers.get(projectId));
+  if (message) setCsharpStatus(projectId, { state: "loading", message });
+  restartTimers.set(
+    projectId,
+    setTimeout(() => {
+      restartTimers.delete(projectId);
+      // Closed (or stopped by hand) meanwhile.
+      if (sessions.get(projectId)?.root !== root) return;
+      void restartCsharp(projectId, root);
+    }, delay),
+  );
+}
+
 export async function startCsharp(projectId: string, root: string): Promise<void> {
   registerProviders();
   if (sessions.has(projectId)) return;
@@ -261,7 +290,17 @@ export async function startCsharp(projectId: string, root: string): Promise<void
   sessions.set(projectId, s);
   try {
     await s.start();
-    if (!s.client) sessions.delete(projectId);
+    if (!s.client) {
+      sessions.delete(projectId);
+      return;
+    }
+    const startedAt = Date.now();
+    s.onCrash = () => {
+      const n = (Date.now() - startedAt > STABLE_MS ? 0 : (crashes.get(projectId) ?? 0)) + 1;
+      if (n > MAX_RESTARTS) return;
+      crashes.set(projectId, n);
+      scheduleRestart(projectId, root, 1000 * 2 ** n, `C# server stopped, restarting (${n}/${MAX_RESTARTS})…`);
+    };
   } catch (e) {
     sessions.delete(projectId);
     // A server that died while starting has already reported why (see onExit).
@@ -270,6 +309,8 @@ export async function startCsharp(projectId: string, root: string): Promise<void
 }
 
 export async function stopCsharp(projectId: string): Promise<void> {
+  clearTimeout(restartTimers.get(projectId));
+  restartTimers.delete(projectId);
   const s = sessions.get(projectId);
   sessions.delete(projectId);
   await s?.stop();
@@ -281,7 +322,14 @@ export async function restartCsharp(projectId: string, root: string): Promise<vo
 }
 
 export function notifyFileChanges(change: FsChange): void {
-  for (const s of sessions.values()) if (isWithin(change.root, s.root) || isWithin(s.root, change.root)) s.fileChanges(change);
+  for (const s of sessions.values()) {
+    if (!isWithin(change.root, s.root) && !isWithin(s.root, change.root)) continue;
+    // Lost events leave no list of what changed, so Roslyn cannot catch up:
+    // load everything again once things have settled (textNav.ts covers
+    // navigation meanwhile). An overflow still lists the sources.
+    if (change.lost) scheduleRestart(s.projectId, s.root, 3000);
+    else s.fileChanges(change);
+  }
 }
 
 /** Session for a model if its server is ready for queries. */
@@ -289,6 +337,11 @@ function ready(model: monaco.editor.ITextModel): CsharpSession | undefined {
   if (model.uri.scheme !== "file") return undefined;
   const s = sessionForPath(model.uri.fsPath);
   return s?.usable && s.client.alive ? s : undefined;
+}
+
+/** Whether Roslyn has loaded the model's projects and answers navigation (else lib/textNav.ts guesses). */
+export function csharpAnswers(model: monaco.editor.ITextModel): boolean {
+  return !!ready(model)?.ready;
 }
 
 /** Session for a model's file, or an error saying why there is none. */
@@ -405,6 +458,18 @@ export async function workspaceSymbols(projectId: string, query: string): Promis
 
 let registered = false;
 
+type DefinitionFallback = (
+  model: monaco.editor.ITextModel,
+  position: monaco.IPosition,
+  token: monaco.CancellationToken,
+) => Promise<monaco.languages.Location[] | null>;
+let definitionFallback: DefinitionFallback | null = null;
+
+/** Asked when Roslyn finds no definition (lib/textNav.ts; set there to keep this module free of it). */
+export function setDefinitionFallback(f: DefinitionFallback): void {
+  definitionFallback = f;
+}
+
 interface LspCodeAction {
   title: string;
   kind?: string;
@@ -440,7 +505,24 @@ export function registerProviders(): void {
     async provideDefinition(model, position, token) {
       const s = ready(model);
       if (!s) return null;
-      const res = await s.request<unknown>("textDocument/definition", docParams(model, position), token);
+      const res = await s.request<unknown>("textDocument/definition", docParams(model, position), token).catch(() => null);
+      const found = toLocations(res).map((l) => ({ uri: monaco.Uri.file(uriToPath(l.uri)), range: toMonacoRange(l.range) }));
+      if (found.length || token.isCancellationRequested || !s.ready) return found;
+      return (await definitionFallback?.(model, position, token)) ?? [];
+    },
+  });
+
+  // Ctrl+Click on a declaration falls back to Go to References (Monaco's
+  // alternativeDefinitionCommand), which lists the usages like Rider.
+  L.registerReferenceProvider("csharp", {
+    async provideReferences(model, position, context, token) {
+      const s = ready(model);
+      if (!s) return null;
+      const res = await s.request<unknown>(
+        "textDocument/references",
+        { ...docParams(model, position), context: { includeDeclaration: context.includeDeclaration } },
+        token,
+      );
       return toLocations(res).map((l) => ({ uri: monaco.Uri.file(uriToPath(l.uri)), range: toMonacoRange(l.range) }));
     },
   });
