@@ -3,6 +3,7 @@
 import { ChevronDown, ChevronRight, Copy, Folder, FolderGit2, GitBranch, RefreshCw, Tag, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, type Branch, type Commit, type CommitDetails, type GraphRow, type LogPage, type LogQuery } from "../lib/ipc";
+import { branchTree, type BranchFolder } from "../lib/gitView";
 import { basename, dirname } from "../lib/path";
 import { repo, runGit, useGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -131,27 +132,6 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
       </div>
     </div>
   );
-}
-
-interface BranchFolder {
-  folders: Map<string, BranchFolder>;
-  branches: Branch[];
-}
-
-/** Groups branches into folders by the slashes in their names (feature/x, origin/main). */
-function branchTree(list: Branch[]): BranchFolder {
-  const root: BranchFolder = { folders: new Map(), branches: [] };
-  for (const b of list) {
-    const parts = b.name.split("/");
-    let node = root;
-    for (const part of parts.slice(0, -1)) {
-      let next = node.folders.get(part);
-      if (!next) node.folders.set(part, (next = { folders: new Map(), branches: [] }));
-      node = next;
-    }
-    node.branches.push(b);
-  }
-  return root;
 }
 
 function GroupHeader({ label, count, open, depth, onToggle }: { label: string; count?: number; open: boolean; depth: number; onToggle: () => void }) {

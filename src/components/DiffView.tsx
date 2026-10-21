@@ -4,48 +4,16 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ensureBuffer, getModel } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
-import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, toChunk, type Chunk, type ChunkKind } from "../lib/diffLink";
+import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, revertEdit, toChunk, type Chunk, type ChunkKind } from "../lib/diffLink";
 import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
-import { basename } from "../lib/path";
+import { diffPath, diffTitle, type DiffSpec } from "../lib/diffSpec";
 import { absPath } from "../store/git";
 import { closeDiffWindow, useUi } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
 import { FloatWindow } from "./Overlays";
 
-export interface DiffSpec {
-  root: string;
-  rel: string;
-  /** Path on the left side when the file was renamed. */
-  oldRel?: string | null;
-  /** Revision of the left side; `null` = empty (added file). */
-  left: string | null;
-  /** `"working"` = the file on disk / in the editor, else a revision (`null` content if deleted there). */
-  right: string;
-}
-
-const PREFIX = "haze-diff:";
-
-export function diffPath(spec: DiffSpec): string {
-  return PREFIX + JSON.stringify(spec);
-}
-
-export function parseDiffPath(path: string): DiffSpec | null {
-  if (!path.startsWith(PREFIX)) return null;
-  try {
-    return JSON.parse(path.slice(PREFIX.length)) as DiffSpec;
-  } catch {
-    return null;
-  }
-}
-
-const short = (rev: string) => (/^[0-9a-f]{40}/.test(rev) ? rev.slice(0, 8) + rev.slice(40) : rev);
-
-export function diffTitle(spec: DiffSpec): string {
-  const left = spec.left ? short(spec.left) : "∅";
-  const right = spec.right === "working" ? "Local" : short(spec.right);
-  return `${basename(spec.rel)} (${left} ↔ ${right})`;
-}
+export { diffPath, diffTitle, parseDiffPath, type DiffSpec } from "../lib/diffSpec";
 
 export function openDiff(projectId: string, spec: DiffSpec): void {
   useWorkspace.getState().openFile(projectId, diffPath(spec), { preview: true });
@@ -379,37 +347,10 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     const from = s?.left.getModel();
     const to = s?.right.getModel();
     if (!s || !c || !from || !to) return;
-    const eol = to.getEOL();
-    const text = c.a0 < c.a1 ? from.getValueInRange(new monaco.Range(c.a0 + 1, 1, c.a1, from.getLineMaxColumn(c.a1))) : null;
-    if (append && text === null) return;
-    const n = to.getLineCount();
-    const b0 = append ? c.b1 : c.b0;
-    let range: monaco.Range;
-    let insert: string;
-    if (b0 < c.b1) {
-      if (text !== null) {
-        range = new monaco.Range(b0 + 1, 1, c.b1, to.getLineMaxColumn(c.b1));
-        insert = text;
-      } else if (c.b1 < n) {
-        range = new monaco.Range(b0 + 1, 1, c.b1 + 1, 1);
-        insert = "";
-      } else {
-        // Removing the last lines also removes the line break before them.
-        range = b0 > 0 ? new monaco.Range(b0, to.getLineMaxColumn(b0), n, to.getLineMaxColumn(n)) : to.getFullModelRange();
-        insert = "";
-      }
-    } else {
-      if (text === null) return;
-      if (b0 < n) {
-        range = new monaco.Range(b0 + 1, 1, b0 + 1, 1);
-        insert = text + eol;
-      } else {
-        range = new monaco.Range(n, to.getLineMaxColumn(n), n, to.getLineMaxColumn(n));
-        insert = eol + text;
-      }
-    }
+    const e = revertEdit(c, from.getLinesContent(), to.getLinesContent(), to.getEOL(), append);
+    if (!e) return;
     s.right.pushUndoStop();
-    s.right.executeEdits("diff-apply", [{ range, text: insert }]);
+    s.right.executeEdits("diff-apply", [{ range: new monaco.Range(e.startLine, e.startColumn, e.endLine, e.endColumn), text: e.text }]);
     s.right.pushUndoStop();
   }
 

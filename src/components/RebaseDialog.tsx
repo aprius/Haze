@@ -3,19 +3,13 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
+import { moveRow, parseRebaseLog, rebaseProblem, rebaseSteps, type RebaseRow } from "../lib/gitView";
 import { api, errorMessage, type RebaseStep } from "../lib/ipc";
 import { saveAll } from "./EditorArea";
 import { patchRepo, refreshRepo, repo } from "../store/git";
 import { openCommitWindow, popupClosed } from "../store/ui";
 import type { Project } from "../store/workspace";
 import { toast } from "./Overlays";
-
-interface Row {
-  hash: string;
-  subject: string;
-  action: RebaseStep["action"];
-  message: string;
-}
 
 const useRebase = create<{ projectId: string | null; from: string | null }>(() => ({ projectId: null, from: null }));
 
@@ -33,7 +27,7 @@ const ACTIONS: RebaseStep["action"][] = ["pick", "reword", "edit", "squash", "fi
 
 export function RebaseDialog({ project }: { project: Project | null }) {
   const { projectId, from } = useRebase();
-  const [rows, setRows] = useState<Row[] | null>(null);
+  const [rows, setRows] = useState<RebaseRow[] | null>(null);
   const [base, setBase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const root = projectId ? repo(projectId).root : null;
@@ -59,16 +53,7 @@ export function RebaseDialog({ project }: { project: Project | null }) {
         if (merges.ok && merges.stdout.trim() !== "0") throw new Error("The range contains merge commits; interactive rebase would flatten them.");
         const out = await api.gitRun(root, ["log", "--reverse", "--format=%H%x1f%s%x1f%B%x1e", ...range]);
         if (!out.ok) throw new Error(out.stderr);
-        setRows(
-          out.stdout
-            .split("\u001e")
-            .map((r) => r.replace(/^\n/, ""))
-            .filter(Boolean)
-            .map((r) => {
-              const [hash, subject, body] = r.split("\u001f");
-              return { hash, subject, action: "pick" as const, message: (body ?? subject).trim() };
-            }),
-        );
+        setRows(parseRebaseLog(out.stdout));
       } catch (e) {
         setError(errorMessage(e));
       }
@@ -76,25 +61,16 @@ export function RebaseDialog({ project }: { project: Project | null }) {
   }, [root, from]);
 
   if (!project || project.id !== projectId || !from) return null;
-  const set = (i: number, patch: Partial<Row>) => setRows((rs) => rs && rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const move = (i: number, d: number) =>
-    setRows((rs) => {
-      if (!rs || i + d < 0 || i + d >= rs.length) return rs;
-      const next = [...rs];
-      [next[i], next[i + d]] = [next[i + d], next[i]];
-      return next;
-    });
-  const firstKept = rows?.find((r) => r.action !== "drop");
-  const invalid =
-    !rows || !firstKept ? "Nothing to rebase" : firstKept.action === "squash" || firstKept.action === "fixup" ? "The first commit cannot be squashed or fixed up." : null;
+  const set = (i: number, patch: Partial<RebaseRow>) => setRows((rs) => rs && rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const move = (i: number, d: number) => setRows((rs) => rs && moveRow(rs, i, d));
+  const invalid = rebaseProblem(rows);
 
   const start = async () => {
     if (!rows || !root || invalid) return;
     close();
     await saveAll();
     patchRepo(project.id, { busy: "Rebasing…" });
-    const steps: RebaseStep[] = rows.map((r) => ({ action: r.action, hash: r.hash, message: r.action === "reword" ? r.message : null }));
-    const out = await api.gitRebaseInteractive(root, base, steps).catch((e) => ({ ok: false, stdout: "", stderr: errorMessage(e), code: null }));
+    const out = await api.gitRebaseInteractive(root, base, rebaseSteps(rows)).catch((e) => ({ ok: false, stdout: "", stderr: errorMessage(e), code: null }));
     patchRepo(project.id, (s) => ({
       busy: null,
       console: [...s.console.slice(-199), { time: Date.now(), args: ["rebase", "-i", base ?? "--root"], output: out }],
@@ -118,7 +94,7 @@ export function RebaseDialog({ project }: { project: Project | null }) {
         <div className="rebase-rows">
           {rows?.map((r, i) => (
             <div key={r.hash} className={"rebase-row" + (r.action === "drop" ? " dropped" : "")}>
-              <select className="find-select" value={r.action} onChange={(e) => set(i, { action: e.target.value as Row["action"] })}>
+              <select className="find-select" value={r.action} onChange={(e) => set(i, { action: e.target.value as RebaseRow["action"] })}>
                 {ACTIONS.map((a) => (
                   <option key={a}>{a}</option>
                 ))}

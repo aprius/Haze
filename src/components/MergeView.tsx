@@ -5,34 +5,17 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getModel, reloadBuffer } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
-import { buildMerge, resolution, type ConflictBlock } from "../lib/merge";
+import { buildMerge, resolution, resolveEdit, type ConflictBlock } from "../lib/merge";
 import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
+import { mergePath, type MergeSpec } from "../lib/diffSpec";
 import { absPath, refreshRepo, repo, runGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
 import { closeTabsWithPrompt } from "./EditorArea";
 import { confirmAction, toast } from "./Overlays";
 
-export interface MergeSpec {
-  root: string;
-  rel: string;
-}
-
-const PREFIX = "haze-merge:";
-
-export const mergePath = (spec: MergeSpec) => PREFIX + JSON.stringify(spec);
-
-export function parseMergePath(path: string): MergeSpec | null {
-  if (!path.startsWith(PREFIX)) return null;
-  try {
-    return JSON.parse(path.slice(PREFIX.length)) as MergeSpec;
-  } catch {
-    return null;
-  }
-}
-
-export const mergeTitle = (spec: MergeSpec) => `Merge ${basename(spec.rel)}`;
+export { mergePath, mergeTitle, parseMergePath, type MergeSpec } from "../lib/diffSpec";
 
 export function openMerge(projectId: string, spec: MergeSpec): void {
   useWorkspace.getState().openFile(projectId, mergePath(spec));
@@ -162,25 +145,8 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     if (!p || !model) return;
     const r = model.getDecorationRange(tracked.current[c.id]);
     if (!r) return;
-    const eol = model.getEOL();
-    const text = resolution(c, choice).join(eol);
-    const range = new monaco.Range(r.startLineNumber, 1, r.endLineNumber, model.getLineMaxColumn(r.endLineNumber));
-    // An empty base region is a single blank placeholder line: replace it, or insert before it.
-    const insertOnly = c.base.length === 0;
-    const chosen = resolution(c, choice);
-    const deleteLines =
-      !insertOnly && chosen.length === 0
-        ? r.endLineNumber < model.getLineCount()
-          ? new monaco.Range(r.startLineNumber, 1, r.endLineNumber + 1, 1)
-          : range
-        : null;
-    p.center.editor.executeEdits("merge", [
-      insertOnly
-        ? { range: new monaco.Range(r.startLineNumber, 1, r.startLineNumber, 1), text: text ? text + eol : "" }
-        : deleteLines
-          ? { range: deleteLines, text: "" }
-          : { range, text },
-    ]);
+    const e = resolveEdit(c, choice, r.startLineNumber, r.endLineNumber, model.getLinesContent(), model.getEOL());
+    p.center.editor.executeEdits("merge", [{ range: new monaco.Range(e.startLine, e.startColumn, e.endLine, e.endColumn), text: e.text }]);
     const lines = resolution(c, choice).length;
     const start = r.startLineNumber;
     const [id] = model.deltaDecorations(

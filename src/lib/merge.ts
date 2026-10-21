@@ -69,3 +69,28 @@ export function resolution(c: ConflictBlock, choice: "ours" | "theirs" | "both" 
       return c.base;
   }
 }
+
+/** A text edit in Monaco coordinates (1-based lines and columns). */
+export interface ResultEdit {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+  text: string;
+}
+
+/**
+ * The edit on the result that resolves conflict `c` with `choice`, where the
+ * conflict currently spans lines `start..end` of `result` (its lines). With an
+ * empty base the conflict holds no line of its own, so the chosen lines are
+ * inserted before `start`.
+ */
+export function resolveEdit(c: ConflictBlock, choice: "ours" | "theirs" | "both", start: number, end: number, result: readonly string[], eol: string): ResultEdit {
+  const chosen = resolution(c, choice);
+  const text = chosen.join(eol);
+  const edit = (startLine: number, startColumn: number, endLine: number, endColumn: number, text: string) => ({ startLine, startColumn, endLine, endColumn, text });
+  if (c.base.length === 0) return edit(start, 1, start, 1, text ? text + eol : "");
+  const endColumn = (result[end - 1] ?? "").length + 1;
+  if (chosen.length === 0) return end < result.length ? edit(start, 1, end + 1, 1, "") : edit(start, 1, end, endColumn, "");
+  return edit(start, 1, end, endColumn, text);
+}

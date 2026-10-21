@@ -8,71 +8,17 @@ import { saveAll } from "./EditorArea";
 import { Splitter } from "./Shell";
 import { api, type GitChange } from "../lib/ipc";
 import { basename, dirname } from "../lib/path";
+import { changeDiffSpec, changeRows, GROUPS, pickRows, shownFiles, toggleChecks } from "../lib/gitView";
 import { absPath, checkedPaths, createCheckpoint, patchRepo, refreshRepo, repo, runGit, toggleReviewed, useGit } from "../store/git";
 import { refreshGit as refreshTreeGit } from "../store/tree";
 import { closeCommitWindow, openDiffWindow, useUi } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
-import { DiffView, type DiffSpec } from "./DiffView";
+import { DiffView } from "./DiffView";
 import { openMerge } from "./MergeView";
 import { choose, FloatWindow, openMenu, toast } from "./Overlays";
 import { openPushDialog } from "./GitDialogs";
 
-const GROUPS: { id: string; label: string; match: (c: GitChange) => boolean }[] = [
-  { id: "conflicts", label: "Merge Conflicts", match: (c) => c.status === "conflict" },
-  { id: "changes", label: "Changes", match: (c) => c.status !== "untracked" && c.status !== "conflict" },
-  { id: "unversioned", label: "Unversioned Files", match: (c) => c.status === "untracked" },
-];
-
-type ChangeRow =
-  | { kind: "dir"; key: string; name: string; depth: number; files: GitChange[] }
-  | { kind: "file"; change: GitChange; depth: number };
-
-interface DirNode {
-  dirs: Map<string, DirNode>;
-  files: GitChange[];
-}
-
-/** The rows of one group: flat, or as a directory tree whose single-child folders are merged (src/components). */
-function changeRows(groupId: string, items: GitChange[], byDir: boolean, collapsed: Record<string, boolean>): ChangeRow[] {
-  if (!byDir) return items.map((change) => ({ kind: "file", change, depth: 0 }));
-  const root: DirNode = { dirs: new Map(), files: [] };
-  for (const c of items) {
-    let node = root;
-    for (const part of c.rel.split("/").slice(0, -1)) {
-      let next = node.dirs.get(part);
-      if (!next) node.dirs.set(part, (next = { dirs: new Map(), files: [] }));
-      node = next;
-    }
-    node.files.push(c);
-  }
-  const all = (n: DirNode): GitChange[] => [...[...n.dirs.values()].flatMap(all), ...n.files];
-  const rows: ChangeRow[] = [];
-  const walk = (node: DirNode, path: string, depth: number) => {
-    for (const [first, start] of [...node.dirs].sort(([a], [b]) => a.localeCompare(b))) {
-      let name = first;
-      let child = start;
-      while (child.files.length === 0 && child.dirs.size === 1) {
-        const [n, c] = [...child.dirs][0];
-        name += "/" + n;
-        child = c;
-      }
-      const dir = path ? `${path}/${name}` : name;
-      const key = `${groupId}:${dir}`;
-      rows.push({ kind: "dir", key, name, depth, files: all(child) });
-      if (!collapsed[key]) walk(child, dir, depth + 1);
-    }
-    for (const change of [...node.files].sort((a, b) => basename(a.rel).localeCompare(basename(b.rel)))) rows.push({ kind: "file", change, depth });
-  };
-  walk(root, "", 0);
-  return rows;
-}
-
 const indent = (depth: number) => ({ paddingLeft: 26 + depth * 20 });
-
-function changeDiffSpec(root: string, c: GitChange): DiffSpec {
-  const created = c.status === "untracked" || c.status === "added";
-  return { root, rel: c.rel, oldRel: c.oldRel, left: created ? null : "HEAD", right: "working" };
-}
 
 /** Ctrl+D: the diff in its own floating window; a conflict opens the merge tool instead. */
 export function showChangeDiff(project: Project, root: string, c: GitChange): void {
@@ -184,11 +130,6 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
 
   const rollbackChecked = () => void rollback(r.changes.filter((c) => checked.has(c.rel) && c.status !== "untracked"));
 
-  // The file rows in display order, for Shift ranges and arrow keys.
-  const shownFiles = () =>
-    GROUPS.flatMap((g) =>
-      collapsed[g.id] ? [] : changeRows(g.id, r.changes.filter(g.match), byDir, collapsed).flatMap((row) => (row.kind === "file" ? [row.change] : [])),
-    );
   const pickedChanges = () => r.changes.filter((c) => picked.has(c.rel));
   // Picks of files that were since committed or rolled back no longer count.
   const anyPicked = r.changes.some((c) => picked.has(c.rel));
@@ -196,20 +137,10 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
 
   const select = (c: GitChange, e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
     setSelected(c.rel);
-    const shown = shownFiles();
-    const a = shown.findIndex((x) => x.rel === anchor.current);
-    if (e.shiftKey && a >= 0) {
-      const i = shown.findIndex((x) => x.rel === c.rel);
-      setPicked(new Set(shown.slice(Math.min(a, i), Math.max(a, i) + 1).map((x) => x.rel)));
-      return;
-    }
-    anchor.current = c.rel;
-    if (e.ctrlKey || e.metaKey) {
-      const next = new Set(picked.size ? picked : selected ? [selected] : []);
-      if (next.has(c.rel)) next.delete(c.rel);
-      else next.add(c.rel);
-      setPicked(next);
-    } else setPicked(new Set([c.rel]));
+    const shown = shownFiles(r.changes, byDir, collapsed).map((x) => x.rel);
+    const next = pickRows(shown, { picked, anchor: anchor.current }, selected, c.rel, e);
+    anchor.current = next.anchor;
+    setPicked(next.picked);
   };
 
   // Several picked rows: roll those back; otherwise the checked ones, as before.
@@ -226,7 +157,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     const mod = e.ctrlKey || e.metaKey;
     const c = r.changes.find((x) => x.rel === selected);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      const shown = shownFiles();
+      const shown = shownFiles(r.changes, byDir, collapsed);
       const i = shown.findIndex((x) => x.rel === selected);
       const next = shown[Math.max(0, Math.min(shown.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
       if (next) select(next, { shiftKey: e.shiftKey, ctrlKey: false, metaKey: false });
@@ -235,12 +166,8 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     else if (c && e.key === " ") {
       // Space ticks every picked row, like the checkbox of one.
       const list = pickedChanges();
-      if (list.length > 1) {
-        const next = new Set(checked);
-        const on = !list.every((x) => checked.has(x.rel));
-        list.forEach((x) => (on ? next.add(x.rel) : next.delete(x.rel)));
-        setChecked(next);
-      } else toggle(c.rel);
+      if (list.length > 1) setChecked(toggleChecks(checked, list.map((x) => x.rel)));
+      else toggle(c.rel);
     } else if (mod && e.altKey && e.code === "KeyZ") rollbackSelected();
     else if (mod && e.altKey && e.code === "KeyK") void commitChanges(project, true);
     else return;

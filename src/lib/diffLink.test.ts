@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, toChunk } from "./diffLink";
+import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, revertEdit, toChunk, type Chunk } from "./diffLink";
+import { applyEdit } from "./testEdit";
 
 describe("toChunk", () => {
   it("converts modified, added and deleted line changes", () => {
@@ -58,5 +59,54 @@ describe("nextChunk", () => {
     expect(nextChunk(chunks, 10, -1)).toBe(1);
     expect(nextChunk(chunks, 9, -1)).toBe(0);
     expect(nextChunk(chunks, 3, -1)).toBe(-1);
+  });
+});
+
+describe("revertEdit", () => {
+  // Reverts (or appends) one block of the right side and returns the new right text.
+  const run = (left: string, right: string, c: Chunk, append = false, eol = "\n") => {
+    const e = revertEdit(c, left.split(eol), right.split(eol), eol, append);
+    return e && applyEdit(right, e, eol);
+  };
+
+  it("reverts a modified block to the left lines", () => {
+    expect(run("a\nB\nc", "a\nX\nY\nc", { a0: 1, a1: 2, b0: 1, b1: 3 })).toBe("a\nB\nc");
+  });
+
+  it("appends the left lines below a modified block", () => {
+    expect(run("a\nB\nc", "a\nX\nY\nc", { a0: 1, a1: 2, b0: 1, b1: 3 }, true)).toBe("a\nX\nY\nB\nc");
+  });
+
+  it("removes added lines, including at the end of the file and the whole file", () => {
+    expect(run("a\nc", "a\nb\nc", { a0: 1, a1: 1, b0: 1, b1: 2 })).toBe("a\nc");
+    expect(run("a", "a\nb", { a0: 1, a1: 1, b0: 1, b1: 2 })).toBe("a");
+    expect(run("", "x\ny", { a0: 0, a1: 0, b0: 0, b1: 2 })).toBe("");
+  });
+
+  it("restores deleted lines at the start, middle and end", () => {
+    expect(run("a\nb", "b", { a0: 0, a1: 1, b0: 0, b1: 0 })).toBe("a\nb");
+    expect(run("a\nb\nc", "a\nc", { a0: 1, a1: 2, b0: 1, b1: 1 })).toBe("a\nb\nc");
+    expect(run("a\nb", "a", { a0: 1, a1: 2, b0: 1, b1: 1 })).toBe("a\nb");
+  });
+
+  it("has nothing to append for added lines", () => {
+    expect(revertEdit({ a0: 1, a1: 1, b0: 1, b1: 2 }, ["a"], ["a", "b"], "\n", true)).toBeNull();
+  });
+
+  it("joins multi-line blocks with the right side's line ending", () => {
+    expect(run("a\r\nB1\r\nB2\r\nc", "a\r\nX\r\nc", { a0: 1, a1: 3, b0: 1, b1: 2 }, false, "\r\n")).toBe("a\r\nB1\r\nB2\r\nc");
+  });
+
+  it("reverting every block from the bottom up gives back the left side", () => {
+    const left = "head\nold 1\nkeep\nremoved\nkeep 2\ntail";
+    const right = "head\nnew 1\nnew 1b\nkeep\nkeep 2\nadded\ntail";
+    const chunks: Chunk[] = [
+      { a0: 1, a1: 2, b0: 1, b1: 3 },
+      { a0: 3, a1: 4, b0: 4, b1: 4 },
+      { a0: 5, a1: 5, b0: 5, b1: 6 },
+    ];
+    let text = right;
+    for (const c of [...chunks].reverse()) text = applyEdit(text, revertEdit(c, left.split("\n"), text.split("\n"), "\n")!);
+    expect(text).toBe(left);
   });
 });
