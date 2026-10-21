@@ -2,14 +2,21 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A new push to the same branch or PR cancels the run still in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Pull requests build on Linux only; main also builds on Windows and macOS.
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
