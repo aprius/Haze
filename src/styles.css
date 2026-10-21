@@ -611,8 +611,8 @@ kbd {
 
 .editor-tab:hover .tab-close,
 .editor-tab.active .tab-close,
-.term-tab:hover .tab-close,
-.term-tab.active .tab-close {
+.term-item:hover .tab-close,
+.term-item.active .tab-close {
   visibility: visible;
 }
 
@@ -674,40 +674,72 @@ kbd {
   min-width: 0;
 }
 
-.term-tabs {
+.terminal-main {
+  flex: 1;
   display: flex;
-  align-items: center;
-  gap: 2px;
-  overflow-x: auto;
-  min-width: 0;
-  scrollbar-width: none;
+  min-height: 0;
 }
 
-.term-tab {
+.term-list {
+  flex: none;
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  scrollbar-width: thin;
+}
+
+.term-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 4px 0 8px;
+  gap: 8px;
+  min-height: 34px;
+  padding: 3px 4px 3px 10px;
   border-radius: 4px;
   cursor: pointer;
-  white-space: nowrap;
   color: var(--muted);
 }
 
-.term-tab:hover {
+.term-item:hover {
   background: var(--hover);
 }
 
-.term-tab.active {
+.term-item.active {
   background: var(--selected-inactive);
   color: var(--fg);
 }
 
-.term-tab-title {
-  max-width: 180px;
+.term-item.exited .term-item-title {
+  opacity: 0.6;
+}
+
+.term-item .agent-state {
+  margin-right: 0;
+  flex: none;
+}
+
+.term-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.term-item-title,
+.term-item-detail {
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.term-item-detail {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .dot {

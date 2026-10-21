@@ -27,16 +27,30 @@ interface View {
 }
 const views = new Map<string, View>();
 
-function themeColors() {
-  const css = getComputedStyle(document.documentElement);
-  const v = (n: string) => css.getPropertyValue(n).trim();
-  return {
-    background: v("--term-bg"),
-    foreground: v("--term-fg"),
-    cursor: v("--accent"),
-    selectionBackground: v("--term-selection"),
-  };
-}
+// Monokai Pro (Filter: Pro), as its terminal themes ship it.
+const MONOKAI_PRO = {
+  background: "#2d2a2e",
+  foreground: "#fcfcfa",
+  cursor: "#fcfcfa",
+  cursorAccent: "#2d2a2e",
+  selectionBackground: "#5b595c",
+  black: "#403e41",
+  red: "#ff6188",
+  green: "#a9dc76",
+  yellow: "#ffd866",
+  blue: "#fc9867",
+  magenta: "#ab9df2",
+  cyan: "#78dce8",
+  white: "#fcfcfa",
+  brightBlack: "#727072",
+  brightRed: "#ff6188",
+  brightGreen: "#a9dc76",
+  brightYellow: "#ffd866",
+  brightBlue: "#fc9867",
+  brightMagenta: "#ab9df2",
+  brightCyan: "#78dce8",
+  brightWhite: "#fcfcfa",
+};
 
 function decode(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -49,13 +63,13 @@ function createView(id: string, project: Project): View {
   const el = document.createElement("div");
   el.className = "xterm-host";
   const term = new Terminal({
-    fontFamily: 'JetBrains Mono, "Cascadia Mono", Menlo, Consolas, monospace',
+    fontFamily: '"JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace',
     fontSize: 13,
     lineHeight: 1.15,
     scrollback: 10000,
     allowProposedApi: true,
     cursorBlink: true,
-    theme: themeColors(),
+    theme: MONOKAI_PRO,
   });
   const fit = new FitAddon();
   const search = new SearchAddon();
@@ -306,6 +320,15 @@ export function ToolTabs({ project }: { project: Project }) {
   );
 }
 
+/** A session's directory relative to the project, for the session list. */
+function shortCwd(cwd: string, root: string): string {
+  const c = cwd.replace(/[\\/]+$/, "");
+  const r = root.replace(/[\\/]+$/, "");
+  if (c === r) return r.split(/[\\/]/).pop() ?? c;
+  if (c.startsWith(r + "/") || c.startsWith(r + "\\")) return c.slice(r.length + 1);
+  return c;
+}
+
 export function TerminalPanel({ project }: { project: Project }) {
   const ui = useWorkspace((s) => s.ui[project.id]);
   const updateUi = useWorkspace((s) => s.updateUi);
@@ -343,59 +366,10 @@ export function TerminalPanel({ project }: { project: Project }) {
     <div className="terminal-panel">
       <div className="panel-header">
         <ToolTabs project={project} />
-        <div className="term-tabs">
-          {order.map((id) => {
-            const s = sessions[id];
-            return (
-              <div
-                key={id}
-                className={"term-tab" + (id === active ? " active" : "")}
-                onMouseDown={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    void close(id);
-                  }
-                }}
-                onClick={() => updateUi(project.id, { activeTerminal: id })}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  openMenu(e, [
-                    { label: "New Terminal", action: () => void newTerminal(project.id, project.path) },
-                    { label: "Clear", action: () => views.get(id)?.term.clear() },
-                    { separator: true },
-                    { label: "Close", action: () => void close(id) },
-                  ]);
-                }}
-                title={s ? `${s.title} — ${s.cwd}` : id}
-              >
-                {s?.agent ? (
-                  <span
-                    className={"agent-state " + s.agent.state + (attention[id] ? " attention" : "")}
-                    title={`${agentName(s.agent.agent)}: ${s.agent.state}${s.agent.message ? ` — ${s.agent.message}` : ""}`}
-                  >
-                    {s.agent.agent === "codex" ? "CX" : "CC"}
-                  </span>
-                ) : (
-                  <span className={"dot" + (s?.running ? " running" : "")} />
-                )}
-                <span className="term-tab-title">{s?.title ?? "Terminal"}</span>
-                <button
-                  className="tab-close"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void close(id);
-                  }}
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            );
-          })}
+        <div className="panel-actions">
           <button className="icon-btn" title="New terminal" onClick={() => void newTerminal(project.id, project.path)}>
             <Plus size={14} />
           </button>
-        </div>
-        <div className="panel-actions">
           <button className="icon-btn" title="Find (Ctrl+F)" onClick={() => setSearching((v) => !v)}>
             <Search size={14} />
           </button>
@@ -423,10 +397,69 @@ export function TerminalPanel({ project }: { project: Project }) {
         </div>
       )}
       {searching && active && <SearchBar id={active} onClose={() => setSearching(false)} />}
-      <div className="terminal-body">
-        {order.map((id) => (
-          <TerminalView key={id} id={id} project={project} active={id === active} />
-        ))}
+      <div className="terminal-main">
+        <div className="terminal-body" style={{ background: MONOKAI_PRO.background }}>
+          {order.map((id) => (
+            <TerminalView key={id} id={id} project={project} active={id === active} />
+          ))}
+        </div>
+        {/* One shell needs no list; more stack vertically beside the screen, like VS Code. */}
+        {order.length > 1 && (
+          <div className="term-list">
+            {order.map((id) => {
+              const s = sessions[id];
+              const detail = s?.agent?.message || (s && !s.running ? `Exited${s.exitCode != null ? ` (${s.exitCode})` : ""}` : s ? shortCwd(s.cwd, project.path) : "");
+              return (
+                <div
+                  key={id}
+                  className={"term-item" + (id === active ? " active" : "") + (s && !s.running ? " exited" : "")}
+                  onMouseDown={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      void close(id);
+                    }
+                  }}
+                  onClick={() => updateUi(project.id, { activeTerminal: id })}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openMenu(e, [
+                      { label: "New Terminal", action: () => void newTerminal(project.id, project.path) },
+                      { label: "Clear", action: () => views.get(id)?.term.clear() },
+                      { separator: true },
+                      { label: "Close", action: () => void close(id) },
+                    ]);
+                  }}
+                  title={s ? `${s.title} — ${s.cwd}` : id}
+                >
+                  {s?.agent ? (
+                    <span
+                      className={"agent-state " + s.agent.state + (attention[id] ? " attention" : "")}
+                      title={`${agentName(s.agent.agent)}: ${s.agent.state}${s.agent.message ? ` — ${s.agent.message}` : ""}`}
+                    >
+                      {s.agent.agent === "codex" ? "CX" : "CC"}
+                    </span>
+                  ) : (
+                    <span className={"dot" + (s?.running ? " running" : "")} />
+                  )}
+                  <div className="term-item-text">
+                    <span className="term-item-title">{s?.title ?? "Terminal"}</span>
+                    {detail && <span className="term-item-detail">{detail}</span>}
+                  </div>
+                  <button
+                    className="tab-close"
+                    title="Close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void close(id);
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
