@@ -25,6 +25,16 @@
   --git-ignored: #a59fa0;
   --git-deleted: #918c8e;
   --git-conflict: #e14775;
+  /* Diff blocks: Monokai Pro's green / orange / red, softer on the light filter. */
+  --diff-added: #269d69;
+  --diff-modified: #e16032;
+  --diff-deleted: #e14775;
+  --diff-tint: 14%;
+  --diff-word: 28%;
+  --diff-edge: 55%;
+  /* Same as editorLineNumber in src/lib/monaco.ts, for the diff's own left gutter. */
+  --line-number: #bfb9ba;
+  --line-number-active: #706b6e;
   color-scheme: light;
 }
 
@@ -54,6 +64,14 @@
   --git-ignored: #727072;
   --git-deleted: #939293;
   --git-conflict: #ff6188;
+  --diff-added: #a9dc76;
+  --diff-modified: #fc9867;
+  --diff-deleted: #ff6188;
+  --diff-tint: 15%;
+  --diff-word: 30%;
+  --diff-edge: 60%;
+  --line-number: #5b595c;
+  --line-number-active: #c1c0c0;
   color-scheme: dark;
 }
 
@@ -1993,8 +2011,121 @@ kbd {
 }
 
 .diff-host {
+  position: relative;
   flex: 1;
   min-height: 0;
+  display: flex;
+}
+
+.diff-side {
+  flex: 1;
+  min-width: 0;
+}
+
+.diff-gap {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+}
+
+.diff-gap svg {
+  position: absolute;
+  inset: 0;
+}
+
+.diff-differ {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+/* The same tint in the editors and in the connectors, so a block reads as one band. */
+.rd-added { --rd: var(--diff-added); }
+.rd-modified { --rd: var(--diff-modified); }
+.rd-deleted { --rd: var(--diff-deleted); }
+
+.rd-link {
+  fill: color-mix(in srgb, var(--rd) var(--diff-tint), transparent);
+}
+
+.rd-edge {
+  fill: none;
+  stroke: color-mix(in srgb, var(--rd) var(--diff-edge), transparent);
+  stroke-width: 1;
+}
+
+.rd-line {
+  background: color-mix(in srgb, var(--rd) var(--diff-tint), transparent);
+}
+
+.rd-top {
+  box-shadow: inset 0 1px color-mix(in srgb, var(--rd) var(--diff-edge), transparent);
+}
+
+.rd-bottom {
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--rd) var(--diff-edge), transparent);
+}
+
+.rd-char {
+  background: color-mix(in srgb, var(--diff-modified) var(--diff-word), transparent);
+  border-radius: 2px;
+}
+
+/* Mirrored gutter of the left diff editor: icons next to the text, line numbers against the gap. */
+.diff-lgutter {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+
+.rd-gl-band,
+.rd-gl-edge,
+.rd-gl-num {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.rd-gl-edge {
+  height: 1px;
+  background: color-mix(in srgb, var(--rd) var(--diff-edge), transparent);
+}
+
+.rd-gl-num {
+  padding-right: 8px;
+  text-align: right;
+  color: var(--line-number);
+  font-variant-numeric: tabular-nums;
+}
+
+.rd-gl-num.active {
+  color: var(--line-number-active);
+}
+
+.rd-apply {
+  position: absolute;
+  z-index: 1;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.rd-apply svg {
+  display: block;
+}
+
+.rd-apply:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 
 .blame-text {
@@ -2163,15 +2294,15 @@ kbd {
 }
 
 .merge-conflict {
-  background: rgba(219, 59, 75, 0.14);
+  background: color-mix(in srgb, var(--diff-deleted) var(--diff-tint), transparent);
 }
 
 .merge-conflict-side {
-  background: rgba(229, 160, 58, 0.16);
+  background: color-mix(in srgb, var(--diff-modified) var(--diff-tint), transparent);
 }
 
 .merge-resolved {
-  background: rgba(95, 184, 101, 0.14);
+  background: color-mix(in srgb, var(--diff-added) var(--diff-tint), transparent);
 }
 
 .merge-conflicts {
