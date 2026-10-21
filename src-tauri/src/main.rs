@@ -14,9 +14,9 @@ fn main() {
         }
         return;
     }
-    // git runs Haze as GIT_ASKPASS with the prompt as the only argument.
-    if std::env::var_os(haze_lib::git_auth::ASKPASS_ENV).is_some() && args.len() == 2 {
-        std::process::exit(haze_lib::git_auth::run_askpass(&args[1]));
+    if args.get(1).map(String::as_str) == Some(haze_lib::git_auth::CREDENTIAL_FLAG) {
+        let action = args.get(2).map(String::as_str);
+        std::process::exit(haze_lib::git_auth::run_credential_helper(action));
     }
     haze_lib::run();
 }

@@ -1,7 +1,7 @@
 // GitHub / GitLab accounts in Settings, like Rider's Settings | Version Control | GitHub / GitLab.
 // Git commands Haze runs (push, pull, fetch…) use them for their servers; tokens stay in the OS keychain.
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorMessage, type DeviceCode, type GitAccount, type GitProvider } from "../lib/ipc";
 import { toast } from "./Overlays";
 
@@ -40,10 +40,23 @@ function LoginForm({ provider, githubOauth, onDone }: { provider: GitProvider; g
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [device, setDevice] = useState<DeviceCode | null>(null);
+  // Cancel can be clicked before polling starts, which a backend cancel would miss.
+  const cancelled = useRef(false);
   const isDotCom = normalizeServer(server) === p.server;
 
   // Stop waiting for the browser when the form goes away.
-  useEffect(() => () => void api.gitDeviceCancel(), []);
+  useEffect(
+    () => () => {
+      cancelled.current = true;
+      void api.gitDeviceCancel();
+    },
+    [],
+  );
+  const cancelDevice = () => {
+    cancelled.current = true;
+    void api.gitDeviceCancel();
+    setDevice(null);
+  };
 
   const done = (a: GitAccount) => {
     toast(`Logged in to ${p.name} as ${a.login}`);
@@ -63,15 +76,17 @@ function LoginForm({ provider, githubOauth, onDone }: { provider: GitProvider; g
   const loginViaBrowser = async () => {
     setBusy(true);
     setError(null);
+    cancelled.current = false;
     try {
       const code = await api.gitDeviceStart();
+      if (cancelled.current) return;
       setDevice(code);
       await navigator.clipboard.writeText(code.userCode).catch(() => {});
       await openUrl(code.verificationUri);
+      if (cancelled.current) return;
       done(await api.gitDevicePoll(code));
     } catch (e) {
-      const msg = errorMessage(e);
-      if (msg !== "cancelled") setError(msg);
+      if (!cancelled.current) setError(errorMessage(e));
       setDevice(null);
     } finally {
       setBusy(false);
@@ -91,11 +106,10 @@ function LoginForm({ provider, githubOauth, onDone }: { provider: GitProvider; g
           <button className="btn small" onClick={() => void openUrl(device.verificationUri)}>
             Open Page Again
           </button>
-          <button className="btn small" onClick={() => void api.gitDeviceCancel()}>
+          <button className="btn small" onClick={cancelDevice}>
             Cancel
           </button>
         </div>
-        {error && <div className="modal-error">{error}</div>}
       </div>
     );
 

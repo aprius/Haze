@@ -3,11 +3,11 @@
 //! secrets); tokens live in the OS keychain (Keychain, Credential Manager,
 //! Secret Service), the way Rider keeps them in its Password Safe.
 //!
-//! Git gets the token the way Rider's built-in askpass does it: for every
-//! account's server, git commands Haze runs reset that host's credential
-//! helpers and set its username, then ask for the password through
-//! GIT_ASKPASS, which is Haze itself (see `run_askpass`). Other hosts keep
-//! the user's own git configuration.
+//! Git gets the token from Haze itself, as Rider's built-in helper does it:
+//! for every account's host, git commands Haze runs replace that host's
+//! credential helpers with `haze --haze-git-credential` (see
+//! `run_credential_helper`), so a stale stored password cannot win over the
+//! account. Other hosts keep the user's own git configuration.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,8 +18,10 @@ use anyhow::{bail, Context, Result};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
-/// Set on git commands Haze runs; tells `main` it is git's askpass helper.
-pub const ASKPASS_ENV: &str = "HAZE_GIT_ASKPASS";
+/// First argument when git runs Haze as a credential helper.
+pub const CREDENTIAL_FLAG: &str = "--haze-git-credential";
+/// The accounts (without tokens) handed to the credential helper.
+const ACCOUNTS_ENV: &str = "HAZE_GIT_ACCOUNTS";
 const KEYCHAIN_SERVICE: &str = "dev.haze.app.git";
 
 /// OAuth app for "Log In via GitHub…" (device flow, no client secret). Set
@@ -90,14 +92,20 @@ fn update(f: impl FnOnce(&mut Vec<Account>)) -> Result<()> {
     crate::state::save(path, &serde_json::to_value(&*accounts)?)
 }
 
-/// `github.com`, `https://gitlab.example.com/` → `https://github.com`, `https://gitlab.example.com`.
+/// `github.com`, `HTTPS://GitLab.example.com/x/` → `https://github.com`,
+/// `https://gitlab.example.com/x`.
 pub fn normalize_server(server: &str) -> String {
     let s = server.trim().trim_end_matches('/');
-    if s.contains("://") {
+    let s = if s.contains("://") {
         s.to_string()
     } else {
         format!("https://{s}")
-    }
+    };
+    let path = s
+        .split_once("://")
+        .and_then(|(_, rest)| rest.find('/').map(|i| &rest[i..]))
+        .unwrap_or_default();
+    format!("{}{path}", origin(&s))
 }
 
 fn api_base(provider: Provider, server: &str) -> String {
@@ -167,8 +175,8 @@ fn keychain(id: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(KEYCHAIN_SERVICE, id).context("system keychain unavailable")
 }
 
-/// Validates the token and saves the account. One account per server: a new
-/// login for the same server replaces the previous one.
+/// Validates the token and saves the account. One account per host (git asks
+/// for credentials per host): a new login replaces the previous one.
 pub fn login_with_token(provider: Provider, server: &str, token: &str) -> Result<Account> {
     let server = normalize_server(server);
     let token = token.trim();
@@ -182,7 +190,7 @@ pub fn login_with_token(provider: Provider, server: &str, token: &str) -> Result
     let mut replaced = Vec::new();
     update(|list| {
         list.retain(|a| {
-            let same = a.server == account.server;
+            let same = origin(&a.server) == origin(&account.server);
             if same {
                 replaced.push(a.id.clone());
             }
@@ -294,13 +302,27 @@ pub fn device_cancel() {
 // ---------------------------------------------------------------- git
 
 #[derive(Serialize, Deserialize)]
-struct AskpassAccount {
+struct HelperAccount {
     id: String,
     server: String,
     login: String,
 }
 
-/// Makes `cmd` (a git command) use the saved accounts for their servers.
+/// `!"/path/to/haze" --haze-git-credential`: git runs a helper starting
+/// with `!` through its shell (also on Windows), appending get/store/erase.
+fn helper_command(exe: &Path) -> String {
+    let path = exe.to_string_lossy().replace('\\', "/");
+    let mut quoted = String::new();
+    for c in path.chars() {
+        if matches!(c, '"' | '$' | '`' | '\\') {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    format!("!\"{quoted}\" {CREDENTIAL_FLAG}")
+}
+
+/// Makes `cmd` (a git command) use the saved accounts for their hosts.
 /// The `-c` options must come before the git subcommand.
 pub fn configure(cmd: &mut Command) {
     let list = accounts();
@@ -310,25 +332,25 @@ pub fn configure(cmd: &mut Command) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
+    let helper = helper_command(&exe);
     for a in &list {
-        // An empty helper drops the user's helpers for this host only, so a
-        // stale stored password cannot win over the account.
+        // The empty helper drops the user's helpers for this host only.
         let host = origin(&a.server);
         cmd.arg("-c")
             .arg(format!("credential.{host}.helper="))
             .arg("-c")
-            .arg(format!("credential.{host}.username={}", a.login));
+            .arg(format!("credential.{host}.helper={helper}"));
     }
-    let pass: Vec<AskpassAccount> = list
+    let pass: Vec<HelperAccount> = list
         .into_iter()
-        .map(|a| AskpassAccount {
+        .map(|a| HelperAccount {
             id: a.id,
             server: a.server,
             login: a.login,
         })
         .collect();
-    cmd.env("GIT_ASKPASS", exe).env(
-        ASKPASS_ENV,
+    cmd.env(
+        ACCOUNTS_ENV,
         serde_json::to_string(&pass).unwrap_or_default(),
     );
 }
@@ -344,36 +366,48 @@ fn origin(url: &str) -> String {
     format!("{scheme}://{host}").to_ascii_lowercase()
 }
 
-/// The account for git's prompt URL (`https://me@github.com`).
-fn account_for<'a>(list: &'a [AskpassAccount], url: &str) -> Option<&'a AskpassAccount> {
+/// The account for a URL on its host (`https://me@github.com/o/r.git`).
+fn account_for<'a>(list: &'a [HelperAccount], url: &str) -> Option<&'a HelperAccount> {
     let url = origin(url);
     list.iter().find(|a| origin(&a.server) == url)
 }
 
-/// Answers one git prompt ("Username for 'https://github.com': " or
-/// "Password for 'https://me@github.com': ") on stdout.
-pub fn run_askpass(prompt: &str) -> i32 {
-    let list: Vec<AskpassAccount> = std::env::var(ASKPASS_ENV)
+/// git's credential helper protocol: `get` reads `protocol=…`/`host=…` lines
+/// from stdin and answers `username=…`/`password=…`; `store` and `erase` are
+/// ignored (the token is managed in Settings).
+pub fn run_credential_helper(action: Option<&str>) -> i32 {
+    let mut input = String::new();
+    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input);
+    if action != Some("get") {
+        return 0;
+    }
+    let field = |k: &str| {
+        input
+            .lines()
+            .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+            .unwrap_or_default()
+    };
+    let url = format!("{}://{}", field("protocol"), field("host"));
+    let list: Vec<HelperAccount> = std::env::var(ACCOUNTS_ENV)
         .ok()
         .and_then(|v| serde_json::from_str(&v).ok())
         .unwrap_or_default();
-    let url = prompt.split('\'').nth(1).unwrap_or_default();
-    let Some(account) = account_for(&list, url) else {
-        eprintln!("haze: no GitHub/GitLab account for {url}");
-        return 1;
-    };
-    if prompt.starts_with("Username") {
-        println!("{}", account.login);
+    // Nothing printed: git falls back to its own (non-interactive) prompt.
+    let Some(account) = account_for(&list, &url) else {
         return 0;
-    }
+    };
     match keychain(&account.id).and_then(|e| Ok(e.get_password()?)) {
         Ok(token) => {
-            println!("{token}");
+            // A user name already in the remote URL stays; tokens ignore it.
+            if field("username").is_empty() {
+                println!("username={}", account.login);
+            }
+            println!("password={token}");
             0
         }
         Err(e) => {
             eprintln!("haze: cannot read the token for {}: {e:#}", account.server);
-            1
+            0
         }
     }
 }
@@ -386,8 +420,8 @@ pub fn accounts_path(config_dir: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
-    fn acc(server: &str) -> AskpassAccount {
-        AskpassAccount {
+    fn acc(server: &str) -> HelperAccount {
+        HelperAccount {
             id: server.into(),
             server: server.into(),
             login: "me".into(),
@@ -397,6 +431,10 @@ mod tests {
     #[test]
     fn normalizes_servers() {
         assert_eq!(normalize_server(" github.com/ "), "https://github.com");
+        assert_eq!(
+            normalize_server("HTTPS://GitLab.Example.com/Sub/"),
+            "https://gitlab.example.com/Sub"
+        );
         assert_eq!(
             normalize_server("http://git.local:8080"),
             "http://git.local:8080"
@@ -421,9 +459,22 @@ mod tests {
             Some("https://example.com/gitlab")
         );
         assert_eq!(id("http://github.com"), None);
+        assert_eq!(id("https://"), None);
         assert_eq!(
             origin("https://Example.com:8443/gitlab"),
             "https://example.com:8443"
+        );
+    }
+
+    #[test]
+    fn quotes_helper_path() {
+        assert_eq!(
+            helper_command(Path::new("/opt/Haze App/haze")),
+            "!\"/opt/Haze App/haze\" --haze-git-credential"
+        );
+        assert_eq!(
+            helper_command(Path::new("/a/$x\"y/haze")),
+            "!\"/a/\\$x\\\"y/haze\" --haze-git-credential"
         );
     }
 }
