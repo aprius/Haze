@@ -66,22 +66,26 @@ jobs:
       # Tùy chọn: ký và notarize bản macOS. Chỉ xuất các biến có secret, vì biến
       # rỗng (secret chưa đặt) vẫn khiến Tauri thử ký bằng chứng chỉ rỗng.
       # Không có secret thì app được ký ad-hoc (cask Homebrew tự gỡ cờ quarantine).
+      # Tauri ký bằng identity đọc từ chính APPLE_CERTIFICATE và chỉ kiểm tra
+      # APPLE_SIGNING_IDENTITY là một phần của tên đó, nên không cần secret riêng.
       - name: Apple signing secrets
         if: runner.os == 'macOS'
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             if [ -n "${!name}" ]; then
               { echo "$name<<__EOF__"; echo "${!name}"; echo "__EOF__"; } >> "$GITHUB_ENV"
             fi
           done
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_SIGNING_IDENTITY=Developer ID Application" >> "$GITHUB_ENV"
+          fi
 
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
