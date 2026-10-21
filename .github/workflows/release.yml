@@ -63,18 +63,30 @@ jobs:
 
       - run: npm ci
 
-      - name: Build and publish
-        uses: tauri-apps/tauri-action@v0
+      # Tùy chọn: ký và notarize bản macOS. Chỉ xuất các biến có secret, vì biến
+      # rỗng (secret chưa đặt) vẫn khiến Tauri thử ký bằng chứng chỉ rỗng.
+      # Không có secret thì app được ký ad-hoc (cask Homebrew tự gỡ cờ quarantine).
+      - name: Apple signing secrets
+        if: runner.os == 'macOS'
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Tùy chọn: ký và notarize bản macOS. Không có các secret này thì app
-          # được ký ad-hoc (cask Homebrew tự gỡ cờ quarantine).
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!name}" ]; then
+              { echo "$name<<__EOF__"; echo "${!name}"; echo "__EOF__"; } >> "$GITHUB_ENV"
+            fi
+          done
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
