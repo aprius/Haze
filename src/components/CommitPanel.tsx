@@ -1,16 +1,20 @@
-// Commit tool window (Alt+0), like Rider's: tick files, write a message,
-// Commit or Commit and Push — no staging area to manage.
+// Commit window (Ctrl+K / Alt+0), like Rider's commit dialog: a floating window
+// with the changes and message on the left and the selected file's diff on the
+// right. Tick files, write a message, Commit or Commit and Push — no staging
+// area to manage. Ctrl+D opens the diff in a floating window of its own.
 import { Camera, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Eye, Folder, FolderTree, RefreshCw, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { saveAll } from "./EditorArea";
+import { Splitter } from "./Shell";
 import { api, type GitChange } from "../lib/ipc";
 import { basename, dirname } from "../lib/path";
 import { absPath, checkedPaths, createCheckpoint, patchRepo, refreshRepo, repo, runGit, toggleReviewed, useGit } from "../store/git";
 import { refreshGit as refreshTreeGit } from "../store/tree";
+import { closeCommitWindow, openDiffWindow, useUi } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
-import { openDiff } from "./DiffView";
+import { DiffView, type DiffSpec } from "./DiffView";
 import { openMerge } from "./MergeView";
-import { choose, openMenu, toast } from "./Overlays";
+import { choose, FloatWindow, openMenu, toast } from "./Overlays";
 import { openPushDialog } from "./GitDialogs";
 
 const GROUPS: { id: string; label: string; match: (c: GitChange) => boolean }[] = [
@@ -65,16 +69,25 @@ function changeRows(groupId: string, items: GitChange[], byDir: boolean, collaps
 
 const indent = (depth: number) => ({ paddingLeft: 26 + depth * 20 });
 
+function changeDiffSpec(root: string, c: GitChange): DiffSpec {
+  const created = c.status === "untracked" || c.status === "added";
+  return { root, rel: c.rel, oldRel: c.oldRel, left: created ? null : "HEAD", right: "working" };
+}
+
+/** Ctrl+D: the diff in its own floating window; a conflict opens the merge tool instead. */
 export function showChangeDiff(project: Project, root: string, c: GitChange): void {
   if (c.status === "conflict") {
+    closeCommitWindow();
     openMerge(project.id, { root, rel: c.rel });
     return;
   }
-  if (c.status === "untracked" || c.status === "added") {
-    useWorkspace.getState().openFile(project.id, absPath(root, c.rel), { preview: true });
-    return;
-  }
-  openDiff(project.id, { root, rel: c.rel, oldRel: c.oldRel, left: "HEAD", right: "working" });
+  openDiffWindow(project.id, changeDiffSpec(root, c));
+}
+
+/** F4: jumps to the file, leaving the Commit window. */
+function openChangedFile(project: Project, root: string, c: GitChange): void {
+  closeCommitWindow();
+  useWorkspace.getState().openFile(project.id, absPath(root, c.rel));
 }
 
 export async function commitChanges(project: Project, push: boolean): Promise<void> {
@@ -96,6 +109,7 @@ export async function commitChanges(project: Project, push: boolean): Promise<vo
   refreshTreeGit(project.id, project.path, 0);
   if (!out.ok) return toast(`Commit failed: ${(out.stderr || out.stdout).trim()}`, "error");
   patchRepo(project.id, { message: "", amend: false, checked: null });
+  if (useUi.getState().commitWindow === project.id) closeCommitWindow();
   toast(`Committed ${paths.length} file(s).`);
   if (push) openPushDialog(project);
 }
@@ -116,11 +130,10 @@ function ReviewToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   );
 }
 
-export function CommitPanel({ project }: { project: Project }) {
+function CommitPanel({ project, selected, setSelected }: { project: Project; selected: string | null; setSelected: (rel: string) => void }) {
   const r = useGit((s) => s.repos[project.id]);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const byDir = useWorkspace((s) => !!s.ui[project.id]?.commitGroupByDir);
-  const [selected, setSelected] = useState<string | null>(null);
   const checked = useMemo(() => (r ? checkedPaths(r) : new Set<string>()), [r]);
 
   useEffect(() => refreshRepo(project.id, project.path), [project.id, project.path]);
@@ -180,8 +193,8 @@ export function CommitPanel({ project }: { project: Project }) {
       const i = shown.findIndex((x) => x.rel === selected);
       const next = shown[Math.max(0, Math.min(shown.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
       if (next) setSelected(next.rel);
-    } else if (c && (e.key === "Enter" || (mod && !e.altKey && !e.shiftKey && e.code === "KeyD"))) showChangeDiff(project, root, c);
-    else if (c && e.key === "F4" && c.status !== "deleted") useWorkspace.getState().openFile(project.id, absPath(root, c.rel));
+    } else if (c && e.key === "Enter") showChangeDiff(project, root, c);
+    else if (c && e.key === "F4" && c.status !== "deleted") openChangedFile(project, root, c);
     else if (c && e.key === " ") toggle(c.rel);
     else if (mod && e.altKey && e.code === "KeyZ") rollbackChecked();
     else if (mod && e.altKey && e.code === "KeyK") void commitChanges(project, true);
@@ -207,7 +220,7 @@ export function CommitPanel({ project }: { project: Project }) {
         ]
       : []),
     { label: "Show Diff", shortcut: "Ctrl+D", action: () => showChangeDiff(project, root, c) },
-    { label: "Open File", shortcut: "F4", disabled: c.status === "deleted", action: () => useWorkspace.getState().openFile(project.id, absPath(root, c.rel)) },
+    { label: "Open File", shortcut: "F4", disabled: c.status === "deleted", action: () => openChangedFile(project, root, c) },
     { separator: true },
     { label: "Rollback…", shortcut: "Ctrl+Alt+Z", disabled: c.status === "untracked", action: () => void rollback([c]) },
     ...(c.status === "untracked"
@@ -235,7 +248,6 @@ export function CommitPanel({ project }: { project: Project }) {
   return (
     <div className="file-tree commit-panel">
       <div className="panel-header slim">
-        <span className="muted small">{r.branches?.current ? `On ${r.branches.current}` : r.branches?.detached ? "Detached HEAD" : ""}</span>
         <div className="panel-actions">
           <button
             className="icon-btn"
@@ -335,7 +347,7 @@ export function CommitPanel({ project }: { project: Project }) {
                   <div
                     key={f.rel}
                     className={"change-row git-" + (f.status === "copied" ? "added" : f.status) + (r.reviewed[f.rel] ? " reviewed" : "")}
-                    onClick={() => openDiff(project.id, { root, rel: f.rel, oldRel: f.oldRel, left: f.status === "added" ? null : r.checkpoint, right: "working" })}
+                    onClick={() => openDiffWindow(project.id, { root, rel: f.rel, oldRel: f.oldRel, left: f.status === "added" ? null : r.checkpoint, right: "working" })}
                     title="Show what changed since the checkpoint"
                   >
                     <ReviewToggle on={!!r.reviewed[f.rel]} onToggle={() => void toggleReviewed(project.id, f.rel)} />
@@ -467,6 +479,74 @@ export function CommitPanel({ project }: { project: Project }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+export function CommitWindow({ project }: { project: Project | null }) {
+  const open = useUi((s) => s.commitWindow);
+  if (!project || open !== project.id) return null;
+  return <CommitWindowBody key={project.id} project={project} />;
+}
+
+function CommitWindowBody({ project }: { project: Project }) {
+  const r = useGit((s) => s.repos[project.id]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [listWidth, setListWidth] = useState(400);
+  const changes = r?.changes ?? [];
+  const change = changes.find((c) => c.rel === selected) ?? null;
+
+  // Show a diff from the start, and again once the selected file is committed or reverted.
+  useEffect(() => {
+    if (!change) setSelected(GROUPS.flatMap((g) => changes.filter(g.match))[0]?.rel ?? null);
+  }, [change, changes]);
+
+  const branch = r?.branches?.current ?? (r?.branches?.detached ? "detached HEAD" : null);
+  return (
+    <div className="modal-backdrop float-backdrop">
+      <FloatWindow
+        className="commit-window"
+        width={1200}
+        height={760}
+        onClose={closeCommitWindow}
+        title={
+          <>
+            Commit Changes{branch && <span className="muted"> — {branch}</span>}
+          </>
+        }
+      >
+        <div
+          className="commit-window-body"
+          onKeyDownCapture={(e) => {
+            // Ctrl+D anywhere but the message (where it deletes a character on macOS).
+            const mod = e.ctrlKey || e.metaKey;
+            if (!(mod && !e.altKey && !e.shiftKey && e.code === "KeyD") || e.target instanceof HTMLTextAreaElement) return;
+            if (!change || !r?.root) return;
+            e.preventDefault();
+            e.stopPropagation();
+            showChangeDiff(project, r.root, change);
+          }}
+        >
+          <div className="commit-window-changes" style={{ width: listWidth }}>
+            <CommitPanel project={project} selected={selected} setSelected={setSelected} />
+          </div>
+          <Splitter vertical value={listWidth} min={260} max={900} onChange={setListWidth} />
+          <div className="commit-window-diff">
+            {r?.root && change && change.status !== "conflict" ? (
+              <DiffView spec={changeDiffSpec(r.root, change)} />
+            ) : change?.status === "conflict" ? (
+              <div className="se-empty">
+                {basename(change.rel)} has merge conflicts.{" "}
+                <button className="btn small" onClick={() => showChangeDiff(project, r!.root!, change)}>
+                  Merge…
+                </button>
+              </div>
+            ) : (
+              <div className="se-empty">Select a file to see its changes.</div>
+            )}
+          </div>
+        </div>
+      </FloatWindow>
     </div>
   );
 }

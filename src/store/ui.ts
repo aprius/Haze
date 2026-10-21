@@ -1,16 +1,23 @@
 // Transient UI state: which popups are open. Not persisted.
 import { create } from "zustand";
+import type { DiffSpec } from "../components/DiffView";
 
 export type SeTab = "all" | "files" | "symbols" | "actions" | "text";
 
 interface UiState {
   searchEverywhere: { open: boolean; tab: SeTab; nonce: number; query: string | null };
   findInFiles: { open: boolean; replace: boolean; initialQuery: string | null; directory: string | null; nonce: number };
+  /** Project whose floating Commit window is open. */
+  commitWindow: string | null;
+  /** Floating diff window (Ctrl+D in the Commit window). */
+  diffWindow: { projectId: string; spec: DiffSpec } | null;
 }
 
 export const useUi = create<UiState>(() => ({
   searchEverywhere: { open: false, tab: "all", nonce: 0, query: null },
   findInFiles: { open: false, replace: false, initialQuery: null, directory: null, nonce: 0 },
+  commitWindow: null,
+  diffWindow: null,
 }));
 
 /** `query` replaces the previous text when given (Ctrl+E passes "" to list recent files). */
@@ -43,4 +50,30 @@ export function openFindInFiles(opts: { replace?: boolean; query?: string | null
 export function closeFindInFiles(): void {
   useUi.setState((s) => ({ findInFiles: { ...s.findInFiles, open: false } }));
   popupClosed();
+}
+
+export function openCommitWindow(projectId: string): void {
+  useUi.setState({ commitWindow: projectId });
+  // Like Rider's commit dialog: type the message straight away.
+  requestAnimationFrame(() => (document.querySelector(".commit-window .commit-message") as HTMLElement | null)?.focus());
+}
+
+export function closeCommitWindow(): void {
+  useUi.setState({ commitWindow: null, diffWindow: null });
+  popupClosed();
+}
+
+export function toggleCommitWindow(projectId: string): void {
+  if (useUi.getState().commitWindow === projectId) closeCommitWindow();
+  else openCommitWindow(projectId);
+}
+
+export function openDiffWindow(projectId: string, spec: DiffSpec): void {
+  useUi.setState({ diffWindow: { projectId, spec } });
+}
+
+export function closeDiffWindow(): void {
+  useUi.setState({ diffWindow: null });
+  // Back to the Commit window when it is still open.
+  requestAnimationFrame(() => (document.querySelector(".commit-window .changes-list") as HTMLElement | null)?.focus());
 }

@@ -79,7 +79,7 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 
 A Rider/Rebased-style Git client built on top of the system `git` CLI.
 
-- **Commit** (`Alt+0`, `Ctrl+K`): check the files to commit without staging; Changes / Unversioned Files / Merge Conflicts groups; Amend, Commit and Push, Rollback, Add to VCS, Add to `.gitignore`; Continue/Abort banner during merge or rebase.
+- **Commit** (`Alt+0`, `Ctrl+K`): a floating window with the changes and message beside the selected file's diff (`Ctrl+D` opens the diff in a floating window of its own); check the files to commit without staging; Changes / Unversioned Files / Merge Conflicts groups; Amend, Commit and Push, Rollback, Add to VCS, Add to `.gitignore`; Continue/Abort banner during merge or rebase.
 - **Git log** (`Alt+9`): branch graph, branch/tag/remote labels, filters by text, hash, author, branch, path and first parent; commit details; a **Console** tab with every git command Haze ran.
 - Commit actions: Checkout, New Branch, New Tag, Cherry-Pick, Revert, Undo Commit, Reset to Here (Soft/Mixed/Hard), **Interactive Rebase from Here** (pick / reword / edit / squash / fixup / drop, no text editor needed).
 - **Branches** popup (status bar or ``Ctrl+Shift+` ``): checkout with **Smart Checkout** (auto-stash), new, merge, rebase, compare, push, rename, delete, delete remote; Fetch.

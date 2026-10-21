@@ -1,7 +1,9 @@
 // Context menu and modal dialogs, driven by small global stores so any
 // module can open them imperatively.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
+import { matches } from "../lib/keymap";
 
 export interface MenuItem {
   label?: string;
@@ -206,6 +208,74 @@ export function Dialogs() {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ floating windows
+
+/** A window over the app, moved by its title bar and resized from its corner, like Rider's commit and diff dialogs. */
+export function FloatWindow({
+  title,
+  className,
+  width,
+  height,
+  onClose,
+  children,
+}: {
+  title: ReactNode;
+  className?: string;
+  width: number;
+  height: number;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const [size] = useState(() => ({ w: Math.min(width, window.innerWidth - 32), h: Math.min(height, window.innerHeight - 32) }));
+  const [pos, setPos] = useState(() => ({ x: (window.innerWidth - size.w) / 2, y: Math.max(16, (window.innerHeight - size.h) / 3) }));
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Take focus so Escape closes it; the content may move focus further in.
+  useEffect(() => ref.current?.focus(), []);
+
+  const drag = (e: React.PointerEvent) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    const from = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+    // Keep the title bar reachable.
+    const move = (ev: PointerEvent) =>
+      setPos({
+        x: Math.max(80 - size.w, Math.min(window.innerWidth - 80, ev.clientX - from.x)),
+        y: Math.max(0, Math.min(window.innerHeight - 32, ev.clientY - from.y)),
+      });
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  return (
+    <div
+      ref={ref}
+      className={"float-window" + (className ? " " + className : "")}
+      role="dialog"
+      tabIndex={-1}
+      style={{ left: pos.x, top: pos.y, width: size.w, height: size.h }}
+      onKeyDown={(e) => {
+        // Monaco handles its own Escape (closing find, suggestions) first.
+        if (e.key === "Escape" && !e.defaultPrevented) onClose();
+        // Keep Ctrl+W, Ctrl+Tab… away from the editor tabs behind; saving still works.
+        if (!matches(e.nativeEvent, "saveAll")) e.stopPropagation();
+      }}
+    >
+      <div className="float-title" onPointerDown={drag} onDoubleClick={() => setPos({ x: (window.innerWidth - size.w) / 2, y: 16 })}>
+        <span className="float-title-text">{title}</span>
+        <button className="icon-btn" title="Close (Esc)" onClick={onClose}>
+          <X size={14} />
+        </button>
+      </div>
+      <div className="float-body">{children}</div>
     </div>
   );
 }

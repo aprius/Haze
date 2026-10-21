@@ -8,7 +8,9 @@ import { languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
 import { absPath } from "../store/git";
+import { closeDiffWindow, useUi } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
+import { FloatWindow } from "./Overlays";
 
 export interface DiffSpec {
   /** Repository root. */
@@ -130,5 +132,18 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
         }}
       />
     </div>
+  );
+}
+
+/** A diff in a floating window of its own (Ctrl+D in the Commit window). */
+export function DiffWindow() {
+  const w = useUi((s) => s.diffWindow);
+  if (!w) return null;
+  return (
+    <FloatWindow key={diffPath(w.spec)} className="diff-window" title={diffTitle(w.spec)} width={1100} height={700} onClose={closeDiffWindow}>
+      <div className="float-diff">
+        <DiffView spec={w.spec} />
+      </div>
+    </FloatWindow>
   );
 }

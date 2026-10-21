@@ -10,6 +10,7 @@ import { toggleThemeMode, useTheme } from "../lib/theme";
 import { useGit } from "../store/git";
 import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
 import { useTree } from "../store/tree";
+import { toggleCommitWindow, useUi } from "../store/ui";
 import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
@@ -242,12 +243,9 @@ const ENCODING_LABELS: Record<TextEncoding, string> = {
   "utf8-bom-invalid": "UTF-8 BOM (invalid bytes)",
 };
 
-/** Shows the sidebar on `tab`, or hides it when that tab is already showing. */
-export function toggleSidebar(projectId: string, tab: "project" | "commit"): void {
+export function toggleSidebar(projectId: string): void {
   const ws = useWorkspace.getState();
-  const ui = ws.ui[projectId];
-  const showing = !!ui?.sidebarVisible && (ui.sidebarTab === "commit") === (tab === "commit");
-  ws.updateUi(projectId, { sidebarVisible: !showing, sidebarTab: tab });
+  ws.updateUi(projectId, { sidebarVisible: !ws.ui[projectId]?.sidebarVisible });
 }
 
 /** Shows the bottom dock on `tab`, or hides it when that tab is already showing. */
@@ -264,20 +262,21 @@ export function StatusBar({ project }: { project: Project | null }) {
   const ui = useWorkspace((s) => (project ? s.ui[project.id] : undefined));
   const meta = useBuffers((s) => (ui?.activeTab ? s.meta[ui.activeTab] : undefined));
   const cursor = useCursor();
+  const commitOpen = useUi((s) => !!project && s.commitWindow === project.id);
   return (
     <div className="status-bar">
       {project && (
         <>
           <button
-            className={"status-item status-btn" + (ui?.sidebarVisible && ui.sidebarTab !== "commit" ? " on" : "")}
-            onClick={() => toggleSidebar(project.id, "project")}
+            className={"status-item status-btn" + (ui?.sidebarVisible ? " on" : "")}
+            onClick={() => toggleSidebar(project.id)}
             title="Project (Alt+1)"
           >
             <FolderTree size={12} />
           </button>
           <button
-            className={"status-item status-btn" + (ui?.sidebarVisible && ui.sidebarTab === "commit" ? " on" : "")}
-            onClick={() => toggleSidebar(project.id, "commit")}
+            className={"status-item status-btn" + (commitOpen ? " on" : "")}
+            onClick={() => toggleCommitWindow(project.id)}
             title="Commit (Alt+0)"
           >
             <GitCommitHorizontal size={12} />

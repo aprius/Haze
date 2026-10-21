@@ -6,8 +6,8 @@ import { create } from "zustand";
 import { api, errorMessage, type RebaseStep } from "../lib/ipc";
 import { saveAll } from "./EditorArea";
 import { patchRepo, refreshRepo, repo } from "../store/git";
-import { popupClosed } from "../store/ui";
-import { useWorkspace, type Project } from "../store/workspace";
+import { openCommitWindow, popupClosed } from "../store/ui";
+import type { Project } from "../store/workspace";
 import { toast } from "./Overlays";
 
 interface Row {
@@ -103,7 +103,7 @@ export function RebaseDialog({ project }: { project: Project | null }) {
     const text = out.stdout + out.stderr;
     if (out.ok) toast("Rebase finished.");
     else if (/CONFLICT|could not apply/.test(text)) {
-      useWorkspace.getState().updateUi(project.id, { sidebarVisible: true, sidebarTab: "commit" });
+      openCommitWindow(project.id);
       toast("Rebase stopped on conflicts — resolve them in the Commit window, then Continue.", "error");
     } else if (/Stopped at/.test(text)) toast("Rebase stopped for editing — amend, then Continue in the Commit window.");
     else toast(`Rebase failed: ${text.trim().split("\n").slice(-2).join(" ")}`, "error");

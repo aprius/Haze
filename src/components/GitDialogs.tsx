@@ -9,7 +9,7 @@ import { parseWorktrees, type Worktree } from "../lib/worktrees";
 export type { Worktree };
 import { saveAll } from "./EditorArea";
 import { repo, runGit, useGit } from "../store/git";
-import { popupClosed } from "../store/ui";
+import { openCommitWindow, popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { choose, confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
 import { shortcutLabel } from "../lib/keymap";
@@ -240,7 +240,7 @@ export function BranchesPopup({ project }: { project: Project | null }) {
   if (!open || !project || project.id !== projectId) return null;
   const actions: { label: string; key?: string; run: () => void }[] = [
     { label: "Update Project…", key: shortcutLabel("updateProject"), run: () => void updateProject(project) },
-    { label: "Commit…", key: shortcutLabel("commit"), run: () => useWorkspace.getState().updateUi(project.id, { sidebarVisible: true, sidebarTab: "commit" }) },
+    { label: "Commit…", key: shortcutLabel("commit"), run: () => openCommitWindow(project.id) },
     { label: "Push…", key: shortcutLabel("push"), run: () => openPushDialog(project) },
     { label: "New Branch…", run: () => void newBranch(project, null) },
     { label: "New Worktree… (separate folder for a parallel task)", run: () => void newWorktree(project) },

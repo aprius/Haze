@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { toast } from "../components/Overlays";
 import { api, errorMessage, type BranchesInfo, type ChangedFile, type Checkpoint, type GitChange, type GitOutput, type StashEntry } from "../lib/ipc";
 import { onGitStatus, refreshGit as refreshTreeGit } from "./tree";
+import { openCommitWindow, useUi } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export interface ConsoleEntry {
@@ -81,9 +82,7 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const explicit = new Set<string>();
 
 function commitWindowShown(projectId: string): boolean {
-  const ws = useWorkspace.getState();
-  const ui = ws.ui[projectId];
-  return ws.activeProjectId === projectId && !!ui?.sidebarVisible && ui.sidebarTab === "commit";
+  return useWorkspace.getState().activeProjectId === projectId && useUi.getState().commitWindow === projectId;
 }
 
 /** What `git log --all` shows depends only on these; editing files changes none of them. */
@@ -170,7 +169,7 @@ export async function runGit(projectId: string, args: string[], opts: { label?: 
     entry.output = out;
     if (/^CONFLICT|Merge conflict in|could not apply/m.test(out.stdout + out.stderr)) {
       // Rider opens the conflicts list; ours is the Commit window's "Merge Conflicts" group.
-      useWorkspace.getState().updateUi(projectId, { sidebarVisible: true, sidebarTab: "commit" });
+      openCommitWindow(projectId);
       toast("Conflicts need to be resolved — see Merge Conflicts in the Commit window (double-click to merge).", "error");
     } else if (!out.ok) toast(`${opts.label ?? "git " + args[0]} failed: ${(out.stderr || out.stdout).trim().split("\n").slice(-3).join(" ")}`, "error");
     else if (!opts.quiet && opts.label) toast(`${opts.label}: done`);

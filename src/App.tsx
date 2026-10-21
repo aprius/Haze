@@ -8,7 +8,8 @@ import { SearchEverywhere } from "./components/SearchEverywhere";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, toggleBottom, toggleSidebar, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
-import { CommitPanel } from "./components/CommitPanel";
+import { CommitWindow } from "./components/CommitPanel";
+import { DiffWindow } from "./components/DiffView";
 import { BranchesPopup, openBranchesPopup, openPushDialog, PushDialog, updateProject } from "./components/GitDialogs";
 import { GitPanel } from "./components/GitPanel";
 import { RebaseDialog } from "./components/RebaseDialog";
@@ -26,7 +27,7 @@ import { basename, dirname } from "./lib/path";
 import { restore } from "./store/persist";
 import { startTerminals } from "./store/terminals";
 import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
-import { openFindInFiles, openSearchEverywhere, useUi } from "./store/ui";
+import { openCommitWindow, openFindInFiles, openSearchEverywhere, toggleCommitWindow, useUi } from "./store/ui";
 import { projectForPath, useWorkspace, type Project } from "./store/workspace";
 
 function ProjectView({ project }: { project: Project }) {
@@ -41,17 +42,14 @@ function ProjectView({ project }: { project: Project }) {
           <>
             <div className="sidebar" style={{ width: ui.sidebarWidth }}>
               <div className="sidebar-tabs">
-                <button className={"tool-tab" + (ui.sidebarTab !== "commit" ? " active" : "")} onClick={() => toggleSidebar(project.id, "project")} title="Project (Alt+1)">
+                <button className="tool-tab active" onClick={() => toggleSidebar(project.id)} title="Project (Alt+1)">
                   Project
-                </button>
-                <button className={"tool-tab" + (ui.sidebarTab === "commit" ? " active" : "")} onClick={() => toggleSidebar(project.id, "commit")} title="Commit (Alt+0)">
-                  Commit
                 </button>
                 <button className="icon-btn sidebar-hide" title="Hide" onClick={() => updateUi(project.id, { sidebarVisible: false })}>
                   <ChevronLeft size={14} />
                 </button>
               </div>
-              {ui.sidebarTab === "commit" ? <CommitPanel project={project} /> : <FileTree project={project} />}
+              <FileTree project={project} />
             </div>
             <Splitter vertical value={ui.sidebarWidth} min={160} max={800} onChange={(v) => updateUi(project.id, { sidebarWidth: v })} />
           </>
@@ -125,12 +123,10 @@ function useGlobalShortcuts(project: Project | null) {
       // Capture phase: Monaco binds Alt+F12 to Peek Definition on Windows and macOS.
       else if (is("terminal") && project) toggleTerminal(project.id);
       else if (is("push") && project) openPushDialog(project);
-      else if (is("commit") && project) {
-        useWorkspace.getState().updateUi(project.id, { sidebarVisible: true, sidebarTab: "commit" });
-        requestAnimationFrame(() => (document.querySelector(".commit-message") as HTMLElement | null)?.focus());
-      } else if (is("updateProject") && project) void updateProject(project);
+      else if (is("commit") && project) openCommitWindow(project.id);
+      else if (is("updateProject") && project) void updateProject(project);
       else if (is("branches") && project) openBranchesPopup(project);
-      else if (is("commitView") && project) toggleSidebar(project.id, "commit");
+      else if (is("commitView") && project) toggleCommitWindow(project.id);
       else if (is("gitView") && project) toggleBottom(project.id, "git");
       else if (is("build") && project) void startBuild(project.id, project.path, "build", defaultBuildTarget(project.id));
       else if (is("run") && project) {
@@ -189,7 +185,7 @@ function useGlobalShortcuts(project: Project | null) {
       if (matches(e, "projectView")) {
         e.preventDefault();
         const inTree = (document.activeElement as HTMLElement | null)?.closest(".file-tree");
-        ws.updateUi(project.id, { sidebarVisible: !(ui.sidebarVisible && ui.sidebarTab !== "commit" && inTree), sidebarTab: "project" });
+        ws.updateUi(project.id, { sidebarVisible: !(ui.sidebarVisible && inTree) });
         requestAnimationFrame(() => (document.querySelector(".tree-scroll") as HTMLElement | null)?.focus());
         return;
       }
@@ -325,6 +321,8 @@ export default function App() {
       <BranchesPopup project={active} />
       <PushDialog project={active} />
       <RebaseDialog project={active} />
+      <CommitWindow project={active} />
+      <DiffWindow />
       <SettingsDialog />
       <ContextMenu />
       <Dialogs />
