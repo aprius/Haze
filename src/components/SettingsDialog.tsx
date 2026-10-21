@@ -13,7 +13,7 @@ import {
   useFonts,
   type FontSettings,
 } from "../lib/fonts";
-import { api, errorMessage, type HookStatus } from "../lib/ipc";
+import { api, errorMessage, type HookAgent, type HookStatus } from "../lib/ipc";
 import { popupClosed } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
@@ -33,7 +33,7 @@ function close() {
   popupClosed();
 }
 
-const AGENTS: { id: "claude" | "codex"; name: string; what: string }[] = [
+const AGENTS: { id: HookAgent; name: string; what: string }[] = [
   {
     id: "claude",
     name: "Claude Code",
@@ -42,7 +42,17 @@ const AGENTS: { id: "claude" | "codex"; name: string; what: string }[] = [
   {
     id: "codex",
     name: "Codex",
-    what: "Sets `notify` in ~/.codex/config.toml. Codex only reports finished turns, so tabs show when it is done.",
+    what: "Adds lifecycle hooks to ~/.codex/hooks.json for working / waiting for you / done (Codex may ask you to trust them in /hooks), and sets `notify` in config.toml for older Codex versions unless you use it already.",
+  },
+  {
+    id: "gemini",
+    name: "Gemini CLI",
+    what: "Adds hooks to ~/.gemini/settings.json (your other settings and hooks are kept). Needs Gemini CLI 0.26 or later.",
+  },
+  {
+    id: "opencode",
+    name: "OpenCode",
+    what: "Adds a plugin, haze.js, to OpenCode's global plugins folder; it reports working / waiting for you / done.",
   },
 ];
 

@@ -27,7 +27,7 @@ import { api, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
 import { basename, dirname } from "./lib/path";
 import { resetZoom, zoomIn, zoomOut } from "./lib/zoom";
 import { restore } from "./store/persist";
-import { startTerminals } from "./store/terminals";
+import { startTerminals, syncSessions } from "./store/terminals";
 import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
 import { openCommitWindow, openFindInFiles, openSearchEverywhere, toggleCommitWindow, useUi } from "./store/ui";
 import { projectForPath, useWorkspace, type Project } from "./store/workspace";
@@ -215,6 +215,13 @@ function useGlobalShortcuts(project: Project | null) {
 
 function openRequested(req: OpenRequest) {
   const ws = useWorkspace.getState();
+  if (req.terminal && req.project) {
+    // The terminal joins the project its folder is in, or opens the folder (a new worktree).
+    const id = ws.addProject(projectForPath(req.project)?.path ?? req.project);
+    const terminal = req.terminal;
+    void syncSessions().then(() => ws.updateUi(id, { activeTerminal: terminal, terminalVisible: true }));
+    return;
+  }
   const owner = req.file && !req.project ? projectForPath(req.file) : null;
   const root = req.project ?? owner?.path ?? (req.file ? dirname(req.file) : null);
   if (!root) return;

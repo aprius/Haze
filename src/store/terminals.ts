@@ -2,7 +2,7 @@
 // host events to the xterm views.
 import { create } from "zustand";
 import { api, errorMessage, onPtyEvent, type AgentStatus, type PtyEvent, type SessionInfo } from "../lib/ipc";
-import { useWorkspace } from "./workspace";
+import { projectForPath, useWorkspace } from "./workspace";
 
 interface TerminalsState {
   sessions: Record<string, SessionInfo>;
@@ -14,8 +14,12 @@ interface TerminalsState {
 
 export const useTerminals = create<TerminalsState>(() => ({ sessions: {}, attention: {}, connected: false, error: null }));
 
-const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex" };
+const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI", opencode: "OpenCode", agent: "Agent" };
 export const agentName = (agent: string) => AGENT_NAMES[agent] ?? agent;
+
+const AGENT_BADGES: Record<string, string> = { claude: "CC", codex: "CX", gemini: "GM", opencode: "OC" };
+/** Two letters for a terminal tab's agent badge. */
+export const agentBadge = (agent: string) => AGENT_BADGES[agent] ?? (agent === "agent" ? "AI" : agent.slice(0, 2).toUpperCase());
 
 /** True when the user is looking at this terminal right now. */
 function isWatching(id: string): boolean {
@@ -121,13 +125,14 @@ export async function syncSessions(): Promise<void> {
     useTerminals.setState({ connected: false, error: errorMessage(e) });
     return;
   }
-  const sessions = Object.fromEntries(list.map((s) => [s.id, s]));
+  // Terminals started by `haze agent` / `haze run` belong to the project their folder is in.
+  const sessions = Object.fromEntries(list.map((s) => [s.id, s.projectId ? s : { ...s, projectId: projectForPath(s.cwd)?.id ?? null }]));
   useTerminals.setState({ sessions, connected: true, error: null });
   const ws = useWorkspace.getState();
   for (const p of ws.projects) {
     const ui = ws.ui[p.id];
     if (!ui) continue;
-    const mine = list.filter((s) => s.projectId === p.id).map((s) => s.id);
+    const mine = list.filter((s) => sessions[s.id].projectId === p.id).map((s) => s.id);
     const order = [...ui.terminalOrder.filter((id) => sessions[id]), ...mine.filter((id) => !ui.terminalOrder.includes(id))];
     const active = ui.activeTerminal && sessions[ui.activeTerminal] ? ui.activeTerminal : (order[0] ?? null);
     if (order.join() !== ui.terminalOrder.join() || active !== ui.activeTerminal) {

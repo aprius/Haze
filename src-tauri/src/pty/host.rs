@@ -14,6 +14,7 @@ use interprocess::local_socket::{prelude::*, ListenerOptions, Stream};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 
+use super::osc::{next_status, OscScanner, Signal};
 use super::protocol::*;
 use super::{now_ms, socket_name};
 
@@ -36,6 +37,12 @@ struct Session {
     shell: bool,
     scrollback: Scrollback,
     subscribers: HashSet<ClientId>,
+    /// Reads agent states from the output (see `osc`).
+    osc: OscScanner,
+    /// The agent state came from a hook; then the output's sequences are ignored.
+    agent_from_hook: bool,
+    /// Foreground process group when the output last named the agent (Unix).
+    osc_group: Option<i32>,
 }
 
 #[derive(Default)]
@@ -235,19 +242,9 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
             Ok(())
         }
         Request::Agent { id, status } => with_session(host, &id, |s| {
-            s.info.agent = status.clone();
+            s.agent_from_hook = status.is_some();
+            set_agent(host, &id, s, status);
             Ok(())
-        })
-        .map(|()| {
-            // Every client gets it: a tab not attached right now still shows the state.
-            for tx in host.clients.lock().values() {
-                let _ = tx.send(ServerMsg::Event {
-                    body: Event::Agent {
-                        id: id.clone(),
-                        status: status.clone(),
-                    },
-                });
-            }
         }),
     };
     match result {
@@ -255,6 +252,63 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
         Err(e) => Reply::Error {
             message: format!("{e:#}"),
         },
+    }
+}
+
+/// Sets a session's agent state and, when it changed, tells every client: a
+/// tab not attached right now still shows it. A repeated state is still
+/// kept, with its time: `haze wait` looks for one reported after it started.
+fn set_agent(host: &Host, id: &str, s: &mut Session, status: Option<AgentStatus>) {
+    let key = |a: &Option<AgentStatus>| {
+        a.as_ref()
+            .map(|a| (a.agent.clone(), a.state.clone(), a.message.clone()))
+    };
+    let changed = key(&s.info.agent) != key(&status);
+    s.info.agent = status.clone();
+    if !changed {
+        return;
+    }
+    for tx in host.clients.lock().values() {
+        let _ = tx.send(ServerMsg::Event {
+            body: Event::Agent {
+                id: id.to_string(),
+                status: status.clone(),
+            },
+        });
+    }
+}
+
+/// Applies what the output's escape sequences say, unless a hook reports
+/// this terminal's agent (hooks know better). Haze's sequence always counts;
+/// a notification counts when it names an agent; otherwise notifications and
+/// progress bars only update the agent the output named, while that program
+/// is still in front: `dotnet build` run after the agent exited draws a
+/// progress bar too.
+fn apply_signals(host: &Host, id: &str, s: &mut Session, signals: Vec<Signal>) {
+    for signal in signals {
+        if s.agent_from_hook {
+            return;
+        }
+        let group = foreground_group(s);
+        let known = s.info.agent.clone().filter(|_| s.osc_group == group);
+        let Some(next) = next_status(signal, known, now_ms()) else {
+            continue;
+        };
+        s.osc_group = group;
+        set_agent(host, id, s, next);
+    }
+}
+
+/// The program in front of the terminal, as its process group (Unix only).
+fn foreground_group(s: &Session) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        s.master.process_group_leader()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = s;
+        None
     }
 }
 
@@ -381,6 +435,9 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
         shell: !spec.command.as_ref().is_some_and(|argv| !argv.is_empty()),
         scrollback: Scrollback::default(),
         subscribers: HashSet::new(),
+        osc: OscScanner::default(),
+        agent_from_hook: false,
+        osc_group: None,
     }));
     host.sessions.lock().insert(id.clone(), session.clone());
 
@@ -397,6 +454,10 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
             let chunk = &buf[..n];
             let mut s = out_session.lock();
             s.scrollback.push(chunk);
+            let signals = s.osc.feed(chunk);
+            if !signals.is_empty() {
+                apply_signals(&out_host, &out_id, &mut s, signals);
+            }
             broadcast(
                 &out_host,
                 &s.subscribers,

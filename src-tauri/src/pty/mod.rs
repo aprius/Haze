@@ -7,6 +7,7 @@
 
 pub mod client;
 pub mod host;
+pub mod osc;
 pub mod protocol;
 
 #[cfg(not(windows))]

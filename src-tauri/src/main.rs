@@ -14,9 +14,28 @@ fn main() {
         }
         return;
     }
+    if let Ok(cwd) = std::env::current_dir() {
+        if haze_lib::cli::is_subcommand(&args, &cwd) {
+            attach_console();
+            std::process::exit(haze_lib::cli::run(&args));
+        }
+    }
     if args.get(1).map(String::as_str) == Some(haze_lib::git_auth::CREDENTIAL_FLAG) {
         let action = args.get(2).map(String::as_str);
         std::process::exit(haze_lib::git_auth::run_credential_helper(action));
     }
     haze_lib::run();
 }
+
+/// Release builds on Windows have no console of their own; print to the one
+/// `haze` was started from.
+#[cfg(windows)]
+fn attach_console() {
+    use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_console() {}
