@@ -122,13 +122,13 @@ export function ProjectRail() {
             ]);
           }}
         >
-          <ProjectAvatar project={p} />
-          {p.favorite && <Star size={9} className="rail-star" />}
+          <ProjectAvatar project={p} size={24} />
+          {p.favorite && <Star size={8} className="rail-star" />}
           <AgentBadge projectId={p.id} />
         </button>
       ))}
       <button className="rail-item add" title="Open Folder…" onClick={() => void openFolder()}>
-        <Plus size={18} />
+        <Plus size={16} />
       </button>
       <div className="rail-spacer" />
       <button
@@ -136,17 +136,17 @@ export function ProjectRail() {
         title={themeMode === "dark" ? "Switch to Light Theme" : "Switch to Dark Theme"}
         onClick={toggleThemeMode}
       >
-        {themeMode === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+        {themeMode === "dark" ? <Sun size={15} /> : <Moon size={15} />}
       </button>
       <button className="rail-item" title={`Settings (${shortcutLabel("settings")})`} onClick={() => openSettings()}>
-        <Settings size={17} />
+        <Settings size={15} />
       </button>
       <button
         className={"rail-item" + (activeId === null ? " active" : "")}
         title="Welcome / Recent Projects"
         onClick={() => ws().activateProject(null)}
       >
-        <FolderOpen size={18} />
+        <FolderOpen size={16} />
       </button>
     </nav>
   );
