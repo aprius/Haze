@@ -1,7 +1,7 @@
 // Fonts and sizes, in three groups: the Haze UI (menus, tool windows, Git,
 // Commit, Project view…), code (editors, diffs) and the terminal. The terminal
-// shares the code font family but has its own size. Kept in localStorage like
-// the theme, so the first paint already uses them.
+// shares the code font family but has its own size, line height and renderer.
+// Kept in localStorage like the theme, so the first paint already uses them.
 import { create } from "zustand";
 
 export interface FontSettings {
@@ -10,6 +10,13 @@ export interface FontSettings {
   codeFont: string;
   codeSize: number;
   terminalSize: number;
+  terminalLineHeight: number;
+  /**
+   * Draw the terminal with WebGL; off uses xterm's DOM renderer (browser text).
+   * Off by default: on macOS WebGL draws some glyphs, often accented ones,
+   * lighter than their neighbours.
+   */
+  terminalWebgl: boolean;
 }
 
 const KEY = "haze.fonts";
@@ -18,10 +25,14 @@ export const DEFAULT_FONTS: FontSettings = {
   uiSize: 13,
   codeFont: "JetBrains Mono",
   codeSize: 13,
-  terminalSize: 13,
+  terminalSize: 15,
+  terminalLineHeight: 1.5,
+  terminalWebgl: false,
 };
 export const MIN_SIZE = 8;
 export const MAX_SIZE = 32;
+export const MIN_LINE_HEIGHT = 1;
+export const MAX_LINE_HEIGHT = 2;
 
 const UI_FALLBACK = '-apple-system, "Segoe UI", system-ui, sans-serif';
 const MONO_FALLBACK = '"Cascadia Mono", Menlo, Consolas, monospace';
@@ -42,6 +53,8 @@ export const CODE_FONT_SUGGESTIONS = [
 ];
 
 const clampSize = (n: number, fallback: number) => (Number.isFinite(n) ? Math.round(Math.min(MAX_SIZE, Math.max(MIN_SIZE, n))) : fallback);
+const clampLineHeight = (n: number, fallback: number) =>
+  Number.isFinite(n) ? Math.round(Math.min(MAX_LINE_HEIGHT, Math.max(MIN_LINE_HEIGHT, n)) * 100) / 100 : fallback;
 
 function sanitize(s: Partial<FontSettings>): FontSettings {
   const d = DEFAULT_FONTS;
@@ -52,6 +65,8 @@ function sanitize(s: Partial<FontSettings>): FontSettings {
     codeFont: name(s.codeFont, d.codeFont),
     codeSize: clampSize(Number(s.codeSize), d.codeSize),
     terminalSize: clampSize(Number(s.terminalSize), d.terminalSize),
+    terminalLineHeight: clampLineHeight(Number(s.terminalLineHeight), d.terminalLineHeight),
+    terminalWebgl: typeof s.terminalWebgl === "boolean" ? s.terminalWebgl : d.terminalWebgl,
   };
 }
 

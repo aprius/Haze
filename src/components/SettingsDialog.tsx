@@ -5,7 +5,9 @@ import { create } from "zustand";
 import {
   CODE_FONT_SUGGESTIONS,
   DEFAULT_FONTS,
+  MAX_LINE_HEIGHT,
   MAX_SIZE,
+  MIN_LINE_HEIGHT,
   MIN_SIZE,
   resetFonts,
   setFonts,
@@ -151,8 +153,31 @@ function SizeInput({ field }: { field: "uiSize" | "codeSize" | "terminalSize" })
   );
 }
 
+function LineHeightInput() {
+  const value = useFonts((s) => s.terminalLineHeight);
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  return (
+    <input
+      className="modal-input settings-font-size"
+      type="number"
+      min={MIN_LINE_HEIGHT}
+      max={MAX_LINE_HEIGHT}
+      step={0.05}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = Number(e.target.value);
+        if (e.target.value && n >= MIN_LINE_HEIGHT && n <= MAX_LINE_HEIGHT) setFonts({ terminalLineHeight: n });
+      }}
+      onBlur={() => setDraft(String(value))}
+    />
+  );
+}
+
 function FontSettingsSection() {
   const codeFont = useFonts((s) => s.codeFont);
+  const webgl = useFonts((s) => s.terminalWebgl);
   const isDefault = useFonts((s) => (Object.keys(DEFAULT_FONTS) as (keyof FontSettings)[]).every((k) => s[k] === DEFAULT_FONTS[k]));
   return (
     <>
@@ -179,7 +204,18 @@ function FontSettingsSection() {
             {codeFont} (same as code)
           </span>
           <SizeInput field="terminalSize" />
+          <span>Terminal line height</span>
+          <span />
+          <LineHeightInput />
         </div>
+      </div>
+      <div className="settings-card">
+        <SwitchRow
+          label="GPU-accelerated terminal"
+          desc="Draws the terminal with WebGL: faster with large output, but on macOS some glyphs, often accented ones, come out lighter than the rest."
+          checked={webgl}
+          onChange={(on) => setFonts({ terminalWebgl: on })}
+        />
       </div>
       <datalist id="haze-ui-fonts">
         {UI_FONT_SUGGESTIONS.map((f) => (

@@ -22,6 +22,8 @@ interface View {
   term: Terminal;
   fit: FitAddon;
   search: SearchAddon;
+  /** Null while the DOM renderer draws (WebGL is off or its context was lost). */
+  webgl: WebglAddon | null;
   el: HTMLDivElement;
   ready: boolean;
   lastSize: string;
@@ -35,19 +37,42 @@ useTheme.subscribe((t) => {
   for (const v of views.values()) v.term.options.theme = TERMINAL_THEMES[t.mode];
 });
 
-// The terminal uses the code font family at its own size. Shown terminals
-// refit to the new cell size (see TerminalView); hidden ones refit when shown.
+// The terminal uses the code font family at its own size and line height.
+// Shown terminals refit to the new cell size (see TerminalView); hidden ones
+// refit when shown.
 useFonts.subscribe((f, prev) => {
-  if (f.codeFont === prev.codeFont && f.terminalSize === prev.terminalSize) return;
+  if (f.terminalWebgl !== prev.terminalWebgl) for (const v of views.values()) setWebgl(v, f.terminalWebgl);
+  if (f.codeFont === prev.codeFont && f.terminalSize === prev.terminalSize && f.terminalLineHeight === prev.terminalLineHeight) return;
   void loadCodeFont(f).then(() => {
     for (const v of views.values()) {
       v.term.options.fontFamily = codeFontFamily(f);
       v.term.options.fontSize = f.terminalSize;
+      v.term.options.lineHeight = f.terminalLineHeight;
     }
     fontListeners.forEach((l) => l());
   });
 });
 const fontListeners = new Set<() => void>();
+
+function setWebgl(v: View, on: boolean): void {
+  if (!on) {
+    v.webgl?.dispose();
+    v.webgl = null;
+    return;
+  }
+  if (v.webgl) return;
+  try {
+    const webgl = new WebglAddon();
+    webgl.onContextLoss(() => {
+      webgl.dispose();
+      if (v.webgl === webgl) v.webgl = null;
+    });
+    v.term.loadAddon(webgl);
+    v.webgl = webgl;
+  } catch {
+    // Falls back to the DOM renderer.
+  }
+}
 
 /** A keydown that inserts text, as opposed to Enter, arrows, shortcuts or IME composition. */
 function isTextKey(e: KeyboardEvent): boolean {
@@ -70,7 +95,7 @@ function createView(id: string, project: Project): View {
   const term = new Terminal({
     fontFamily: codeFontFamily(),
     fontSize: useFonts.getState().terminalSize,
-    lineHeight: 1.15,
+    lineHeight: useFonts.getState().terminalLineHeight,
     scrollback: 10000,
     allowProposedApi: true,
     cursorBlink: true,
@@ -83,15 +108,9 @@ function createView(id: string, project: Project): View {
   term.loadAddon(new Unicode11Addon());
   term.unicode.activeVersion = "11";
   term.open(el);
-  try {
-    const webgl = new WebglAddon();
-    webgl.onContextLoss(() => webgl.dispose());
-    term.loadAddon(webgl);
-  } catch {
-    // Falls back to the DOM renderer.
-  }
 
-  const view: View = { term, fit, search, el, ready: false, lastSize: "", cwd: null };
+  const view: View = { term, fit, search, webgl: null, el, ready: false, lastSize: "", cwd: null };
+  setWebgl(view, useFonts.getState().terminalWebgl);
   // Shells that report their directory make links right after `cd` even where
   // the OS does not tell (Windows).
   term.parser.registerOscHandler(7, (data) => {
