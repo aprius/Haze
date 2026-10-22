@@ -1706,6 +1706,14 @@ kbd {
   padding: 10px 12px 6px;
 }
 
+.se-backdrop.anchored {
+  background: transparent;
+}
+.se-backdrop.anchored .usages-popup {
+  position: fixed;
+  width: min(640px, calc(100% - 16px));
+}
+
 .usages-popup .se-list {
   max-height: 60vh;
   outline: none;

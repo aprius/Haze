@@ -304,11 +304,24 @@ setCodeVisionAuthor(async (model, from, to) => {
   };
 });
 
-// A Code Vision usages count opens the usages list for that symbol.
+/** Viewport point just under `pos`, where Rider opens its usages list. */
+function anchorBelow(editor: monaco.editor.ICodeEditor, pos: monaco.IPosition): { x: number; y: number } | null {
+  const at = editor.getScrolledVisiblePosition(pos);
+  const dom = editor.getDomNode();
+  if (!at || !dom) return null;
+  const r = dom.getBoundingClientRect();
+  return { x: r.left + at.left, y: r.top + at.top + at.height };
+}
+
+// A Code Vision usages count opens the usages list for that symbol, under its name.
 monaco.editor.registerCommand("haze.codeVisionUsages", (_accessor, path: string, line: number, column: number, name: string) => {
   const model = getModel(path);
   const project = projectForPath(path);
-  if (model && project) void showLocations(project, `Usages of ${name}`, () => findUsages(model, { lineNumber: line, column }));
+  if (!model || !project) return;
+  const pos = { lineNumber: line, column };
+  const shown = monaco.editor.getEditors().filter((e) => e.getModel() === model);
+  const editor = shown.find((e) => e.hasWidgetFocus()) ?? shown[0];
+  void showLocations(project, `Usages of ${name}`, () => findUsages(model, pos), false, editor ? anchorBelow(editor, pos) : null);
 });
 
 function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): monaco.IDisposable {
@@ -731,13 +744,19 @@ export function EditorArea({ project }: { project: Project }) {
       const model = editor.getModel();
       const pos = editor.getPosition();
       if (!model || !pos) return;
-      void showLocations(project, `Usages of ${symbolAt(editor)}`, () => (isCs() ? findUsages(model, pos) : findTextUsages(model, pos)));
+      void showLocations(
+        project,
+        `Usages of ${symbolAt(editor)}`,
+        () => (isCs() ? findUsages(model, pos) : findTextUsages(model, pos)),
+        false,
+        anchorBelow(editor, pos),
+      );
     });
     codeAction("haze.gotoImplementation", "Go to Implementation", [M.CtrlCmd | M.Alt | K.KeyB], () => {
       const model = editor.getModel();
       const pos = editor.getPosition();
       if (!model || !pos || !isCs()) return;
-      void showLocations(project, `Implementations of ${symbolAt(editor)}`, () => findImplementations(model, pos), true);
+      void showLocations(project, `Implementations of ${symbolAt(editor)}`, () => findImplementations(model, pos), true, anchorBelow(editor, pos));
     });
     codeAction("haze.annotate", "Annotate with Git Blame", [], () => void toggleBlame(project, editor), "9_git");
     codeAction("haze.fileHistory", "Show History for File", [], () => {

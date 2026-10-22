@@ -1,5 +1,5 @@
 // Results popup for Find Usages (Alt+F7) and Go to Implementation (Ctrl+Alt+B).
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { getModel } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
@@ -18,9 +18,11 @@ interface UsagesState {
   loading: boolean;
   error: string | null;
   items: Usage[];
+  /** Viewport point to open under (the symbol), else centred like Search Everywhere. */
+  anchor: { x: number; y: number } | null;
 }
 
-const useUsages = create<UsagesState>(() => ({ open: false, title: "", loading: false, error: null, items: [] }));
+const useUsages = create<UsagesState>(() => ({ open: false, title: "", loading: false, error: null, items: [], anchor: null }));
 
 function close() {
   useUsages.setState({ open: false });
@@ -33,8 +35,9 @@ export async function showLocations(
   title: string,
   query: () => Promise<FoundLocation[]>,
   jumpIfSingle = false,
+  anchor: { x: number; y: number } | null = null,
 ): Promise<void> {
-  useUsages.setState({ open: true, title, loading: true, error: null, items: [] });
+  useUsages.setState({ open: true, title, loading: true, error: null, items: [], anchor });
   try {
     const found = await query();
     if (jumpIfSingle && found.length === 1) {
@@ -59,9 +62,21 @@ export async function showLocations(
 }
 
 export function UsagesPopup({ project }: { project: Project | null }) {
-  const { open, title, loading, error, items } = useUsages();
+  const { open, title, loading, error, items, anchor } = useUsages();
   const [selected, setSelected] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+
+  // Under the symbol, kept inside the window: above it when there is no room below.
+  useLayoutEffect(() => {
+    const el = popupRef.current;
+    if (!el || !anchor) return;
+    const { width, height } = el.getBoundingClientRect();
+    const below = anchor.y + 4;
+    const top = below + height <= window.innerHeight - 8 ? below : Math.max(8, anchor.y - height - 24);
+    el.style.left = `${Math.max(8, Math.min(anchor.x, window.innerWidth - width - 8))}px`;
+    el.style.top = `${top}px`;
+  });
 
   useEffect(() => {
     setSelected(0);
@@ -82,8 +97,9 @@ export function UsagesPopup({ project }: { project: Project | null }) {
   let lastFile = "";
 
   return (
-    <div className="modal-backdrop se-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+    <div className={"modal-backdrop se-backdrop" + (anchor ? " anchored" : "")} onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div
+        ref={popupRef}
         className="se-popup usages-popup"
         tabIndex={-1}
         onKeyDown={(e) => {
