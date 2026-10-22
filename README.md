@@ -83,7 +83,7 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 - **Run bar** built from each project's `launchSettings.json` (and `dotnet test` for test projects). `Shift+F10` runs in its own terminal tab, which survives closing Haze.
 - Files created, changed or deleted by the agent are reported to Roslyn (`workspace/didChangeWatchedFiles`), so navigation always reflects the latest code. Even a huge change (a branch checkout, a Unity reimport) still reports its sources; if the OS dropped file events, Roslyn reloads the projects.
 - If Roslyn finds no definition (for example a new Unity script that Unity has not added to its `.csproj` yet), `Ctrl+Click` falls back to the text search. A crashed server restarts on its own (up to 3 times in a row).
-- **Unity**: add the [`com.haze.ide`](unity/com.haze.ide) package (*Package Manager → Add package from git URL* → `https://github.com/aprius/Haze.git?path=/unity/com.haze.ide`) and pick Haze as External Script Editor. Unity then generates the `.sln`/`.csproj` files for Haze and opens scripts and console errors in Haze at the right line.
+- **Unity**: add the [`com.haze.ide`](unity/com.haze.ide) package (*Package Manager → Add package from git URL* → `https://github.com/aprius/Haze.git?path=/unity/com.haze.ide`) and pick Haze as External Script Editor. Unity then generates the `.sln`/`.csproj` files for Haze (following build target, defines and `csc.rsp`; packages, player projects and Microsoft.Unity.Analyzers chosen in *External Tools*, like Rider) and opens scripts and console errors in Haze at the right line.
 - Command line: `haze <folder> [<file>] [--line N] [--column N]` opens a project or file; a running Haze is reused.
 
 ![C# navigation](docs/csharp.png)
