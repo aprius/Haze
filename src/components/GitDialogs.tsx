@@ -364,13 +364,18 @@ export function PushDialog({ project }: { project: Project | null }) {
   const [force, setForce] = useState(false);
   const [remote, setRemote] = useState("origin");
   const [target, setTarget] = useState("");
+  const [editing, setEditing] = useState(false);
 
   const branchName = requested ?? r?.branches?.current ?? null;
   const branch = r?.branches?.branches.find((b) => b.kind === "local" && b.name === branchName);
+  const remotes = r?.branches?.remotes ?? [];
+  // Rider tags a target that doesn't exist on the remote yet as "New".
+  const isNew = !r?.branches?.branches.some((b) => b.kind === "remote" && b.name === `${remote}/${target}`);
 
   useEffect(() => {
     if (!open || !r?.root || !branchName) return;
     setForce(false);
+    setEditing(false);
     const upstream = branch?.upstream ?? null;
     setRemote(upstream ? upstream.split("/")[0] : (r.branches?.remotes[0] ?? "origin"));
     setTarget(upstream ? upstream.split("/").slice(1).join("/") : branchName);
@@ -408,24 +413,56 @@ export function PushDialog({ project }: { project: Project | null }) {
         tabIndex={-1}
         onKeyDown={(e) => {
           if (e.key === "Escape") closePush();
-          if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && (r?.branches?.remotes.length ?? 0) > 0) void push();
+          if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && remotes.length > 0 && !editing) void push();
           e.stopPropagation();
         }}
       >
-        <div className="modal-title">
-          Push {branchName} → {remote}/{target}
-        </div>
-        {(r?.branches?.remotes.length ?? 0) === 0 ? (
+        <div className="modal-title">Push Commits to {project.name}</div>
+        {remotes.length === 0 ? (
           <div className="modal-message">This repository has no remote. Add one with `git remote add origin &lt;url&gt;`.</div>
         ) : (
           <>
             <div className="push-target">
-              <select className="find-select" value={remote} onChange={(e) => setRemote(e.target.value)}>
-                {r!.branches!.remotes.map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
-              <input className="find-input small" value={target} onChange={(e) => setTarget(e.target.value)} />
+              <GitBranch size={12} />
+              <span className="push-local">{branchName}</span>
+              <span className="muted">→</span>
+              {remotes.length > 1 ? (
+                <button
+                  className="push-link"
+                  title="Choose remote"
+                  onClick={(e) => openMenu(e, remotes.map((x) => ({ label: x, checked: x === remote, action: () => setRemote(x) })))}
+                >
+                  {remote}
+                </button>
+              ) : (
+                <span>{remote}</span>
+              )}
+              <span className="muted">:</span>
+              {editing ? (
+                <input
+                  autoFocus
+                  className="find-input small push-edit"
+                  defaultValue={target}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onBlur={(e) => {
+                    setTarget(e.currentTarget.value.trim() || target);
+                    setEditing(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) e.currentTarget.blur();
+                    if (e.key === "Escape") {
+                      e.currentTarget.value = target;
+                      e.currentTarget.blur();
+                      e.stopPropagation();
+                    }
+                  }}
+                />
+              ) : (
+                <button className="push-link" title="Click to push to another branch" onClick={() => setEditing(true)}>
+                  {target}
+                </button>
+              )}
+              {isNew && !editing && <span className="push-new">New</span>}
             </div>
             <div className="push-commits">
               {commits === null && <div className="muted small">Loading…</div>}
@@ -449,7 +486,7 @@ export function PushDialog({ project }: { project: Project | null }) {
           <button
             autoFocus
             className={"btn " + (force ? "danger" : "primary")}
-            disabled={(r?.branches?.remotes.length ?? 0) === 0}
+            disabled={remotes.length === 0}
             onClick={() => void push()}
           >
             {force ? "Force Push" : "Push"}
