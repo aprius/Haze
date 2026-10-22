@@ -188,7 +188,7 @@ fn start(args: &[String], agent: bool) -> Result<i32> {
         Some(Event::Output { id, .. }) => {
             let _ = tx.send(id);
         }
-        Some(Event::Snapshot { id, data }) if !data.is_empty() => {
+        Some(Event::Snapshot { id, data, .. }) if !data.is_empty() => {
             let _ = tx.send(id);
         }
         _ => {}
@@ -469,7 +469,7 @@ fn read(args: &[String]) -> Result<i32> {
     }
     let (tx, rx) = mpsc::channel::<(String, String)>();
     let client = PtyClient::new(Arc::new(move |ev| {
-        if let Some(Event::Snapshot { id, data }) = ev {
+        if let Some(Event::Snapshot { id, data, .. }) = ev {
             let _ = tx.send((id, data));
         }
     }));

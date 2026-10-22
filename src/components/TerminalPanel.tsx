@@ -26,7 +26,10 @@ interface View {
   webgl: WebglAddon | null;
   el: HTMLDivElement;
   ready: boolean;
+  /** The size last sent to the PTY, as `colsxrows`. */
   lastSize: string;
+  /** Fits to the panel and tells the PTY, while the view is mounted. */
+  refit: (() => void) | null;
   /** Directory the shell last reported (OSC 7 / OSC 9;9), if it does. */
   cwd: string | null;
 }
@@ -109,7 +112,7 @@ function createView(id: string, project: Project): View {
   term.unicode.activeVersion = "11";
   term.open(el);
 
-  const view: View = { term, fit, search, webgl: null, el, ready: false, lastSize: "", cwd: null };
+  const view: View = { term, fit, search, webgl: null, el, ready: false, lastSize: "", refit: null, cwd: null };
   setWebgl(view, useFonts.getState().terminalWebgl);
   // Shells that report their directory make links right after `cd` even where
   // the OS does not tell (Windows).
@@ -234,7 +237,15 @@ function createView(id: string, project: Project): View {
   subscribeSession(id, (e) => {
     if (e.t === "snapshot") {
       term.reset();
-      term.write(decode(e.data));
+      // Replay at the size the output was drawn for: a hidden terminal is
+      // still 80x24, and cursor moves at another width overlap the text.
+      // Then fit, and a program that draws the whole screen redraws on resize.
+      if (e.size) {
+        const [cols, rows] = e.size;
+        term.resize(cols, rows);
+        view.lastSize = `${cols}x${rows}`;
+      }
+      term.write(decode(e.data), () => view.refit?.());
       view.ready = true;
     } else if (e.t === "output") {
       if (view.ready) term.write(decode(e.data));
@@ -306,9 +317,11 @@ function TerminalView({ id, project, active }: { id: string; project: Project; a
     if (host.current) ro.observe(host.current);
     fit();
     fontListeners.add(fit);
+    v.refit = fit;
     return () => {
       ro.disconnect();
       fontListeners.delete(fit);
+      if (v.refit === fit) v.refit = null;
     };
   }, [id, project]);
 
@@ -316,11 +329,7 @@ function TerminalView({ id, project, active }: { id: string; project: Project; a
     const v = views.get(id);
     if (active && v) {
       requestAnimationFrame(() => {
-        try {
-          v.fit.fit();
-        } catch {
-          /* hidden */
-        }
+        v.refit?.();
         v.term.focus();
       });
     }

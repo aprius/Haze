@@ -121,6 +121,11 @@ pub enum Event {
     Snapshot {
         id: String,
         data: String,
+        /// The PTY's size now, which the output was last drawn for: a client
+        /// replays at it so cursor moves land where they did. `None` from an
+        /// older host.
+        #[serde(default)]
+        size: Option<(u16, u16)>,
     },
     Output {
         id: String,

@@ -577,6 +577,7 @@ enum PtyUiEvent {
     Snapshot {
         id: String,
         data: String,
+        size: Option<(u16, u16)>,
     },
     Output {
         id: String,
@@ -650,7 +651,7 @@ fn take_open_requests(pending: State<cli_open::PendingOpens>) -> Vec<cli_open::O
 
 fn forward_pty_event(app: &AppHandle, event: Option<PtyEvent>) {
     let ui = match event {
-        Some(PtyEvent::Snapshot { id, data }) => PtyUiEvent::Snapshot { id, data },
+        Some(PtyEvent::Snapshot { id, data, size }) => PtyUiEvent::Snapshot { id, data, size },
         Some(PtyEvent::Output { id, data }) => PtyUiEvent::Output { id, data },
         Some(PtyEvent::Exit { id, code }) => PtyUiEvent::Exit { id, code },
         Some(PtyEvent::Agent { id, status }) => PtyUiEvent::Agent { id, status },

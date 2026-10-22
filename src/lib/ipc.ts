@@ -119,7 +119,7 @@ export interface HookStatus {
 }
 
 export type PtyEvent =
-  | { t: "snapshot"; id: string; data: string }
+  | { t: "snapshot"; id: string; data: string; /** PTY [cols, rows]; absent from an older host. */ size?: [number, number] | null }
   | { t: "output"; id: string; data: string }
   | { t: "exit"; id: string; code: number | null }
   | { t: "agent"; id: string; status: AgentStatus | null }

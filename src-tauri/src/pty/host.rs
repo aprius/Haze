@@ -198,6 +198,7 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
                 body: Event::Snapshot {
                     id: id.clone(),
                     data: b64(&s.scrollback.bytes()),
+                    size: s.master.get_size().ok().map(|z| (z.cols, z.rows)),
                 },
             };
             if let Some(tx) = host.clients.lock().get(&client) {
