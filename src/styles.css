@@ -673,20 +673,43 @@ kbd {
   color: var(--fg);
 }
 
-.breadcrumb {
-  flex: none;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  font-size: calc(var(--ui-font-size) * 12 / 13);
-  color: var(--muted);
-  white-space: nowrap;
+/* Clips from the left when narrow, so the file name stays visible. */
+.crumbs {
+  min-width: 0;
   overflow: hidden;
+  justify-content: flex-end;
+  gap: 0;
+}
+
+.crumb-wrap {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.crumb {
+  border: 0;
+  background: transparent;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--muted);
+  font: inherit;
+  white-space: nowrap;
+}
+
+.crumb.file {
+  color: var(--fg);
+}
+
+.crumb:hover {
+  background: var(--hover);
+  color: var(--fg);
 }
 
 .crumb-sep {
-  margin: 0 5px;
+  margin: 0 1px;
   opacity: 0.6;
 }
 
@@ -895,6 +918,8 @@ kbd {
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
 }
 
 .menu-item {
@@ -1395,12 +1420,8 @@ kbd {
   flex: none;
   display: flex;
   align-items: center;
-  padding-right: 8px;
-}
-
-.editor-toolbar .breadcrumb {
-  flex: 1;
-  min-width: 0;
+  justify-content: flex-end;
+  padding: 2px 8px;
 }
 
 .image-view img {

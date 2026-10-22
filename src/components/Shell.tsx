@@ -5,7 +5,6 @@ import { FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hamme
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type TextEncoding } from "../lib/ipc";
-import { basename } from "../lib/path";
 import { toggleThemeMode, useTheme } from "../lib/theme";
 import { useGit } from "../store/git";
 import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
@@ -15,7 +14,7 @@ import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
 import { useWorkspace, type Project } from "../store/workspace";
-import { closeTabsWithPrompt, useCursor } from "./EditorArea";
+import { closeTabsWithPrompt, PathCrumbs, useCursor } from "./EditorArea";
 import { confirmAction, openMenu } from "./Overlays";
 import { disposeView, toggleTerminal } from "./TerminalPanel";
 import { shortcutLabel } from "../lib/keymap";
@@ -285,20 +284,21 @@ export function StatusBar({ project }: { project: Project | null }) {
           >
             <GitCommitHorizontal size={12} />
           </button>
-          <span className="status-item">{project.name}</span>
+          {!ui?.activeTab && <span className="status-item">{project.name}</span>}
           {git?.status.isRepo && (
             <button className="status-item status-btn" title={`Branches (${shortcutLabel("branches")})`} onClick={() => openBranchesPopup(project)}>
               <GitBranch size={12} /> {git.status.branch ?? "detached"}
               {operation && <span className="status-op">({operation} in progress)</span>}
             </button>
           )}
-          {ui?.activeTab && (
-            <span className="status-item muted">{parseDiffPath(ui.activeTab)
-                ? diffTitle(parseDiffPath(ui.activeTab)!)
-                : ui.activeTab.startsWith("haze-merge:")
-                  ? "Merge"
-                  : basename(ui.activeTab)}</span>
-          )}
+          {ui?.activeTab &&
+            (parseDiffPath(ui.activeTab) ? (
+              <span className="status-item muted">{diffTitle(parseDiffPath(ui.activeTab)!)}</span>
+            ) : ui.activeTab.startsWith("haze-merge:") ? (
+              <span className="status-item muted">Merge</span>
+            ) : (
+              <PathCrumbs project={project} path={ui.activeTab} />
+            ))}
         </>
       )}
       <span className="status-spacer" />

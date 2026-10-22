@@ -454,18 +454,69 @@ export function revealInTree(project: Project, path: string): void {
   setSelection(project.id, [path], path);
 }
 
-function Breadcrumb({ project, path }: { project: Project; path: string }) {
-  const parts = relative(project.path, path).split("/");
+/** Lists `dir` in a menu at `at`; folders drill down in place, files open. */
+async function openDirMenu(project: Project, dir: string, at: { clientX: number; clientY: number }, current?: string): Promise<void> {
+  let entries;
+  try {
+    entries = (await api.listDir(dir, true)).filter((e) => !e.nestedUnder);
+  } catch (e) {
+    return toast(errorMessage(e), "error");
+  }
+  entries.sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name));
+  openMenu(
+    at,
+    entries.length
+      ? entries.map((e) => ({
+          label: (e.path === current ? "• " : "") + e.name + (e.isDir ? "/" : ""),
+          action: () =>
+            e.isDir ? void openDirMenu(project, e.path, at, current) : useWorkspace.getState().openFile(project.id, e.path),
+        }))
+      : [{ label: "Empty folder", disabled: true }],
+  );
+}
+
+function crumbMenu(project: Project, path: string, isDir: boolean) {
+  return [
+    ...(isDir ? [] : [{ label: "Close", action: () => void closeTabsWithPrompt(project.id, [path]) }, { separator: true }]),
+    { label: "Copy Path", action: () => void navigator.clipboard.writeText(path) },
+    { label: "Copy Relative Path", action: () => void navigator.clipboard.writeText(relative(project.path, path)) },
+    { label: "Select in Project View", shortcut: shortcutLabel("selectInProject"), action: () => revealInTree(project, path) },
+    { label: "Reveal in File Manager", action: () => void revealItemInDir(path) },
+  ];
+}
+
+/** The active file's path for the status bar, Rider style: a folder lists its contents, a file its siblings. */
+export function PathCrumbs({ project, path }: { project: Project; path: string }) {
+  const rel = relative(project.path, path);
+  if (rel === path) return <span className="status-item muted">{basename(path)}</span>;
+  const parts = rel.split("/");
+  const crumbs = [{ name: project.name, path: project.path }];
+  parts.forEach((name, i) => crumbs.push({ name, path: project.path + "/" + parts.slice(0, i + 1).join("/") }));
   return (
-    <div className="breadcrumb">
-      <span>{project.name}</span>
-      {parts.map((p, i) => (
-        <span key={i}>
-          <span className="crumb-sep">›</span>
-          {p}
-        </span>
-      ))}
-    </div>
+    <span className="status-item crumbs">
+      {crumbs.map((c, i) => {
+        const isFile = i === crumbs.length - 1;
+        return (
+          <span key={c.path} className="crumb-wrap">
+            {i > 0 && <span className="crumb-sep">›</span>}
+            <button
+              className={"crumb" + (isFile ? " file" : "")}
+              title={c.path}
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                void openDirMenu(project, isFile ? dirname(c.path) : c.path, { clientX: r.left, clientY: r.top }, path);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                openMenu(e, crumbMenu(project, c.path, !isFile));
+              }}
+            >
+              {c.name}
+            </button>
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -635,19 +686,16 @@ export function EditorArea({ project }: { project: Project }) {
   return (
     <div className="editor-area">
       <TabBar project={project} />
-      {active && !special && (
+      {active && isMarkdown && (
         <div className="editor-toolbar">
-          <Breadcrumb project={project} path={active} />
-          {isMarkdown && (
-            <div className="seg small">
-              <button className={"seg-btn" + (!showMd ? " on" : "")} onClick={() => setMdPreview((m) => ({ ...m, [active]: false }))}>
-                Source
-              </button>
-              <button className={"seg-btn" + (showMd ? " on" : "")} onClick={() => setMdPreview((m) => ({ ...m, [active]: true }))}>
-                Preview
-              </button>
-            </div>
-          )}
+          <div className="seg small">
+            <button className={"seg-btn" + (!showMd ? " on" : "")} onClick={() => setMdPreview((m) => ({ ...m, [active]: false }))}>
+              Source
+            </button>
+            <button className={"seg-btn" + (showMd ? " on" : "")} onClick={() => setMdPreview((m) => ({ ...m, [active]: true }))}>
+              Preview
+            </button>
+          </div>
         </div>
       )}
       {active && meta?.status === "text" && meta.diskChanged && <DiskBanner path={active} />}
