@@ -89,3 +89,30 @@ export function setThemeMode(mode: ThemeMode): void {
 export function toggleThemeMode(): void {
   setThemeMode(useTheme.getState().mode === "dark" ? "light" : "dark");
 }
+
+// Tab style: "classic" underlines the active tab; "islands" draws tabs as
+// rounded chips like Rider's Islands UI. Only the shape changes, the colours
+// stay Monokai Pro's.
+export type TabStyle = "classic" | "islands";
+
+const TABS_KEY = "haze.tabStyle";
+
+function initialTabs(): TabStyle {
+  try {
+    const saved = localStorage.getItem(TABS_KEY);
+    if (saved === "classic" || saved === "islands") return saved;
+  } catch {}
+  return "classic";
+}
+
+export const useTabStyle = create<{ style: TabStyle }>(() => ({ style: initialTabs() }));
+
+document.documentElement.dataset.tabs = useTabStyle.getState().style;
+
+export function setTabStyle(style: TabStyle): void {
+  try {
+    localStorage.setItem(TABS_KEY, style);
+  } catch {}
+  document.documentElement.dataset.tabs = style;
+  useTabStyle.setState({ style });
+}

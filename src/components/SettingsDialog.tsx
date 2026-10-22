@@ -1,4 +1,4 @@
-// Settings: fonts, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting.
+// Settings: fonts, tab style, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting.
 import { Bot, Code, FolderTree, GitBranch, type LucideIcon, Type, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { create } from "zustand";
@@ -16,6 +16,7 @@ import {
   type FontSettings,
 } from "../lib/fonts";
 import { api, errorMessage, type HookAgent, type HookStatus } from "../lib/ipc";
+import { setTabStyle, type TabStyle, useTabStyle } from "../lib/theme";
 import { popupClosed } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
@@ -112,6 +113,11 @@ function AgentRow({ id, name, what }: (typeof AGENTS)[number]) {
   );
 }
 
+const TAB_STYLES: [TabStyle, string][] = [
+  ["classic", "Classic"],
+  ["islands", "Islands"],
+];
+
 /** A font name, applied on Enter or blur rather than per keystroke (editors re-measure on each change). */
 function FontInput({ field, list }: { field: "uiFont" | "codeFont"; list: string }) {
   const value = useFonts((s) => s[field]);
@@ -178,6 +184,7 @@ function LineHeightInput() {
 function FontSettingsSection() {
   const codeFont = useFonts((s) => s.codeFont);
   const webgl = useFonts((s) => s.terminalWebgl);
+  const tabStyle = useTabStyle((s) => s.style);
   const isDefault = useFonts((s) => (Object.keys(DEFAULT_FONTS) as (keyof FontSettings)[]).every((k) => s[k] === DEFAULT_FONTS[k]));
   return (
     <>
@@ -207,6 +214,21 @@ function FontSettingsSection() {
           <span>Terminal line height</span>
           <span />
           <LineHeightInput />
+        </div>
+      </div>
+      <div className="settings-card">
+        <div className="settings-row static">
+          <div className="settings-row-text">
+            <div>Tab style</div>
+            <div className="muted small">Islands draws editor and tool window tabs as rounded chips, like Rider's Islands UI. Colours stay Monokai Pro.</div>
+          </div>
+          <div className="seg">
+            {TAB_STYLES.map(([id, name]) => (
+              <button key={id} className={"seg-btn" + (tabStyle === id ? " on" : "")} onClick={() => setTabStyle(id)}>
+                {name}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="settings-card">

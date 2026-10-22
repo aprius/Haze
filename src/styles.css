@@ -659,6 +659,54 @@ kbd {
   color: var(--fg);
 }
 
+/* Islands tab style (Settings > Appearance, set on <html data-tabs> by src/lib/theme.ts):
+   tabs are rounded chips on the bar, the active one filled and outlined instead of underlined. */
+:root[data-tabs="islands"] .editor-tabs {
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+
+:root[data-tabs="islands"] .editor-tab {
+  flex: none;
+  height: 24px;
+  padding: 0 3px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+:root[data-tabs="islands"] .editor-tab.active {
+  background: var(--selected-inactive);
+  border-color: var(--selected);
+}
+
+:root[data-tabs="islands"] .editor-tab .tab-close,
+:root[data-tabs="islands"] .term-tab .tab-close {
+  width: 18px;
+  height: 18px;
+}
+
+:root[data-tabs="islands"] .editor-tab.active .tab-close:hover,
+:root[data-tabs="islands"] .term-tab.active .tab-close:hover {
+  background: var(--selected);
+}
+
+:root[data-tabs="islands"] .term-tab,
+:root[data-tabs="islands"] .tool-tab,
+:root[data-tabs="islands"] .se-tab {
+  border-radius: 6px;
+}
+
+:root[data-tabs="islands"] .term-tab.active,
+:root[data-tabs="islands"] .tool-tab.active,
+:root[data-tabs="islands"] .se-tab.active {
+  box-shadow: inset 0 0 0 1px var(--selected);
+}
+
+:root[data-tabs="islands"] .se-tab.active {
+  background: var(--selected-inactive);
+}
+
 /* Clips from the left when narrow, so the file name stays visible. */
 .crumbs {
   min-width: 0;
@@ -3250,4 +3298,7 @@ html:has(.float-external) body {
 .pull-branch {
   flex: 1;
   min-width: 0;
+}
+.settings-row.static {
+  cursor: default;
 }
