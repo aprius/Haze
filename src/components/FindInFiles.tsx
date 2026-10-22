@@ -530,10 +530,11 @@ export function FindInFiles({ project }: { project: Project | null }) {
   const onKeyDown = (e: React.KeyboardEvent) => {
     const move = (delta: number) => {
       const step = delta > 0 ? 1 : -1;
-      let i = Math.min(Math.max(selected + delta, 0), rows.length - 1);
-      // Paging past the end lands on the last match rather than nowhere.
+      const target = Math.min(Math.max(selected + delta, 0), rows.length - 1);
+      let i = target;
       while (rows[i] && rows[i].kind !== "match") i += step;
-      if (!rows[i]) for (i = selected; rows[i + step]; i += step) if (rows[i + step].kind === "match") break;
+      // Paging past either end lands on the first or last match rather than nowhere.
+      if (!rows[i]) for (i = target; rows[i] && rows[i].kind !== "match"; i -= step);
       if (rows[i]?.kind !== "match") return;
       setSelected(i);
       scrollIntoView(i);

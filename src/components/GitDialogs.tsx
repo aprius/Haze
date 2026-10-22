@@ -8,7 +8,6 @@ import { validBranch } from "../lib/gitView";
 import { parseWorktrees, type Worktree } from "../lib/worktrees";
 
 export type { Worktree };
-import { saveAll } from "./EditorArea";
 import { refreshRepo, repo, runGit, useGit } from "../store/git";
 import { openCommitWindow, popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -19,7 +18,6 @@ import { shortcutLabel } from "../lib/keymap";
 // ------------------------------------------------------------------ branch actions
 
 export async function checkout(project: Project, target: string, opts: { remote?: boolean } = {}): Promise<void> {
-  await saveAll();
   // A remote branch becomes a local tracking branch with the short name.
   const local = opts.remote ? target.replace(/^[^/]+\//, "") : null;
   const exists = local && repo(project.id).branches?.branches.some((b) => b.kind === "local" && b.name === local);
@@ -77,7 +75,6 @@ export async function newWorktree(project: Project, from: string | null = null):
 export async function newBranch(project: Project, from: string | null): Promise<void> {
   const name = await prompt(from ? `New Branch from ${from}` : "New Branch", "", { validate: validBranch, okLabel: "Create" });
   if (!name) return;
-  await saveAll();
   await runGit(project.id, ["checkout", "-b", name.trim(), ...(from ? [from] : [])], { label: `Create branch ${name.trim()}` });
 }
 
@@ -228,7 +225,6 @@ export async function updateProject(project: Project): Promise<void> {
   ]);
   if (!mode) return;
   updateMode = mode as "rebase" | "merge";
-  await saveAll();
   await runGit(project.id, ["pull", "--autostash", mode === "rebase" ? "--rebase" : "--no-rebase"], { label: "Update Project" });
 }
 
@@ -481,7 +477,6 @@ let pullMode: PullMode = "merge";
 /** Pulls `remote`/`branch` into the current branch; local changes are stashed and restored. */
 async function pull(project: Project, remote: string, branch: string, mode: PullMode): Promise<void> {
   pullMode = mode;
-  await saveAll();
   const arg = pullModes.find((m) => m.value === mode)!.arg;
   // --ff-only / --no-ff / --squash merge, so they need --no-rebase against a pull.rebase config.
   const extra = mode === "merge" || mode === "rebase" ? [arg] : ["--no-rebase", arg];
@@ -536,11 +531,13 @@ export function PullDialog({ project }: { project: Project | null }) {
   const known = targets.includes(target);
   useEffect(() => {
     if (!open || !r?.root || !known || fetching) return;
+    // A branch picked while the previous one's log is still loading: only the latest answer shows.
+    let stale = false;
     setCommits(null);
     void api
       .gitRun(r.root, ["log", "--format=%H%x1f%s", "--max-count=200", `HEAD..refs/remotes/${ref}`])
       .then((out) =>
-        setCommits(
+        !stale && setCommits(
           out.stdout
             .split("\n")
             .filter(Boolean)
@@ -550,7 +547,10 @@ export function PullDialog({ project }: { project: Project | null }) {
             }),
         ),
       )
-      .catch(() => setCommits([]));
+      .catch(() => !stale && setCommits([]));
+    return () => {
+      stale = true;
+    };
   }, [open, r?.root, ref, known, fetching, r?.branches?.head]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open || !project || project.id !== projectId) return null;

@@ -350,8 +350,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
       root = mount();
       setHost({ win, root });
       unmirror = mirrorStyles(win);
-      win.addEventListener("keydown", forward, true);
-      win.addEventListener("focus", () => useHost.setState({ doc }));
+      listen();
       useHost.setState({ doc });
     };
     let closing = false;
@@ -367,8 +366,16 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
         window.dispatchEvent(new KeyboardEvent("keydown", e));
       }
     };
-    win.addEventListener("keydown", forward, true);
-    win.addEventListener("focus", () => useHost.setState({ doc }));
+    const focused = () => useHost.setState({ doc });
+    // Again after a document swap: a new Window lost them, while the same one
+    // must not get them twice (Save All would run twice and its saves collide).
+    const listen = () => {
+      win.removeEventListener("keydown", forward, true);
+      win.removeEventListener("focus", focused);
+      win.addEventListener("keydown", forward, true);
+      win.addEventListener("focus", focused);
+    };
+    listen();
     win.addEventListener("load", () => setTimeout(reattach));
     const poll = setInterval(() => (win.closed ? closed() : reattach()), 400);
     let unlisten: (() => void) | null = null;

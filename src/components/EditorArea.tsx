@@ -6,7 +6,7 @@ import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, reloadingFromDisk,
 import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
-import { basename, dirname, extname, isWithin, relative } from "../lib/path";
+import { basename, dirname, extname, isWithin, join, relative } from "../lib/path";
 import { clearUnusedMarks, findImplementations, findUsages, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
 import { lineChanges } from "../lib/lineChanges";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
@@ -691,11 +691,10 @@ function crumbMenu(project: Project, path: string, isDir: boolean) {
 
 /** The active file's path for the status bar, Rider style: a folder lists its contents, a file its siblings. */
 export function PathCrumbs({ project, path }: { project: Project; path: string }) {
-  const rel = relative(project.path, path);
-  if (rel === path) return <span className="status-item muted">{basename(path)}</span>;
-  const parts = rel.split("/");
+  if (!isWithin(path, project.path) || path === project.path) return <span className="status-item muted">{basename(path)}</span>;
+  // Built with the OS's separator, so a crumb's path matches the listing's (Windows too).
   const crumbs = [{ name: project.name, path: project.path }];
-  parts.forEach((name, i) => crumbs.push({ name, path: project.path + "/" + parts.slice(0, i + 1).join("/") }));
+  for (const name of relative(project.path, path).split("/")) crumbs.push({ name, path: join(crumbs[crumbs.length - 1].path, name) });
   return (
     <span className="status-item crumbs">
       {crumbs.map((c, i) => {
