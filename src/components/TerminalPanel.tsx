@@ -11,10 +11,10 @@ import { api } from "../lib/ipc";
 import { matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
 import { TERMINAL_THEMES, useTheme } from "../lib/theme";
-import { agentBadge, agentName, busyTerminals, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
+import { agentBadge, agentName, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
-import { confirmAction, openMenu } from "./Overlays";
+import { openMenu } from "./Overlays";
 
 // xterm instances outlive React mounts so switching tabs or projects keeps
 // their screen and scrollback.
@@ -410,11 +410,6 @@ export function TerminalPanel({ project }: { project: Project }) {
   }, []);
 
   const close = async (id: string) => {
-    const s = sessions[id];
-    // A shell waiting at its prompt closes without a question, like Rider.
-    const busy = (await busyTerminals([id])).length > 0;
-    if (busy && !(await confirmAction("Close terminal", `"${s?.title ?? "Terminal"}" is still running. Terminate it?`, "Terminate", true)))
-      return;
     disposeView(id);
     await closeTerminal(project.id, id);
   };
