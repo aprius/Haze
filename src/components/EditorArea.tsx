@@ -491,6 +491,7 @@ function DiskBanner({ path }: { path: string }) {
 export function EditorArea({ project }: { project: Project }) {
   const ui = useWorkspace((s) => s.ui[project.id]);
   const reveal = useWorkspace((s) => s.reveal);
+  const stickyScroll = useWorkspace((s) => s.stickyScroll);
   const active = ui?.activeTab ?? null;
   const meta = useBuffers((s) => (active ? s.meta[active] : undefined));
   const host = useRef<HTMLDivElement>(null);
@@ -509,7 +510,7 @@ export function EditorArea({ project }: { project: Project }) {
       scrollBeyondLastLine: false,
       renderWhitespace: "selection",
       smoothScrolling: true,
-      stickyScroll: { enabled: true },
+      stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
       suggest: suggestOptions,
       bracketPairColorization: { enabled: true },
       // Roslyn's semantic tokens (lsp/csharp.ts); the theme alone would leave them off.
@@ -581,6 +582,10 @@ export function EditorArea({ project }: { project: Project }) {
       }
     };
   }, [project.id]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ stickyScroll: { enabled: stickyScroll } });
+  }, [stickyScroll]);
 
   // Load the active file (applying any recovered draft once).
   useEffect(() => {

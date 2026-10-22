@@ -14,6 +14,7 @@ interface Persisted {
   ui: Record<string, ProjectUi>;
   drafts: Record<string, { content: string; baseMtime: number }>;
   nestFiles: boolean;
+  stickyScroll?: boolean;
   notifyAgents?: boolean;
 }
 
@@ -33,6 +34,7 @@ function snapshot(): Persisted {
     ui: s.ui,
     drafts,
     nestFiles: s.nestFiles,
+    stickyScroll: s.stickyScroll,
     notifyAgents: s.notifyAgents,
   };
 }
@@ -89,6 +91,7 @@ async function doRestore(): Promise<void> {
       activeProjectId: data.activeProjectId ?? null,
       ui,
       nestFiles: data.nestFiles ?? true,
+      stickyScroll: data.stickyScroll ?? true,
       notifyAgents: data.notifyAgents ?? true,
     });
   }

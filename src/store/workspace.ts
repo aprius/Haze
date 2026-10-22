@@ -79,6 +79,8 @@ interface WorkspaceState {
   ui: Record<string, ProjectUi>;
   reveal: Reveal | null;
   nestFiles: boolean;
+  /** Pins the enclosing class/method lines at the top of the editor while scrolling. */
+  stickyScroll: boolean;
   /** Desktop notifications when an agent needs you or finishes. */
   notifyAgents: boolean;
 
@@ -106,6 +108,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   ui: {},
   reveal: null,
   nestFiles: true,
+  stickyScroll: true,
   notifyAgents: true,
 
   addProject(path) {

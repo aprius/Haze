@@ -1,5 +1,5 @@
 // Settings: fonts, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting.
-import { Bot, FolderTree, GitBranch, type LucideIcon, Type, X } from "lucide-react";
+import { Bot, Code, FolderTree, GitBranch, type LucideIcon, Type, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { create } from "zustand";
 import {
@@ -21,7 +21,7 @@ import { useWorkspace } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
 import { toast } from "./Overlays";
 
-type Page = "appearance" | "agents" | "vcs" | "project";
+type Page = "appearance" | "editor" | "agents" | "vcs" | "project";
 
 // The page stays selected between openings.
 const useSettings = create<{ open: boolean; page: Page }>(() => ({ open: false, page: "appearance" }));
@@ -291,6 +291,23 @@ function AgentsSection() {
   );
 }
 
+function EditorSection() {
+  const stickyScroll = useWorkspace((s) => s.stickyScroll);
+  return (
+    <>
+      <PageHeader title="Editor" />
+      <div className="settings-card">
+        <SwitchRow
+          label="Sticky scroll"
+          desc="Keeps the enclosing namespace, class and method lines pinned at the top while you scroll."
+          checked={stickyScroll}
+          onChange={(on) => useWorkspace.setState({ stickyScroll: on })}
+        />
+      </div>
+    </>
+  );
+}
+
 function ProjectViewSection() {
   const nestFiles = useWorkspace((s) => s.nestFiles);
   return (
@@ -310,6 +327,7 @@ function ProjectViewSection() {
 
 const PAGES: { id: Page; name: string; icon: LucideIcon; body: () => ReactNode }[] = [
   { id: "appearance", name: "Appearance", icon: Type, body: () => <FontSettingsSection /> },
+  { id: "editor", name: "Editor", icon: Code, body: () => <EditorSection /> },
   { id: "agents", name: "AI Agents", icon: Bot, body: () => <AgentsSection /> },
   { id: "vcs", name: "Version Control", icon: GitBranch, body: () => <GitAccountsSection /> },
   { id: "project", name: "Project View", icon: FolderTree, body: () => <ProjectViewSection /> },

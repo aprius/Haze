@@ -99,6 +99,9 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
       "editorHoverWidget.background": c.widget,
       "editorHoverWidget.border": c.border,
       "editorStickyScroll.background": c.bg,
+      // A hairline in the theme's border colour, not Monaco's black drop shadow.
+      "editorStickyScroll.border": c.border,
+      "editorStickyScroll.shadow": "#00000000",
       "diffEditor.insertedTextBackground": c.green + "26",
       "diffEditor.removedTextBackground": c.red + "26",
       "diffEditor.insertedLineBackground": c.green + "14",

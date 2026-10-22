@@ -99,6 +99,11 @@ export const actions: Action[] = [
       useTree.setState({ dirs: {} });
     },
   },
+  {
+    id: "toggleStickyScroll",
+    label: "Sticky Scroll (toggle)",
+    run: () => useWorkspace.setState((s) => ({ stickyScroll: !s.stickyScroll })),
+  },
 ];
 
 /** Subsequence match score for action labels; higher is better, null = no match. */
