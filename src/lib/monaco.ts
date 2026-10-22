@@ -19,7 +19,8 @@ import { monacoTheme, useTheme } from "./theme";
 // emits coarse token classes, so these map the filter's palette onto them.
 const MONOKAI = {
   dark: {
-    bg: "#2d2a2e", fg: "#fcfcfa", dim: "#939293", comment: "#727072", red: "#ff6188", orange: "#fc9867",
+    // Text toned down from the filter's #fcfcfa, which glares (Rider's is #bcbec4).
+    bg: "#2d2a2e", fg: "#d3d1cf", dim: "#939293", comment: "#727072", red: "#ff6188", orange: "#fc9867",
     yellow: "#ffd866", green: "#a9dc76", blue: "#78dce8", purple: "#ab9df2",
     gutter: "#5b595c", gutterActive: "#c1c0c0", widget: "#403e41", border: "#221f22",
   },

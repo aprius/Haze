@@ -21,11 +21,12 @@ export const useTheme = create<{ mode: ThemeMode }>(() => ({ mode: initial() }))
 export const monacoTheme = (mode: ThemeMode = useTheme.getState().mode) => (mode === "dark" ? "haze-dark" : "haze-light");
 
 export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
-  // Monokai Pro (Filter: Pro), as its terminal themes ship it.
+  // Monokai Pro (Filter: Pro), as its terminal themes ship it, but for the
+  // default text (and plain white): #fcfcfa glares, as in the editor.
   dark: {
     background: "#2d2a2e",
-    foreground: "#fcfcfa",
-    cursor: "#fcfcfa",
+    foreground: "#d3d1cf",
+    cursor: "#d3d1cf",
     cursorAccent: "#2d2a2e",
     selectionBackground: "#5b595c",
     black: "#403e41",
@@ -35,7 +36,7 @@ export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
     blue: "#fc9867",
     magenta: "#ab9df2",
     cyan: "#78dce8",
-    white: "#fcfcfa",
+    white: "#d3d1cf",
     brightBlack: "#727072",
     brightRed: "#ff6188",
     brightGreen: "#a9dc76",
