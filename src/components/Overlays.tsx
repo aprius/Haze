@@ -331,17 +331,24 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
       doc.write('<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>');
       doc.close();
     }
-    const root = doc.createElement("div");
-    root.className = "float-external";
-    doc.body.appendChild(root);
+    const mount = () => {
+      const el = doc.createElement("div");
+      el.className = "float-external";
+      doc.body.appendChild(el);
+      return el;
+    };
+    let root = mount();
     let unmirror = mirrorStyles(win);
     // WebKit may still load the window's URL into it, replacing the document:
-    // move our content (and its styles) into the new one.
+    // render our content (and styles) again in the new one. Not moved: Monaco
+    // keeps the old document, which has no window any more, and throws.
     const reattach = () => {
       if (win.closed || win.document === doc || !win.document.body) return;
       doc = win.document;
       unmirror();
-      doc.body.appendChild(doc.adoptNode(root));
+      root.remove();
+      root = mount();
+      setHost({ win, root });
       unmirror = mirrorStyles(win);
       win.addEventListener("keydown", forward, true);
       win.addEventListener("focus", () => useHost.setState({ doc }));
