@@ -11,19 +11,19 @@ export const GROUPS: { id: string; label: string; match: (c: GitChange) => boole
   { id: "unversioned", label: "Unversioned Files", match: (c) => c.status === "untracked" },
 ];
 
-export type ChangeRow =
-  | { kind: "dir"; key: string; name: string; depth: number; files: GitChange[] }
-  | { kind: "file"; change: GitChange; depth: number };
+export type ChangeRow<T extends { rel: string } = GitChange> =
+  | { kind: "dir"; key: string; name: string; depth: number; files: T[] }
+  | { kind: "file"; change: T; depth: number };
 
-interface DirNode {
-  dirs: Map<string, DirNode>;
-  files: GitChange[];
+interface DirNode<T> {
+  dirs: Map<string, DirNode<T>>;
+  files: T[];
 }
 
 /** The rows of one group: flat, or as a directory tree whose single-child folders are merged (src/components). */
-export function changeRows(groupId: string, items: GitChange[], byDir: boolean, collapsed: Record<string, boolean>): ChangeRow[] {
+export function changeRows<T extends { rel: string }>(groupId: string, items: T[], byDir: boolean, collapsed: Record<string, boolean>): ChangeRow<T>[] {
   if (!byDir) return items.map((change) => ({ kind: "file", change, depth: 0 }));
-  const root: DirNode = { dirs: new Map(), files: [] };
+  const root: DirNode<T> = { dirs: new Map(), files: [] };
   for (const c of items) {
     let node = root;
     for (const part of c.rel.split("/").slice(0, -1)) {
@@ -33,9 +33,9 @@ export function changeRows(groupId: string, items: GitChange[], byDir: boolean, 
     }
     node.files.push(c);
   }
-  const all = (n: DirNode): GitChange[] => [...[...n.dirs.values()].flatMap(all), ...n.files];
-  const rows: ChangeRow[] = [];
-  const walk = (node: DirNode, path: string, depth: number) => {
+  const all = (n: DirNode<T>): T[] => [...[...n.dirs.values()].flatMap(all), ...n.files];
+  const rows: ChangeRow<T>[] = [];
+  const walk = (node: DirNode<T>, path: string, depth: number) => {
     for (const [first, start] of [...node.dirs].sort(([a], [b]) => a.localeCompare(b))) {
       let name = first;
       let child = start;

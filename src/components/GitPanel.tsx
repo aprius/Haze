@@ -1,9 +1,9 @@
 // Git tool window (Alt+9): branches, log with commit graph, commit details,
 // and a console of the git commands Haze ran.
-import { ChevronDown, ChevronRight, Copy, Folder, FolderGit2, GitBranch, RefreshCw, Tag, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Folder, FolderGit2, FolderTree, GitBranch, RefreshCw, Tag, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, type Branch, type Commit, type CommitDetails, type GraphRow, type LogPage, type LogQuery } from "../lib/ipc";
-import { branchTree, type BranchFolder } from "../lib/gitView";
+import { branchTree, changeRows, type BranchFolder } from "../lib/gitView";
 import { basename, dirname } from "../lib/path";
 import { repo, runGit, useGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -79,10 +79,13 @@ function RefBadges({ refs, branches }: { refs: string[]; branches: Branch[] }) {
 function Details({ project, root, hash }: { project: Project; root: string; hash: string }) {
   const [d, setD] = useState<CommitDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const byDir = useWorkspace((s) => s.ui[project.id]?.logGroupByDir ?? true);
   useEffect(() => {
     let stale = false;
     setD(null);
     setError(null);
+    setCollapsed({});
     api
       .gitCommitDetails(root, hash)
       .then((x) => !stale && setD(x))
@@ -96,26 +99,67 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
   const parent = d.parents[0] ?? null;
   return (
     <div className="commit-details">
-      <div className="commit-files">
-        {d.files.map((f) => (
-          <div
-            key={f.rel}
-            className={"change-row git-" + (f.status === "copied" ? "added" : f.status)}
-            title={f.oldRel ? `${f.oldRel} → ${f.rel}` : f.rel}
-            onClick={() =>
-              openDiff(project.id, {
-                root,
-                rel: f.rel,
-                oldRel: f.oldRel,
-                left: f.status === "added" ? null : parent,
-                right: d.hash,
-              })
-            }
+      <div className="panel-header slim">
+        <span className="muted small">{d.files.length === 1 ? "1 file" : `${d.files.length} files`}</span>
+        <div className="panel-actions">
+          <button
+            className={"icon-btn" + (byDir ? " on" : "")}
+            title="Group by Directory"
+            onClick={() => useWorkspace.getState().updateUi(project.id, { logGroupByDir: !byDir })}
           >
-            <span className="tree-name">{basename(f.rel)}</span>
-            <span className="tree-hint">{dirname(f.rel)}</span>
-          </div>
-        ))}
+            <FolderTree size={14} />
+          </button>
+          <button className="icon-btn" title="Expand All" onClick={() => setCollapsed({})}>
+            <ChevronsUpDown size={14} />
+          </button>
+          <button
+            className="icon-btn"
+            title="Collapse All"
+            onClick={() => setCollapsed(Object.fromEntries(changeRows("files", d.files, true, {}).flatMap((row) => (row.kind === "dir" ? [[row.key, true]] : []))))}
+          >
+            <ChevronsDownUp size={14} />
+          </button>
+        </div>
+      </div>
+      <div className="commit-files">
+        {changeRows("files", d.files, byDir, collapsed).map((row) => {
+          if (row.kind === "dir")
+            return (
+              <div
+                key={row.key}
+                className="change-row change-dir"
+                style={{ paddingLeft: 6 + row.depth * 16 }}
+                title={row.name}
+                onClick={() => setCollapsed((c) => ({ ...c, [row.key]: !c[row.key] }))}
+              >
+                {collapsed[row.key] ? <ChevronRight size={14} className="ico" /> : <ChevronDown size={14} className="ico" />}
+                <Folder size={14} className="ico" />
+                <span className="tree-name">{row.name}</span>
+                <span className="tree-hint">{row.files.length}</span>
+              </div>
+            );
+          const f = row.change;
+          return (
+            <div
+              key={f.rel}
+              className={"change-row git-" + (f.status === "copied" ? "added" : f.status)}
+              style={{ paddingLeft: byDir ? 24 + row.depth * 16 : 10 }}
+              title={f.oldRel ? `${f.oldRel} → ${f.rel}` : f.rel}
+              onClick={() =>
+                openDiff(project.id, {
+                  root,
+                  rel: f.rel,
+                  oldRel: f.oldRel,
+                  left: f.status === "added" ? null : parent,
+                  right: d.hash,
+                })
+              }
+            >
+              <span className="tree-name">{basename(f.rel)}</span>
+              {!byDir && <span className="tree-hint">{dirname(f.rel)}</span>}
+            </div>
+          );
+        })}
       </div>
       <div className="commit-meta">
         <pre className="commit-msg">{d.message}</pre>
