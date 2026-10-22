@@ -795,6 +795,12 @@ kbd {
   flex: none;
 }
 
+.editor-tab .tab-close {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+}
+
 .dot {
   width: 6px;
   height: 6px;
