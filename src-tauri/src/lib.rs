@@ -710,7 +710,9 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
             if let Some((x, y)) = float_position(&handle, size) {
                 builder = builder.position(x, y);
             }
+            // Hidden until the page has drawn into it, or it shows white first.
             let built = builder
+                .visible(false)
                 .title("Haze")
                 .on_document_title_changed(|w, title| {
                     let _ = w.set_title(&title);

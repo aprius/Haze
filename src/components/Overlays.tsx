@@ -370,6 +370,16 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
       if (!w) return;
       if (closing) return void w.destroy().catch(() => {});
       unlisten = await w.once("tauri://destroyed", closed);
+      // The window opens hidden: show it once our content and stylesheets are in.
+      const pending = Array.from(doc.querySelectorAll<HTMLLinkElement>("link[rel=stylesheet]")).filter((l) => !l.sheet);
+      await Promise.race([
+        Promise.all(pending.map((l) => new Promise((r) => (l.addEventListener("load", r), l.addEventListener("error", r))))),
+        new Promise((r) => setTimeout(r, 500)),
+      ]);
+      await new Promise((r) => setTimeout(r, 16));
+      if (closing) return;
+      await w.show();
+      await w.setFocus();
     });
     useHost.setState({ doc });
     setHost({ win, root });
