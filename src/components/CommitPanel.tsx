@@ -11,6 +11,7 @@ import { basename, dirname } from "../lib/path";
 import { FileIcon } from "./FileIcon";
 import { changeDiffSpec, changeRows, GROUPS, pickRows, shownFiles, toggleChecks } from "../lib/gitView";
 import { absPath, checkedPaths, createCheckpoint, patchRepo, refreshRepo, repo, runGit, toggleReviewed, useGit } from "../store/git";
+import { withTask } from "../store/tasks";
 import { refreshGit as refreshTreeGit } from "../store/tree";
 import { closeCommitWindow, openDiffWindow, useUi } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -47,7 +48,7 @@ export async function commitChanges(project: Project, push: boolean): Promise<vo
   // Commit what the editor shows, not stale disk content.
   await saveAll();
   patchRepo(project.id, { busy: "Committing…" });
-  const out = await api.gitCommit(r.root, message, paths, r.amend).catch((e) => ({ ok: false, stdout: "", stderr: String(e), code: null }));
+  const out = await withTask(project.id, r.amend ? "Amending commit" : "Committing", () => api.gitCommit(r.root!, message, paths, r.amend)).catch((e) => ({ ok: false, stdout: "", stderr: String(e), code: null }));
   patchRepo(project.id, (s) => ({
     busy: null,
     console: [...s.console.slice(-199), { time: Date.now(), args: ["commit", ...(r.amend ? ["--amend"] : []), "--", ...paths], output: out }],

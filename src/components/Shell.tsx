@@ -1,12 +1,13 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
+import { FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type TextEncoding } from "../lib/ipc";
 import { toggleThemeMode, useTheme } from "../lib/theme";
 import { useGit } from "../store/git";
+import { useTasks } from "../store/tasks";
 import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
 import { useTree } from "../store/tree";
 import { toggleCommitWindow, useUi } from "../store/ui";
@@ -258,6 +259,29 @@ export function toggleBottom(projectId: string, tab: "build" | "git"): void {
   ws.updateUi(projectId, { bottomVisible: !showing, bottomTab: tab });
 }
 
+/** Rider's background-process indicator: the latest task, how many more, and a list on click. */
+function BackgroundTasks({ projectId }: { projectId: string | null }) {
+  const all = useTasks((s) => s.tasks);
+  const tasks = all.filter((t) => t.projectId === null || t.projectId === projectId);
+  if (!tasks.length) return null;
+  const latest = tasks[tasks.length - 1];
+  const open = (e: React.MouseEvent) =>
+    openMenu(
+      e,
+      tasks.map((t) => {
+        const label = `${t.label} (${Math.round((Date.now() - t.started) / 1000)}s)`;
+        return t.cancel ? { label: `Cancel ${label}`, action: t.cancel } : { label, disabled: true };
+      }),
+    );
+  return (
+    <button className="status-item status-btn status-task" onClick={open} title={tasks.map((t) => t.label).join("\n")}>
+      <LoaderCircle size={12} className="spin" />
+      <span className="status-task-label">{latest.label}</span>
+      {tasks.length > 1 && <span>+{tasks.length - 1}</span>}
+    </button>
+  );
+}
+
 export function StatusBar({ project }: { project: Project | null }) {
   const git = useTree((s) => (project ? s.git[project.id] : undefined));
   const operation = useGit((s) => (project ? s.repos[project.id]?.branches?.operation : null));
@@ -302,6 +326,7 @@ export function StatusBar({ project }: { project: Project | null }) {
         </>
       )}
       <span className="status-spacer" />
+      <BackgroundTasks projectId={project?.id ?? null} />
       {meta?.status === "text" && (
         <>
           <span className="status-item">

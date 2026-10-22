@@ -4,8 +4,13 @@ import { create } from "zustand";
 import { isAuthFailure } from "../components/GitAccounts";
 import { toast } from "../components/Overlays";
 import { openSettings } from "../components/SettingsDialog";
+import { saveAll } from "../components/EditorArea";
+import { dirtyPaths, useBuffers } from "../lib/buffers";
+import { withUnsaved } from "../lib/gitView";
 import { api, errorMessage, type BranchesInfo, type ChangedFile, type Checkpoint, type GitChange, type GitOutput, type StashEntry } from "../lib/ipc";
-import { onGitStatus, refreshGit as refreshTreeGit } from "./tree";
+import { isWithin, relative } from "../lib/path";
+import { withTask } from "./tasks";
+import { isIgnored, onGitStatus, refreshGit as refreshTreeGit, useTree } from "./tree";
 import { openCommitWindow, useUi } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -74,10 +79,40 @@ export function absPath(root: string, rel: string): string {
   return root.replace(/[\\/]+$/, "") + sep + (sep === "\\" ? rel.replace(/\//g, "\\") : rel);
 }
 
+/** Changes as `git status` last reported them, before unsaved files are added. */
+const gitChanges = new Map<string, { root: string; changes: GitChange[] }>();
+
+/** Files with unsaved edits in the repository, as relative paths (ignored files left out). */
+function unsavedIn(projectId: string, root: string): string[] {
+  const view = useTree.getState().git[projectId];
+  return dirtyPaths()
+    .filter((p) => isWithin(p, root) && !isIgnored(view, p))
+    .map((p) => relative(root, p));
+}
+
+function showChanges(projectId: string): void {
+  const g = gitChanges.get(projectId);
+  if (g) patchRepo(projectId, { changes: withUnsaved(g.changes, unsavedIn(projectId, g.root)) });
+}
+
 // Changes come from the file tree's `git status` (one run serves both).
 onGitStatus((projectId, status) => {
-  if (status.isRepo) patchRepo(projectId, { changes: status.changes });
+  if (!status.isRepo || !status.root) return;
+  gitChanges.set(projectId, { root: status.root, changes: status.changes });
+  showChanges(projectId);
 });
+
+// Like Rider, a file counts as changed as soon as it is edited, saved or not.
+let dirtyKey = "";
+useBuffers.subscribe(() => {
+  const key = dirtyPaths().sort().join("\n");
+  if (key === dirtyKey) return;
+  dirtyKey = key;
+  gitChanges.forEach((_, projectId) => showChanges(projectId));
+});
+
+/** Git commands that read or write the working tree: unsaved edits are saved first, as Rider does. */
+const touchesFiles = new Set(["stash", "checkout", "switch", "merge", "rebase", "cherry-pick", "revert", "reset", "pull", "add", "rm", "restore"]);
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 /** Projects with a refresh requested by an operation (not the watcher) still to run. */
@@ -160,10 +195,12 @@ export async function runGit(projectId: string, args: string[], opts: { label?: 
   const r = repo(projectId);
   const project = useWorkspace.getState().projects.find((p) => p.id === projectId);
   if (!r.root || !project) return null;
+  if (touchesFiles.has(args[0])) await saveAll();
   const entry: ConsoleEntry = { time: Date.now(), args, output: null };
-  patchRepo(projectId, (s) => ({ busy: opts.label ?? `git ${args[0]}`, console: [...s.console.slice(-199), entry] }));
+  const label = opts.label ?? `git ${args[0]}`;
+  patchRepo(projectId, (s) => ({ busy: label, console: [...s.console.slice(-199), entry] }));
   try {
-    const out = await api.gitRun(r.root, args);
+    const out = await withTask(projectId, label, () => api.gitRun(r.root!, args));
     entry.output = out;
     if (/^CONFLICT|Merge conflict in|could not apply/m.test(out.stdout + out.stderr)) {
       // Rider opens the conflicts list; ours is the Commit window's "Merge Conflicts" group.
@@ -210,7 +247,7 @@ export async function createCheckpoint(projectId: string, projectPath: string): 
   if (!r.root) return;
   try {
     const label = new Date().toLocaleString();
-    const hash = await api.gitCheckpoint(r.root, label);
+    const hash = await withTask(projectId, "Creating checkpoint", () => api.gitCheckpoint(r.root!, label));
     patchRepo(projectId, { checkpoint: hash, reviewed: {} });
     toast(`Checkpoint created (${label}). Changes made after it appear under "Since checkpoint".`);
   } catch (e) {

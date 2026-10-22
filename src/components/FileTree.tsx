@@ -18,11 +18,13 @@ import { confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlay
 const ROW_H = 24;
 const OVERSCAN = 12;
 
-function statusOf(view: GitView | undefined, entry: DirEntry): GitFileStatus | "changed-dir" | null {
+function statusOf(view: GitView | undefined, entry: DirEntry, unsaved: boolean): GitFileStatus | "changed-dir" | null {
   if (!view) return null;
   if (isIgnored(view, entry.path)) return "ignored";
   const st = view.status.files[entry.path];
   if (st) return st;
+  // Edited but not saved: changed already, as in Rider.
+  if (unsaved) return "modified";
   if (entry.isDir && view.changedDirs.has(entry.path)) return "changed-dir";
   return null;
 }
@@ -393,10 +395,10 @@ export function FileTree({ project }: { project: Project }) {
           {rows.slice(first, last).map((row, i) => {
             const index = first + i;
             // Package caches are ignored by git, yet they are the packages: no grey.
-            const st = view === "unity" && isWithin(row.entry.path, libraryDir) ? null : statusOf(git, row.entry);
+            const dirty = meta[row.entry.path]?.status === "text" && (meta[row.entry.path] as { dirty: boolean }).dirty;
+            const st = view === "unity" && isWithin(row.entry.path, libraryDir) ? null : statusOf(git, row.entry, dirty);
             const loadingDir = row.expanded && row.entry.isDir && dirs[row.entry.path] && "loading" in dirs[row.entry.path];
             const dirError = row.expanded && row.entry.isDir && dirs[row.entry.path] && "error" in dirs[row.entry.path];
-            const dirty = meta[row.entry.path]?.status === "text" && (meta[row.entry.path] as { dirty: boolean }).dirty;
             return (
               <div
                 key={row.entry.path}

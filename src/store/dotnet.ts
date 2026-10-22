@@ -4,6 +4,8 @@
 import { create } from "zustand";
 import { api, errorMessage, onBuildEvent, type BuildDiagnostic, type BuildEvent, type BuildVerb, type DotnetInfo } from "../lib/ipc";
 import { monaco } from "../lib/monaco";
+import { basename } from "../lib/path";
+import { setTask, withTask } from "./tasks";
 import { useWorkspace } from "./workspace";
 
 export type CsharpState = "off" | "missing" | "starting" | "loading" | "ready" | "stopped" | "error";
@@ -34,7 +36,7 @@ export const useDotnet = create<DotnetState>(() => ({ info: {}, csharp: {}, buil
 
 export async function loadDotnetInfo(projectId: string, root: string): Promise<DotnetInfo | null> {
   try {
-    const info = await api.dotnetInfo(root);
+    const info = await withTask(projectId, "Loading .NET projects", () => api.dotnetInfo(root));
     useDotnet.setState((s) => ({ info: { ...s.info, [projectId]: info } }));
     return info;
   } catch {
@@ -44,6 +46,8 @@ export async function loadDotnetInfo(projectId: string, root: string): Promise<D
 
 export function setCsharpStatus(projectId: string, status: CsharpStatus): void {
   useDotnet.setState((s) => ({ csharp: { ...s.csharp, [projectId]: status } }));
+  const busy = status.state === "starting" || status.state === "loading";
+  setTask(`csharp:${projectId}`, busy ? { projectId, label: status.message ? `C#: ${status.message}` : "Starting C# server" } : null);
 }
 
 /** Directories of the projects in the solution, for "Solution" search scope. */
@@ -188,6 +192,15 @@ export async function startBuild(projectId: string, root: string, verb: BuildVer
     patchBuild(projectId, (b) => ({ running: false, lines: [...b.lines, errorMessage(e)], result: { code: null, cancelled: false, millis: 0 } }));
   }
 }
+
+// A running build is a background task, cancellable from the status bar.
+useDotnet.subscribe((s, prev) => {
+  if (s.builds === prev.builds) return;
+  for (const [projectId, b] of Object.entries(s.builds)) {
+    const label = `dotnet ${b.verb}${b.target ? " " + basename(b.target) : ""}`;
+    setTask(`build:${projectId}`, b.running ? { projectId, label, cancel: () => cancelBuild(projectId) } : null);
+  }
+});
 
 export function cancelBuild(projectId: string): void {
   const b = useDotnet.getState().builds[projectId];

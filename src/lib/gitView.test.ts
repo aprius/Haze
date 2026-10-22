@@ -12,11 +12,24 @@ import {
   shownFiles,
   toggleChecks,
   validBranch,
+  withUnsaved,
   type RebaseRow,
 } from "./gitView";
 import type { Branch, ChangeStatus, GitChange } from "./ipc";
 
 const ch = (rel: string, status: ChangeStatus = "modified", oldRel: string | null = null): GitChange => ({ rel, oldRel, status, staged: false });
+
+describe("withUnsaved", () => {
+  it("adds unsaved files git does not list yet as modified", () => {
+    const git = [ch("a.ts"), ch("new.ts", "untracked")];
+    expect(withUnsaved(git, ["new.ts", "b.ts"])).toEqual([...git, ch("b.ts")]);
+  });
+
+  it("keeps the same list when every unsaved file is listed", () => {
+    const git = [ch("a.ts")];
+    expect(withUnsaved(git, ["a.ts"])).toBe(git);
+  });
+});
 
 describe("changeRows", () => {
   const items = [ch("src/components/B.tsx"), ch("src/components/A.tsx"), ch("src/lib/x.ts"), ch("README.md"), ch("docs/guide/intro.md")];

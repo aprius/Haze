@@ -7,6 +7,7 @@ import { moveRow, parseRebaseLog, rebaseProblem, rebaseSteps, type RebaseRow } f
 import { api, errorMessage, type RebaseStep } from "../lib/ipc";
 import { saveAll } from "./EditorArea";
 import { patchRepo, refreshRepo, repo } from "../store/git";
+import { withTask } from "../store/tasks";
 import { openCommitWindow, popupClosed } from "../store/ui";
 import type { Project } from "../store/workspace";
 import { toast } from "./Overlays";
@@ -70,7 +71,7 @@ export function RebaseDialog({ project }: { project: Project | null }) {
     close();
     await saveAll();
     patchRepo(project.id, { busy: "Rebasing…" });
-    const out = await api.gitRebaseInteractive(root, base, rebaseSteps(rows)).catch((e) => ({ ok: false, stdout: "", stderr: errorMessage(e), code: null }));
+    const out = await withTask(project.id, "Rebasing", () => api.gitRebaseInteractive(root, base, rebaseSteps(rows))).catch((e) => ({ ok: false, stdout: "", stderr: errorMessage(e), code: null }));
     patchRepo(project.id, (s) => ({
       busy: null,
       console: [...s.console.slice(-199), { time: Date.now(), args: ["rebase", "-i", base ?? "--root"], output: out }],

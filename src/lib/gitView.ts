@@ -62,6 +62,16 @@ export function shownFiles(changes: GitChange[], byDir: boolean, collapsed: Reco
   );
 }
 
+/**
+ * Git's changes plus files edited but not saved yet, which Rider lists as
+ * modified right away. `unsaved` are repository-relative paths.
+ */
+export function withUnsaved(changes: GitChange[], unsaved: readonly string[]): GitChange[] {
+  const listed = new Set(changes.map((c) => c.rel));
+  const extra = unsaved.filter((rel) => !listed.has(rel)).map((rel): GitChange => ({ rel, oldRel: null, status: "modified", staged: false }));
+  return extra.length ? [...changes, ...extra] : changes;
+}
+
 /** The diff of a local change against HEAD (nothing on the left for a new file). */
 export function changeDiffSpec(root: string, c: GitChange): DiffSpec {
   const created = c.status === "untracked" || c.status === "added";

@@ -898,6 +898,36 @@ kbd {
   color: var(--fg);
 }
 
+/* Shown only for tasks that take a moment, so quick git commands don't flicker. */
+.status-task {
+  min-width: 0;
+  opacity: 0;
+  animation: status-task-in 0.15s 0.3s forwards;
+}
+
+.status-task-label {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes status-task-in {
+  to {
+    opacity: 1;
+  }
+}
+
+.spin {
+  flex: none;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ------------------------------------------------------------ overlays */
 
 .context-menu {
