@@ -1,7 +1,7 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, Eye, LocateFixed } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { disposeBuffer, renameBuffer, useBuffers } from "../lib/buffers";
+import { disposeBuffer, metaDirty, renameBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type DirEntry, type GitFileStatus } from "../lib/ipc";
 import { basename, dirname, isWithin, join, relative } from "../lib/path";
 import { repo } from "../store/git";
@@ -196,7 +196,7 @@ export function FileTree({ project }: { project: Project }) {
     const gone = (p: string) => paths.some((x) => isWithin(p, x));
     const closing = (ws.ui[project.id]?.tabs ?? []).filter((t) => gone(t.path)).map((t) => t.path);
     // Unsaved buffers stay open so their text is not lost.
-    const clean = closing.filter((p) => !(meta[p]?.status === "text" && (meta[p] as { dirty: boolean }).dirty));
+    const clean = closing.filter((p) => !metaDirty(meta[p]));
     ws.closeTabs(project.id, clean);
     clean.forEach(disposeBuffer);
     setSelection(project.id, []);
@@ -395,7 +395,7 @@ export function FileTree({ project }: { project: Project }) {
           {rows.slice(first, last).map((row, i) => {
             const index = first + i;
             // Package caches are ignored by git, yet they are the packages: no grey.
-            const dirty = meta[row.entry.path]?.status === "text" && (meta[row.entry.path] as { dirty: boolean }).dirty;
+            const dirty = metaDirty(meta[row.entry.path]);
             const st = view === "unity" && isWithin(row.entry.path, libraryDir) ? null : statusOf(git, row.entry, dirty);
             const loadingDir = row.expanded && row.entry.isDir && dirs[row.entry.path] && "loading" in dirs[row.entry.path];
             const dirError = row.expanded && row.entry.isDir && dirs[row.entry.path] && "error" in dirs[row.entry.path];

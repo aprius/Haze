@@ -515,7 +515,6 @@ const UNITY_MESSAGES = new Set(
   ).split(" "),
 );
 
-/** Whether a member with no usages is dead, as Rider greys it: private, no attribute, not called by name by Unity or an interface. */
 /**
  * Line Code Vision sits above: the name's, or the attributes just over it.
  * csharp-ls starts a symbol's range in the comments and blank lines before
@@ -527,6 +526,7 @@ function declarationLine(model: monaco.editor.ITextModel, range: monaco.IRange, 
   return line;
 }
 
+/** Whether a member with no usages is dead, as Rider greys it: private, no attribute, not called by name by Unity or an interface. */
 function deadWhenUnused(model: monaco.editor.ITextModel, kind: number, name: string, declStart: number, nameLine: number, nameColumn: number): boolean {
   if (!GREY_WHEN_UNUSED.has(kind) || name.includes(".") || UNITY_MESSAGES.has(name)) return false;
   const head = model.getValueInRange(new monaco.Range(declStart, 1, nameLine, nameColumn));

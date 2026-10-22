@@ -27,6 +27,11 @@ export type BufferMeta =
 
 export const useBuffers = create<{ meta: Record<string, BufferMeta> }>(() => ({ meta: {} }));
 
+/** Whether a buffer holds unsaved edits. */
+export function metaDirty(meta: BufferMeta | undefined): boolean {
+  return meta?.status === "text" && meta.dirty;
+}
+
 interface Entry {
   model: monaco.editor.ITextModel;
   /** Alternative version id at the last load/save, to compute dirtiness. */

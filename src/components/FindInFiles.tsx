@@ -7,7 +7,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, History, Pin } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
-import { getModel, saveBuffer, useBuffers } from "../lib/buffers";
+import { getModel, metaDirty, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type FileMatches, type ReplaceTarget, type SearchContext, type SearchMatch, type SearchQuery, type SearchResults } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
@@ -456,7 +456,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
           continue;
         }
         const meta = useBuffers.getState().meta[f.path];
-        bufferEdits.push({ path: f.path, model, matches: chosen, wasClean: !(meta?.status === "text" && meta.dirty) });
+        bufferEdits.push({ path: f.path, model, matches: chosen, wasClean: !metaDirty(meta) });
       } else {
         diskTargets.push({ path: f.path, hash: f.hash, starts: chosen.map((m) => m.start) });
       }

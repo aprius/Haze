@@ -2,7 +2,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
-import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers, type BufferMeta } from "../lib/buffers";
+import { disposeBuffer, ensureBuffer, getModel, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
@@ -205,11 +205,24 @@ async function renameAt(editor: monaco.editor.ICodeEditor) {
 // Annotate (git blame): model decorations, so they survive switching tabs.
 // Keyed by model: a file closed and opened again gets a new one without them.
 const blameDecorations = new WeakMap<monaco.editor.ITextModel, string[]>();
+const UNCOMMITTED = "0".repeat(40);
+
+/** Blames the model's text: unsaved edits as they are, so the lines match the editor. */
+function blameModel(root: string, model: monaco.editor.ITextModel): Promise<BlameLine[]> {
+  const path = model.uri.fsPath;
+  const meta = useBuffers.getState().meta[path];
+  return api.gitBlame(root, relative(root, path), metaDirty(meta) ? model.getValue() : null, meta?.status === "text" ? meta.encoding : null);
+}
+
+/** A blamed line's commit, shown on hover; nothing for lines not committed yet. */
+function blameHover(b: BlameLine): monaco.IMarkdownString | undefined {
+  if (b.hash === UNCOMMITTED) return undefined;
+  return { value: `**${b.summary}**\n\n${b.author} · ${new Date(b.time * 1000).toLocaleString()} · \`${b.hash.slice(0, 12)}\`` };
+}
 
 async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) {
   const model = editor.getModel();
   if (!model || model.uri.scheme !== "file") return;
-  const path = model.uri.fsPath;
   const existing = blameDecorations.get(model);
   if (existing) {
     model.deltaDecorations(existing, []);
@@ -218,11 +231,8 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
   }
   const root = repo(project.id).root;
   if (!root) return toast("Not a git repository.", "error");
-  const rel = relative(root, path);
   try {
-    const meta = useBuffers.getState().meta[path];
-    const dirty = meta?.status === "text" && meta.dirty;
-    const lines = await api.gitBlame(root, rel, dirty ? model.getValue() : null, meta?.status === "text" ? meta.encoding : null);
+    const lines = await blameModel(root, model);
     const ids = model.deltaDecorations(
       [],
       lines
@@ -235,7 +245,7 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
             options: {
               showIfCollapsed: true,
               before: { content: label + "  ", inlineClassName: "blame-text", cursorStops: monaco.editor.InjectedTextCursorStops.None },
-              hoverMessage: l.hash === UNCOMMITTED ? undefined : { value: `**${l.summary}**\n\n${l.author} · ${new Date(l.time * 1000).toLocaleString()} · \`${l.hash.slice(0, 12)}\`` },
+              hoverMessage: blameHover(l),
             },
           };
         }),
@@ -249,7 +259,6 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
 // Inline blame for the caret line, like Rider's GitToolBox: "Author, 2 days ago • summary"
 // after the line's end, the commit's details on hover. One blame per model version
 // (dirty text is blamed as is, so lines match), asked once the caret rests.
-const UNCOMMITTED = "0".repeat(40);
 const lineBlames = new WeakMap<monaco.editor.ITextModel, { version: number; at: number; lines: Promise<Map<number, BlameLine> | null> }>();
 
 function caretLineBlames(project: Project, model: monaco.editor.ITextModel): Promise<Map<number, BlameLine> | null> {
@@ -258,12 +267,8 @@ function caretLineBlames(project: Project, model: monaco.editor.ITextModel): Pro
   // Re-asked after a while too: a commit changes the answer without changing the text.
   if (cached && cached.version === version && Date.now() - cached.at < 15_000) return cached.lines;
   const root = repo(project.id).root;
-  const path = model.uri.fsPath;
-  if (!root || !isWithin(path, root)) return Promise.resolve(null);
-  const meta = useBuffers.getState().meta[path];
-  const dirty = meta?.status === "text" && meta.dirty;
-  const lines = api
-    .gitBlame(root, relative(root, path), dirty ? model.getValue() : null, meta?.status === "text" ? meta.encoding : null)
+  if (!root || !isWithin(model.uri.fsPath, root)) return Promise.resolve(null);
+  const lines = blameModel(root, model)
     .then((ls) => new Map(ls.map((l) => [l.line, l])))
     .catch(() => null); // untracked or outside git: nothing to show
   lineBlames.set(model, { version, at: Date.now(), lines });
@@ -358,10 +363,7 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
           options: {
             showIfCollapsed: true,
             after: { content: "\u2003\u2003" + label, inlineClassName: "line-blame-text", cursorStops: monaco.editor.InjectedTextCursorStops.None },
-            hoverMessage:
-              b.hash === UNCOMMITTED
-                ? undefined
-                : { value: `**${b.summary}**\n\n${b.author} · ${new Date(b.time * 1000).toLocaleString()} · \`${b.hash.slice(0, 12)}\`` },
+            hoverMessage: blameHover(b),
           },
         },
       ]);
@@ -503,10 +505,6 @@ function MarkdownPreview({ path }: { path: string }) {
   return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function isDirty(meta: BufferMeta | undefined): boolean {
-  return meta?.status === "text" && meta.dirty;
-}
-
 export async function saveAll(): Promise<void> {
   const meta = useBuffers.getState().meta;
   for (const [path, m] of Object.entries(meta)) {
@@ -543,7 +541,7 @@ export async function closeTabsWithPrompt(projectId: string, paths: string[]): P
     if (draft) await ensureBuffer(f, draft);
   }
   const meta = useBuffers.getState().meta;
-  const dirty = files.filter((p) => isDirty(meta[p]));
+  const dirty = files.filter((p) => metaDirty(meta[p]));
   if (dirty.length) {
     const names = dirty.map(basename).join(", ");
     const answer = await choose("Unsaved changes", `Save changes to ${names}?`, [
@@ -619,7 +617,7 @@ function TabBar({ project }: { project: Project }) {
             }}
           >
             <span className="editor-tab-name">{tabTitle(t.path)}</span>
-            {isDirty(m) || isDirty(meta[editedFile(t.path) ?? ""]) ? (
+            {metaDirty(m) || metaDirty(meta[editedFile(t.path) ?? ""]) ? (
               <span className="dirty-dot" title="Unsaved changes" />
             ) : null}
             <button
