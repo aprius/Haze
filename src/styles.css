@@ -1214,11 +1214,108 @@ kbd {
   overflow: hidden;
 }
 
+/* Moved or resized by the user: placed where it was left, not centred. */
+.find-backdrop.placed .find-popup {
+  position: fixed;
+  max-width: none;
+}
+
+/* Pinned: the editor behind stays usable while the popup is open. */
+.find-backdrop.pinned {
+  background: transparent;
+  pointer-events: none;
+  animation: none;
+}
+.find-backdrop.pinned .find-popup {
+  pointer-events: auto;
+}
+
 .find-header {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 10px 4px;
+  cursor: move;
+}
+
+.find-header button {
+  cursor: pointer;
+}
+
+.find-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.find-pin:hover {
+  background: var(--hover);
+}
+
+.find-pin.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--selected);
+}
+
+.find-query {
+  position: relative;
+}
+
+.find-history-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.find-history-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.find-history-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.find-history {
+  position: absolute;
+  z-index: 2;
+  left: 40px;
+  right: 110px;
+  top: 100%;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--popup-shadow);
+  padding: 3px 0;
+}
+
+.find-history-item {
+  padding: 3px 10px;
+  font-family: var(--font-mono);
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.find-history-item.selected {
+  background: var(--selected);
 }
 
 .find-title {
@@ -1268,6 +1365,22 @@ kbd {
 
 .find-input.dir {
   flex: 1 1 200px;
+}
+
+.find-input:disabled {
+  opacity: 0.5;
+}
+
+.find-dir {
+  display: inline-flex;
+  flex: 1 1 240px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.find-dir .btn {
+  display: inline-flex;
+  align-items: center;
 }
 
 .find-error {
@@ -1351,9 +1464,15 @@ kbd {
   color: var(--muted);
 }
 
+.find-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .find-list {
-  flex: 1 1 50%;
-  min-height: 80px;
+  min-height: 60px;
   overflow: auto;
   outline: none;
   position: relative;
@@ -1436,23 +1555,91 @@ kbd {
   background: color-mix(in srgb, var(--diff-added) 30%, transparent);
 }
 
-.find-preview {
-  flex: 1 1 40%;
-  min-height: 120px;
+.find-splitter {
+  flex: none;
+  height: 5px;
+  margin: -2px 0;
+  position: relative;
+  z-index: 1;
+  cursor: row-resize;
+}
+
+.find-splitter::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
   border-top: 1px solid var(--border);
+}
+
+.find-splitter:hover::after {
+  border-top-color: var(--accent);
+}
+
+.find-preview {
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+}
+
+.find-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+}
+
+.find-preview-header .find-file-name {
+  font-weight: 600;
+}
+
+.find-preview-header .find-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+
+.find-preview-editor {
+  flex: 1;
+  min-height: 0;
 }
 
 .find-hit {
   background: color-mix(in srgb, var(--find-match) 40%, transparent);
 }
 
+.find-hit-other {
+  background: color-mix(in srgb, var(--find-match) 18%, transparent);
+}
+
 .find-footer {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 8px 18px 8px 10px;
   border-top: 1px solid var(--border);
+}
+
+.find-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.find-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--muted) 50%, var(--muted) 58%, transparent 58%, transparent 70%, var(--muted) 70%, var(--muted) 78%, transparent 78%);
+  opacity: 0.6;
 }
 
 /* ------------------------------------------------------------ editor extras */

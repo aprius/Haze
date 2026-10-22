@@ -3,6 +3,8 @@
 // Disk files are searched and replaced by the Rust side. Files open in the
 // editor are searched from their (possibly unsaved) buffer and replaced inside
 // the buffer, so the edit shows up in the editor's undo history.
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { FolderOpen, History, Pin } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { getModel, saveBuffer, useBuffers } from "../lib/buffers";
@@ -13,6 +15,7 @@ import { basename, dirname, isWithin, relative } from "../lib/path";
 import { closeFindInFiles, useUi } from "../store/ui";
 import { solutionDirs, useDotnet } from "../store/dotnet";
 import { useWorkspace, type Project } from "../store/workspace";
+import { FileIcon } from "./FileIcon";
 import { toast } from "./Overlays";
 
 type ScopeKind = "project" | "solution" | "directory" | "openFiles";
@@ -26,6 +29,7 @@ interface FindOptions {
   preserveCase: boolean;
   context: SearchContext;
   fileMask: string;
+  fileMaskOn: boolean;
   scope: ScopeKind;
   directory: string;
   includeIgnored: boolean;
@@ -41,6 +45,7 @@ const useFindOptions = create<FindOptions>(() => ({
   preserveCase: false,
   context: "anywhere",
   fileMask: "",
+  fileMaskOn: false,
   scope: "project",
   directory: "",
   includeIgnored: false,
@@ -57,6 +62,87 @@ const CONTEXTS: { id: SearchContext; label: string }[] = [
 
 const ROW_H = 22;
 let searchId = 1;
+
+const NO_MATCHES: SearchMatch[] = [];
+const MASK_PRESETS = ["*.cs", "*.cs, !*.Designer.cs", "*.shader, *.hlsl, *.cginc", "*.uxml, *.uss", "*.json", "*.xml, *.csproj, *.props"];
+
+// Recent queries and file masks, and where the popup was left, kept in
+// localStorage like the theme: per machine, not per workspace.
+const HISTORY_KEY = "haze.findInFiles.history";
+const LAYOUT_KEY = "haze.findInFiles.layout";
+const HISTORY_MAX = 20;
+
+interface FindHistory {
+  queries: string[];
+  masks: string[];
+}
+
+interface Layout {
+  bounds: { x: number; y: number; w: number; h: number } | null;
+  /** Share of the body the results list takes; the preview gets the rest. */
+  split: number;
+  pinned: boolean;
+}
+
+function load<T>(key: string, fallback: T): T {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? { ...fallback, ...JSON.parse(saved) } : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function save(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private mode or full storage: the popup just forgets.
+  }
+}
+
+const useHistory = create<FindHistory>(() => load<FindHistory>(HISTORY_KEY, { queries: [], masks: [] }));
+const useLayout = create<Layout>(() => load<Layout>(LAYOUT_KEY, { bounds: null, split: 0.55, pinned: false }));
+useHistory.subscribe((h) => save(HISTORY_KEY, h));
+useLayout.subscribe((l) => save(LAYOUT_KEY, l));
+
+/** Most recent first, without duplicates. */
+const remember = (list: string[], item: string) => (item.trim() ? [item, ...list.filter((x) => x !== item)].slice(0, HISTORY_MAX) : list);
+
+function rememberSearch() {
+  const o = useFindOptions.getState();
+  useHistory.setState((h) => ({
+    queries: remember(h.queries, o.query),
+    masks: o.fileMaskOn ? remember(h.masks, o.fileMask.trim()) : h.masks,
+  }));
+}
+
+/** Keeps the popup's title bar on screen, whatever the window size is now. */
+function clampBounds(b: NonNullable<Layout["bounds"]>) {
+  const w = Math.min(Math.max(b.w, 480), window.innerWidth - 16);
+  const h = Math.min(Math.max(b.h, 320), window.innerHeight - 16);
+  return {
+    x: Math.min(Math.max(b.x, 8), window.innerWidth - w - 8),
+    y: Math.min(Math.max(b.y, 8), window.innerHeight - h - 8),
+    w,
+    h,
+  };
+}
+
+/** Pointer drag that reports the offset from where it started. */
+function drag(e: React.PointerEvent, onMove: (dx: number, dy: number) => void) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const x0 = e.clientX;
+  const y0 = e.clientY;
+  const move = (ev: PointerEvent) => onMove(ev.clientX - x0, ev.clientY - y0);
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
 
 type Row = { kind: "file"; file: FileMatches; fileIndex: number } | { kind: "match"; file: FileMatches; match: SearchMatch; fileIndex: number };
 
@@ -83,8 +169,11 @@ function Toggle({ on, title, label, onClick }: { on: boolean; title: string; lab
   );
 }
 
-/** Read-only editor showing the selected match in context; `hash` is the searched content's. */
-function Preview({ path, hash, match }: { path: string | null; hash: string | null; match: SearchMatch | null }) {
+/**
+ * Read-only editor showing the selected match in context, the file's other
+ * matches highlighted more faintly; `hash` is the searched content's.
+ */
+function Preview({ path, hash, match, others }: { path: string | null; hash: string | null; match: SearchMatch | null; others: SearchMatch[] }) {
   const host = useRef<HTMLDivElement>(null);
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const own = useRef<monaco.editor.ITextModel | null>(null);
@@ -121,7 +210,12 @@ function Preview({ path, hash, match }: { path: string | null; hash: string | nu
       if (cancelled) return;
       ed.setModel(model);
       const range = new monaco.Range(match.line, match.column, match.endLine, match.endColumn);
-      decorations.current?.set([{ range, options: { inlineClassName: "find-hit" } }]);
+      decorations.current?.set([
+        ...others
+          .filter((m) => m !== match)
+          .map((m) => ({ range: new monaco.Range(m.line, m.column, m.endLine, m.endColumn), options: { inlineClassName: "find-hit-other" } })),
+        { range, options: { inlineClassName: "find-hit" } },
+      ]);
       ed.revealRangeInCenter(range);
     };
     const buffer = getModel(path);
@@ -142,14 +236,16 @@ function Preview({ path, hash, match }: { path: string | null; hash: string | nu
     return () => {
       cancelled = true;
     };
-  }, [path, hash, match]);
+  }, [path, hash, match, others]);
 
-  return <div ref={host} className="find-preview" />;
+  return <div ref={host} className="find-preview-editor" />;
 }
 
 export function FindInFiles({ project }: { project: Project | null }) {
   const { open, replace: replaceMode, initialQuery, directory, nonce } = useUi((s) => s.findInFiles);
   const opts = useFindOptions();
+  const history = useHistory();
+  const layout = useLayout();
   const hasSolution = useDotnet((s) => !!project && (s.info[project.id]?.projects.length ?? 0) > 0);
   const set = (patch: Partial<FindOptions>) => useFindOptions.setState(patch);
   const [replace, setReplace] = useState(replaceMode);
@@ -160,8 +256,14 @@ export function FindInFiles({ project }: { project: Project | null }) {
   const [selected, setSelected] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [listHeight, setListHeight] = useState(300);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyIndex, setHistoryIndex] = useState(0);
   const queryRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Row to select once the next results arrive (after replacing one occurrence).
+  const pendingSelection = useRef<number | null>(null);
   // Buffer versions at search time, to refuse replacing in buffers edited since.
   const versions = useRef(new Map<string, number>());
 
@@ -178,6 +280,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
       patch.directory = project.path;
     }
     set(patch);
+    setHistoryOpen(false);
     requestAnimationFrame(() => queryRef.current?.select());
   }, [open, nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -199,7 +302,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
     }
     const t = setTimeout(() => void runSearch(), 250);
     return () => clearTimeout(t);
-  }, [open, project, replace, opts.query, opts.replacement, opts.isRegex, opts.matchCase, opts.wholeWord, opts.preserveCase, opts.context, opts.fileMask, opts.scope, opts.directory, opts.includeIgnored]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, project, replace, opts.query, opts.replacement, opts.isRegex, opts.matchCase, opts.wholeWord, opts.preserveCase, opts.context, opts.fileMask, opts.fileMaskOn, opts.scope, opts.directory, opts.includeIgnored]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runSearch = async () => {
     if (!project) return;
@@ -226,7 +329,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
               ? []
               : [project.path],
       files: o.scope === "openFiles" ? [...new Set(openTabs)] : [],
-      fileMask: o.fileMask.trim() || null,
+      fileMask: (o.fileMaskOn && o.fileMask.trim()) || null,
       includeIgnored: o.includeIgnored,
       overrides,
     };
@@ -237,7 +340,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
       setResults(r);
       setError(null);
       setExcluded(new Set());
-      setSelected(0);
+      if (pendingSelection.current === null) setSelected(0);
     } catch (e) {
       if (id === searchId) {
         setError(errorMessage(e));
@@ -262,8 +365,37 @@ export function FindInFiles({ project }: { project: Project | null }) {
   const selMatch = sel?.kind === "match" ? sel : null;
 
   useEffect(() => {
-    if (rows.length && rows[selected]?.kind !== "match" && firstMatchRow >= 0 && selected === 0) setSelected(firstMatchRow);
+    const pending = pendingSelection.current;
+    pendingSelection.current = null;
+    if (pending !== null) {
+      // The occurrence just replaced is gone: select the one that took its place.
+      let i = Math.min(pending, rows.length - 1);
+      while (rows[i] && rows[i].kind !== "match") i++;
+      if (i < 0 || i >= rows.length) for (i = rows.length - 1; i >= 0 && rows[i].kind !== "match"; i--);
+      setSelected(Math.max(i, 0));
+      scrollIntoView(i);
+    } else if (rows.length && rows[selected]?.kind !== "match" && firstMatchRow >= 0 && selected === 0) setSelected(firstMatchRow);
   }, [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Bounds saved for a bigger window than the current one.
+  useEffect(() => {
+    if (!open) return;
+    const fit = () => {
+      const b = useLayout.getState().bounds;
+      if (b) useLayout.setState({ bounds: clampBounds(b) });
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [open]);
+
+  function scrollIntoView(i: number) {
+    const el = listRef.current;
+    if (!el || !rows[i]) return;
+    const top = i * ROW_H;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
+  }
 
   if (!open || !project) return null;
 
@@ -291,22 +423,31 @@ export function FindInFiles({ project }: { project: Project | null }) {
       return next;
     });
 
-  const openMatch = (path: string, m: SearchMatch) => {
+  const close = () => {
+    if (opts.query) rememberSearch();
     closeFindInFiles();
+  };
+
+  // A pinned popup stays open, like Rider's, so one match after another can be visited.
+  const openMatch = (path: string, m: SearchMatch) => {
+    if (layout.pinned) rememberSearch();
+    else close();
     useWorkspace.getState().openFile(project.id, path, { line: m.line, column: m.column });
   };
 
   const selectedCount = results ? results.files.reduce((n, f) => n + f.matches.filter((m) => !isExcluded(f.path, m)).length, 0) : 0;
 
-  const doReplace = async () => {
+  /** Replaces the ticked occurrences, or only `one`. */
+  const doReplace = async (one?: { path: string; match: SearchMatch }) => {
     if (!results || !replace) return;
+    rememberSearch();
     const o = useFindOptions.getState();
     const query = toQuery(o, true);
     const diskTargets: ReplaceTarget[] = [];
     const bufferEdits: { path: string; model: monaco.editor.ITextModel; matches: SearchMatch[]; wasClean: boolean }[] = [];
     const skipped: string[] = [];
     for (const f of results.files) {
-      const chosen = f.matches.filter((m) => !isExcluded(f.path, m));
+      const chosen = one ? (one.path === f.path ? [one.match] : []) : f.matches.filter((m) => !isExcluded(f.path, m));
       if (!chosen.length) continue;
       const model = getModel(f.path);
       if (model) {
@@ -376,26 +517,46 @@ export function FindInFiles({ project }: { project: Project | null }) {
 
     toast(`Replaced ${count} occurrence(s) in ${files} file(s).`, "info", { label: "Undo", run: () => void undo() });
     if (skipped.length) toast(`Skipped: ${skipped.join(", ")}. Run the search again.`, "error");
+    if (one) pendingSelection.current = selected;
     void runSearch();
+  };
+
+  const pickHistory = (q: string) => {
+    set({ query: q });
+    setHistoryOpen(false);
+    requestAnimationFrame(() => queryRef.current?.select());
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     const move = (delta: number) => {
-      let i = selected + delta;
-      while (rows[i] && rows[i].kind !== "match") i += delta > 0 ? 1 : -1;
-      if (rows[i]) setSelected(i);
-      const el = listRef.current;
-      if (el && rows[i]) {
-        const top = i * ROW_H;
-        if (top < el.scrollTop) el.scrollTop = top;
-        else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
-      }
+      const step = delta > 0 ? 1 : -1;
+      let i = Math.min(Math.max(selected + delta, 0), rows.length - 1);
+      // Paging past the end lands on the last match rather than nowhere.
+      while (rows[i] && rows[i].kind !== "match") i += step;
+      if (!rows[i]) for (i = selected; rows[i + step]; i += step) if (rows[i + step].kind === "match") break;
+      if (rows[i]?.kind !== "match") return;
+      setSelected(i);
+      scrollIntoView(i);
     };
+    const page = Math.max(1, Math.floor((listRef.current?.clientHeight ?? 0) / ROW_H) - 1);
     const toggles: Record<string, "matchCase" | "wholeWord" | "isRegex"> = { KeyC: "matchCase", KeyO: "wholeWord", KeyX: "isRegex" };
-    if (e.key === "Escape") closeFindInFiles();
+    if (historyOpen) {
+      if (e.key === "Escape") setHistoryOpen(false);
+      else if (e.key === "ArrowDown") setHistoryIndex((i) => Math.min(i + 1, history.queries.length - 1));
+      else if (e.key === "ArrowUp") setHistoryIndex((i) => Math.max(i - 1, 0));
+      else if (e.key === "Enter" && history.queries[historyIndex] !== undefined) pickHistory(history.queries[historyIndex]);
+      else return;
+    } else if (e.key === "Escape") close();
+    else if (e.altKey && e.key === "ArrowDown" && (e.target as HTMLElement) === queryRef.current) {
+      if (!history.queries.length) return;
+      setHistoryIndex(0);
+      setHistoryOpen(true);
+    }
     else if (e.altKey && !e.ctrlKey && !e.metaKey && toggles[e.code]) set({ [toggles[e.code]]: !opts[toggles[e.code]] });
     else if (e.key === "ArrowDown") move(1);
     else if (e.key === "ArrowUp") move(-1);
+    else if (e.key === "PageDown") move(page);
+    else if (e.key === "PageUp") move(-page);
     else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
       if ((e.ctrlKey || e.metaKey) && replace) void doReplace();
       else if (selMatch) openMatch(selMatch.file.path, selMatch.match);
@@ -407,23 +568,78 @@ export function FindInFiles({ project }: { project: Project | null }) {
   };
 
   const shownScope = opts.scope === "solution" && !hasSolution ? "project" : opts.scope;
+  const bounds = layout.bounds;
+
+  const moveBy = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest("button, input")) return;
+    const r = popupRef.current!.getBoundingClientRect();
+    drag(e, (dx, dy) => useLayout.setState({ bounds: clampBounds({ x: r.left + dx, y: r.top + dy, w: r.width, h: r.height }) }));
+  };
+  const resizeBy = (e: React.PointerEvent) => {
+    const r = popupRef.current!.getBoundingClientRect();
+    drag(e, (dx, dy) => useLayout.setState({ bounds: clampBounds({ x: r.left, y: r.top, w: r.width + dx, h: r.height + dy }) }));
+  };
+  const splitBy = (e: React.PointerEvent) => {
+    const body = bodyRef.current!.getBoundingClientRect();
+    const start = layout.split;
+    drag(e, (_dx, dy) => useLayout.setState({ split: Math.min(0.85, Math.max(0.15, start + dy / body.height)) }));
+  };
+  const browseDirectory = async () => {
+    const dir = await openDialog({ directory: true, multiple: false, defaultPath: opts.directory || project.path, title: "Directory to Search" });
+    if (typeof dir === "string") set({ directory: dir, scope: "directory" });
+  };
+  const status = busy
+    ? "Searching…"
+    : results
+      ? results.truncated
+        ? `${results.totalMatches}+ matches in ${results.files.length}+ files`
+        : `${results.totalMatches} ${results.totalMatches === 1 ? "match" : "matches"} in ${results.files.length} ${results.files.length === 1 ? "file" : "files"}`
+      : "";
   const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 10);
   const last = Math.min(rows.length, Math.ceil((scrollTop + listHeight) / ROW_H) + 10);
 
   return (
-    <div className="modal-backdrop find-backdrop" onMouseDown={(e) => e.target === e.currentTarget && closeFindInFiles()}>
-      <div className="find-popup" tabIndex={-1} onKeyDown={onKeyDown}>
-        <div className="find-header">
+    <div
+      className={"modal-backdrop find-backdrop" + (layout.pinned ? " pinned" : "") + (bounds ? " placed" : "")}
+      onMouseDown={(e) => e.target === e.currentTarget && !layout.pinned && close()}
+    >
+      <div
+        ref={popupRef}
+        className="find-popup"
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        style={bounds ? { left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h } : undefined}
+      >
+        <div className="find-header" onPointerDown={moveBy} onDoubleClick={(e) => !(e.target as HTMLElement).closest("button") && useLayout.setState({ bounds: null })}>
           <span className="find-title">{replace ? "Replace in Files" : "Find in Files"}</span>
-          <span className="find-status">
-            {busy ? "Searching…" : results ? `${results.totalMatches} matches in ${results.files.length} files` : ""}
-            {results?.truncated && " (limit reached — narrow the search)"}
-          </span>
+          <span className="find-status">{status}</span>
           <button className="btn small" onClick={() => setReplace((r) => !r)}>
             {replace ? "Find only" : "Replace…"}
           </button>
+          <button
+            className={"find-pin" + (layout.pinned ? " on" : "")}
+            title={layout.pinned ? "Unpin: close when a match is opened" : "Pin: keep open when a match is opened"}
+            onClick={() => useLayout.setState({ pinned: !layout.pinned })}
+          >
+            <Pin size={14} />
+          </button>
         </div>
-        <div className="find-row">
+        <div className="find-row find-query">
+          <button
+            className="find-history-btn"
+            title="Recent searches (Alt+↓)"
+            tabIndex={-1}
+            disabled={!history.queries.length}
+            // Keeps focus in the field, whose blur would close the list before the click toggles it.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setHistoryIndex(0);
+              setHistoryOpen((o) => !o);
+              queryRef.current?.focus();
+            }}
+          >
+            <History size={14} />
+          </button>
           <input
             ref={queryRef}
             className={"find-input" + (error ? " invalid" : "")}
@@ -431,10 +647,29 @@ export function FindInFiles({ project }: { project: Project | null }) {
             placeholder="Search"
             spellCheck={false}
             onChange={(e) => set({ query: e.target.value })}
+            onBlur={() => setHistoryOpen(false)}
           />
           <Toggle on={opts.matchCase} title="Match case (Alt+C)" label="Cc" onClick={() => set({ matchCase: !opts.matchCase })} />
           <Toggle on={opts.wholeWord} title="Words (Alt+O)" label="W" onClick={() => set({ wholeWord: !opts.wholeWord })} />
           <Toggle on={opts.isRegex} title="Regex (Alt+X)" label=".*" onClick={() => set({ isRegex: !opts.isRegex })} />
+          {historyOpen && (
+            <div className="find-history">
+              {history.queries.map((q, i) => (
+                <div
+                  key={q}
+                  className={"find-history-item" + (i === historyIndex ? " selected" : "")}
+                  onMouseEnter={() => setHistoryIndex(i)}
+                  // mousedown, before the field's blur closes the list.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickHistory(q);
+                  }}
+                >
+                  {q}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         {replace && (
           <div className="find-row">
@@ -458,13 +693,18 @@ export function FindInFiles({ project }: { project: Project | null }) {
             ))}
           </div>
           {opts.scope === "directory" && (
-            <input
-              className="find-input small dir"
-              value={opts.directory}
-              title={opts.directory}
-              spellCheck={false}
-              onChange={(e) => set({ directory: e.target.value })}
-            />
+            <span className="find-dir">
+              <input
+                className="find-input small dir"
+                value={opts.directory}
+                title={opts.directory}
+                spellCheck={false}
+                onChange={(e) => set({ directory: e.target.value })}
+              />
+              <button className="btn small" title="Choose directory" onClick={() => void browseDirectory()}>
+                <FolderOpen size={14} />
+              </button>
+            </span>
           )}
           <select className="find-select" value={opts.context} onChange={(e) => set({ context: e.target.value as SearchContext })} title="Context (C# files)">
             {CONTEXTS.map((c) => (
@@ -473,80 +713,133 @@ export function FindInFiles({ project }: { project: Project | null }) {
               </option>
             ))}
           </select>
+          <label className="find-check" title="Search only files matching the mask">
+            <input type="checkbox" checked={opts.fileMaskOn} onChange={(e) => set({ fileMaskOn: e.target.checked })} />
+            File mask
+          </label>
           <input
             className="find-input small"
             value={opts.fileMask}
-            placeholder="File mask: *.cs, !*.Designer.cs"
+            placeholder="*.cs, !*.Designer.cs"
+            list="find-mask-history"
             spellCheck={false}
+            disabled={!opts.fileMaskOn}
             onChange={(e) => set({ fileMask: e.target.value })}
           />
+          <datalist id="find-mask-history">
+            {[...new Set([...history.masks, ...MASK_PRESETS])].map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
           <label className="find-check" title="Also search bin/, obj/, node_modules/ and .gitignore'd files">
             <input type="checkbox" checked={opts.includeIgnored} onChange={(e) => set({ includeIgnored: e.target.checked })} />
             Include ignored
           </label>
         </div>
-        <div
-          ref={listRef}
-          className="find-list"
-          tabIndex={0}
-          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-        >
-          <div style={{ height: rows.length * ROW_H, position: "relative" }}>
-            {rows.slice(first, last).map((row, i) => {
-              const index = first + i;
-              if (row.kind === "file") {
-                const on = row.file.matches.filter((m) => !isExcluded(row.file.path, m)).length;
+        <div ref={bodyRef} className="find-body">
+          <div
+            ref={listRef}
+            className="find-list"
+            tabIndex={0}
+            style={{ flex: `${layout.split} 1 0` }}
+            onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+          >
+            <div style={{ height: rows.length * ROW_H, position: "relative" }}>
+              {rows.slice(first, last).map((row, i) => {
+                const index = first + i;
+                if (row.kind === "file") {
+                  const on = row.file.matches.filter((m) => !isExcluded(row.file.path, m)).length;
+                  return (
+                    <div
+                      key={"f" + row.file.path}
+                      className="find-file"
+                      style={{ top: index * ROW_H, height: ROW_H }}
+                      onDoubleClick={() => row.file.matches[0] && openMatch(row.file.path, row.file.matches[0])}
+                    >
+                      {replace && (
+                        <input
+                          type="checkbox"
+                          checked={on > 0}
+                          ref={(el) => {
+                            if (el) el.indeterminate = on > 0 && on < row.file.matches.length;
+                          }}
+                          onChange={() => toggleFile(row.file)}
+                        />
+                      )}
+                      <FileIcon name={basename(row.file.path)} />
+                      <span className="find-file-name">{basename(row.file.path)}</span>
+                      <span className="find-file-dir">{relative(project.path, dirname(row.file.path))}</span>
+                      <span className="find-count">{row.file.matches.length}</span>
+                      {row.file.fromBuffer && <span className="tag">unsaved</span>}
+                    </div>
+                  );
+                }
+                const m = row.match;
+                const off = isExcluded(row.file.path, m);
                 return (
-                  <div key={"f" + row.file.path} className="find-file" style={{ top: index * ROW_H, height: ROW_H }}>
-                    {replace && (
-                      <input
-                        type="checkbox"
-                        checked={on > 0}
-                        ref={(el) => {
-                          if (el) el.indeterminate = on > 0 && on < row.file.matches.length;
-                        }}
-                        onChange={() => toggleFile(row.file)}
-                      />
-                    )}
-                    <span className="find-file-name">{basename(row.file.path)}</span>
-                    <span className="find-file-dir">{relative(project.path, dirname(row.file.path))}</span>
-                    <span className="find-count">{row.file.matches.length}</span>
-                    {row.file.fromBuffer && <span className="tag">unsaved</span>}
+                  <div
+                    key={matchKey(row.file.path, m)}
+                    className={"find-match" + (index === selected ? " selected" : "") + (off ? " off" : "")}
+                    style={{ top: index * ROW_H, height: ROW_H }}
+                    onClick={() => setSelected(index)}
+                    onDoubleClick={() => openMatch(row.file.path, m)}
+                  >
+                    {replace && <input type="checkbox" checked={!off} onChange={() => toggleMatch(row.file.path, m)} onClick={(e) => e.stopPropagation()} />}
+                    <span className="find-lineno">{m.line}</span>
+                    <span className="find-text">
+                      {m.lineText.slice(0, m.previewStart).trimStart()}
+                      <span className={replace ? "find-old" : "find-hl"}>{m.lineText.slice(m.previewStart, m.previewEnd)}</span>
+                      {replace && <span className="find-new">{m.replacement}</span>}
+                      {m.lineText.slice(m.previewEnd)}
+                    </span>
                   </div>
                 );
-              }
-              const m = row.match;
-              const off = isExcluded(row.file.path, m);
-              return (
-                <div
-                  key={matchKey(row.file.path, m)}
-                  className={"find-match" + (index === selected ? " selected" : "") + (off ? " off" : "")}
-                  style={{ top: index * ROW_H, height: ROW_H }}
-                  onClick={() => setSelected(index)}
-                  onDoubleClick={() => openMatch(row.file.path, m)}
-                >
-                  {replace && <input type="checkbox" checked={!off} onChange={() => toggleMatch(row.file.path, m)} onClick={(e) => e.stopPropagation()} />}
-                  <span className="find-lineno">{m.line}</span>
-                  <span className="find-text">
-                    {m.lineText.slice(0, m.previewStart).trimStart()}
-                    <span className={replace ? "find-old" : "find-hl"}>{m.lineText.slice(m.previewStart, m.previewEnd)}</span>
-                    {replace && <span className="find-new">{m.replacement}</span>}
-                    {m.lineText.slice(m.previewEnd)}
-                  </span>
-                </div>
-              );
-            })}
+              })}
+            </div>
+            {results && rows.length === 0 && <div className="se-empty">No matches</div>}
           </div>
-          {results && rows.length === 0 && <div className="se-empty">No matches</div>}
+          <div className="find-splitter" onPointerDown={splitBy} onDoubleClick={() => useLayout.setState({ split: 0.55 })} />
+          <div className="find-preview" style={{ flex: `${1 - layout.split} 1 0` }}>
+            <div className="find-preview-header">
+              {selMatch ? (
+                <>
+                  <FileIcon name={basename(selMatch.file.path)} />
+                  <span className="find-file-name">{basename(selMatch.file.path)}</span>
+                  <span className="find-file-dir">{relative(project.path, selMatch.file.path)}</span>
+                  <span className="find-count">
+                    {selMatch.match.line}:{selMatch.match.column}
+                  </span>
+                </>
+              ) : (
+                <span className="muted">No match selected</span>
+              )}
+            </div>
+            <Preview
+              path={selMatch?.file.path ?? null}
+              hash={selMatch?.file.hash ?? null}
+              match={selMatch?.match ?? null}
+              others={selMatch?.file.matches ?? NO_MATCHES}
+            />
+          </div>
         </div>
-        <Preview path={selMatch?.file.path ?? null} hash={selMatch?.file.hash ?? null} match={selMatch?.match ?? null} />
         <div className="find-footer">
-          <span className="muted small">Enter: open · Ctrl+Enter: replace · Space: tick/untick · Esc: close</span>
+          <span className="muted small">Enter: open · Alt+↓: recent · Ctrl+Enter: replace · Space: tick/untick · Esc: close</span>
           {replace && (
-            <button className="btn primary" disabled={!selectedCount || busy} onClick={() => void doReplace()}>
-              Replace {selectedCount === results?.totalMatches ? "All" : `Selected (${selectedCount})`}
-            </button>
+            <span className="find-actions">
+              <button
+                className="btn"
+                disabled={!selMatch || busy || isExcluded(selMatch.file.path, selMatch.match)}
+                title="Replace the selected occurrence only"
+                onClick={() => selMatch && void doReplace({ path: selMatch.file.path, match: selMatch.match })}
+              >
+                Replace
+              </button>
+              <button className="btn primary" disabled={!selectedCount || busy} onClick={() => void doReplace()}>
+                Replace {selectedCount === results?.totalMatches ? "All" : `Selected (${selectedCount})`}
+              </button>
+            </span>
           )}
+          <div className="find-grip" onPointerDown={resizeBy} title="Resize" />
         </div>
       </div>
     </div>
