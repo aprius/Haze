@@ -259,9 +259,13 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
 // Inline blame for the caret line, like Rider's GitToolBox: "Author, 2 days ago • summary"
 // after the line's end, the commit's details on hover. One blame per model version
 // (dirty text is blamed as is, so lines match), asked once the caret rests.
-const lineBlames = new WeakMap<monaco.editor.ITextModel, { version: number; at: number; lines: Promise<Map<number, BlameLine> | null> }>();
+type LineBlames = Map<number, BlameLine> | null;
+const lineBlames = new WeakMap<
+  monaco.editor.ITextModel,
+  { version: number; at: number; lines: Promise<LineBlames>; done?: Map<number, BlameLine> }
+>();
 
-function caretLineBlames(project: Project, model: monaco.editor.ITextModel): Promise<Map<number, BlameLine> | null> {
+function caretLineBlames(project: Project, model: monaco.editor.ITextModel): Promise<LineBlames> {
   const version = model.getAlternativeVersionId();
   const cached = lineBlames.get(model);
   // Re-asked after a while too: a commit changes the answer without changing the text.
@@ -271,8 +275,17 @@ function caretLineBlames(project: Project, model: monaco.editor.ITextModel): Pro
   const lines = blameModel(root, model)
     .then((ls) => new Map(ls.map((l) => [l.line, l])))
     .catch(() => null); // untracked or outside git: nothing to show
-  lineBlames.set(model, { version, at: Date.now(), lines });
+  // The old answer for the same text stays on hand while the new one comes.
+  const entry = { version, at: Date.now(), lines, done: cached?.version === version ? cached.done : undefined };
+  void lines.then((m) => (entry.done = m ?? undefined));
+  lineBlames.set(model, entry);
   return lines;
+}
+
+/** The last blame of the model's current text, if one came back: shown at once, even while re-asked. */
+function knownLineBlames(model: monaco.editor.ITextModel): Map<number, BlameLine> | undefined {
+  const cached = lineBlames.get(model);
+  return cached?.version === model.getAlternativeVersionId() ? cached.done : undefined;
 }
 
 function timeAgo(t: number): string {
@@ -348,11 +361,10 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
     if (key && key === shownKey) return;
     clear();
     if (!model || !line || model.uri.scheme !== "file" || !useWorkspace.getState().lineBlame) return;
-    timer = setTimeout(async () => {
+    const show = (b: BlameLine | undefined) => {
       // Full Annotate is on: it already says it.
-      if (blameDecorations.has(model)) return;
-      const b = (await caretLineBlames(project, model))?.get(line);
-      if (!b || editor.getModel() !== model || editor.getSelection()?.positionLineNumber !== line || line > model.getLineCount()) return;
+      if (!b || blameDecorations.has(model)) return;
+      if (editor.getModel() !== model || editor.getSelection()?.positionLineNumber !== line || line > model.getLineCount()) return;
       if (`${model.uri}:${model.getAlternativeVersionId()}:${line}` !== key) return;
       const summary = b.summary.length > 60 ? b.summary.slice(0, 59) + "…" : b.summary;
       const label = b.hash === UNCOMMITTED ? "You, uncommitted changes" : `${b.author}, ${timeAgo(b.time)} • ${summary}`;
@@ -368,6 +380,13 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
         },
       ]);
       shownKey = key;
+    };
+    // This text's blame is already here: no wait. The timer still re-asks once it's due.
+    const known = knownLineBlames(model)?.get(line);
+    show(known);
+    timer = setTimeout(async () => {
+      const b = (await caretLineBlames(project, model))?.get(line);
+      if (b !== known) show(b);
     }, delay);
   };
   const subs = [
