@@ -1,4 +1,5 @@
-// Top toolbar of a .NET project: build target, run configuration, Build / Run / Test.
+// Title bar: the window's drag area with the project name, and for a .NET project
+// the C# server status, run configuration and Build / Run / Test.
 import { FlaskConical, Hammer, Play, RefreshCw, Square } from "lucide-react";
 import { useMemo } from "react";
 import type { DotnetInfo } from "../lib/ipc";
@@ -8,7 +9,8 @@ import { cancelBuild, defaultBuildTarget, startBuild, useDotnet, type CsharpStat
 import { closeTerminal, newTerminal, useTerminals } from "../store/terminals";
 import { useWorkspace, type Project } from "../store/workspace";
 import { confirmAction } from "./Overlays";
-import { shortcutLabel } from "../lib/keymap";
+import { isMac, shortcutLabel } from "../lib/keymap";
+import { useZoom } from "../lib/zoom";
 
 export interface RunConfig {
   id: string;
@@ -75,7 +77,7 @@ function csharpLabel(s: CsharpStatus | undefined): { text: string; tone: string 
   }
 }
 
-export function RunBar({ project }: { project: Project }) {
+function RunControls({ project }: { project: Project }) {
   const info = useDotnet((s) => s.info[project.id]);
   const build = useDotnet((s) => s.builds[project.id]);
   const csharp = useDotnet((s) => s.csharp[project.id]);
@@ -87,10 +89,7 @@ export function RunBar({ project }: { project: Project }) {
   const label = csharpLabel(csharp);
 
   return (
-    <div className="run-bar">
-      <span className="run-target" title={target ?? project.path}>
-        {target ? basename(target) : project.name}
-      </span>
+    <>
       {label.text && (
         <span className={"csharp-status " + label.tone} title={[csharp?.kind && `Language server: ${csharp.kind}`, csharp?.message].filter(Boolean).join("\n") || undefined}>
           {label.text}
@@ -114,13 +113,13 @@ export function RunBar({ project }: { project: Project }) {
           )}
         </span>
       )}
-      <span className="run-spacer" />
+      <span className="run-spacer" data-tauri-drag-region />
       {build?.running ? (
         <button className="icon-btn" title="Cancel build" onClick={() => cancelBuild(project.id)}>
           <Square size={14} />
         </button>
       ) : (
-        <button className="icon-btn" title={`Build (${shortcutLabel("build")})`} onClick={() => void startBuild(project.id, project.path, "build", target)}>
+        <button className="icon-btn" title={`Build ${target ? basename(target) : project.name} (${shortcutLabel("build")})`} onClick={() => void startBuild(project.id, project.path, "build", target)}>
           <Hammer size={14} />
         </button>
       )}
@@ -142,6 +141,21 @@ export function RunBar({ project }: { project: Project }) {
           </button>
         </>
       )}
+    </>
+  );
+}
+
+/** Stands in for the native title bar, which on macOS is hidden under the web content. */
+export function TitleBar({ project }: { project: Project | null }) {
+  const zoom = useZoom((s) => s.zoom);
+  // Webview zoom scales CSS pixels but not the traffic lights, so their room is kept in screen pixels.
+  const style = isMac ? { paddingLeft: 78 / zoom, height: Math.max(36, 36 / zoom) } : undefined;
+  return (
+    <div className="title-bar" data-tauri-drag-region style={style}>
+      <span className="title-name" data-tauri-drag-region title={project?.path}>
+        {project?.name ?? "Haze"}
+      </span>
+      {project ? <RunControls project={project} /> : <span className="run-spacer" data-tauri-drag-region />}
     </div>
   );
 }

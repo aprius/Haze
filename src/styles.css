@@ -1484,19 +1484,21 @@ kbd {
 
 /* ------------------------------------------------------------ .NET: run bar, build, usages */
 
-.run-bar {
+.title-bar {
   flex: none;
   height: 32px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 0 8px 0 12px;
+  user-select: none;
+  -webkit-user-select: none;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   font-size: calc(var(--ui-font-size) * 12 / 13);
 }
 
-.run-target {
+.title-name {
   font-weight: 600;
   white-space: nowrap;
 }

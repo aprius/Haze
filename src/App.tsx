@@ -15,7 +15,7 @@ import { GitPanel } from "./components/GitPanel";
 import { RebaseDialog } from "./components/RebaseDialog";
 import { openSettings, SettingsDialog } from "./components/SettingsDialog";
 import { refreshRepo } from "./store/git";
-import { RunBar, runConfig, runConfigs } from "./components/RunBar";
+import { runConfig, runConfigs, TitleBar } from "./components/RunBar";
 import { TerminalPanel, toggleTerminal } from "./components/TerminalPanel";
 import { UsagesPopup } from "./components/UsagesPopup";
 import { notifyFileChanges, startCsharp, stopCsharp } from "./lib/lsp/csharp";
@@ -38,7 +38,6 @@ function ProjectView({ project }: { project: Project }) {
   if (!ui) return null;
   return (
     <div className="project-view">
-      <RunBar project={project} />
       <div className="main-row">
         {ui.sidebarVisible && (
           <>
@@ -321,6 +320,7 @@ export default function App() {
   if (!loaded) return <div className="app loading" />;
   return (
     <div className="app">
+      <TitleBar project={active} />
       <div className="app-body">
         <ProjectRail />
         <div className="workspace">
