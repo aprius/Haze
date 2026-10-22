@@ -12,6 +12,7 @@ import { branchMenu, checkout, listWorktrees, newBranch, newWorktree, onLogFilte
 import { choose, confirmAction, openMenu, prompt, toast } from "./Overlays";
 import { openRebaseDialog } from "./RebaseDialog";
 import { ToolTabs } from "./BuildPanel";
+import { Splitter } from "./Shell";
 
 const ROW_H = 22;
 const LANE_W = 14;
@@ -19,6 +20,12 @@ const PAGE = 1000;
 // Monokai Pro accents from styles.css, so the graph follows the light / dark filter.
 const COLORS = ["cyan", "orange", "green", "purple", "red", "yellow"].map((c) => `var(--mk-${c})`);
 const colorOf = (c: number) => COLORS[c % COLORS.length];
+
+/** A Git tool window pane size, kept per project like the other panes. */
+function usePaneSize(project: Project, key: "gitBranchesWidth" | "gitDetailsWidth" | "gitStashListWidth" | "gitMetaHeight") {
+  const value = useWorkspace((s) => s.ui[project.id]?.[key]);
+  return [value, (v: number) => useWorkspace.getState().updateUi(project.id, { [key]: v })] as const;
+}
 
 function formatDate(t: number): string {
   const d = new Date(t * 1000);
@@ -81,6 +88,7 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const byDir = useWorkspace((s) => s.ui[project.id]?.logGroupByDir ?? true);
+  const [metaHeight, setMetaHeight] = usePaneSize(project, "gitMetaHeight");
   useEffect(() => {
     let stale = false;
     setD(null);
@@ -161,7 +169,8 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
           );
         })}
       </div>
-      <div className="commit-meta">
+      <Splitter vertical={false} value={metaHeight} min={40} max={800} invert onChange={setMetaHeight} />
+      <div className="commit-meta" style={{ height: metaHeight }}>
         <pre className="commit-msg">{d.message}</pre>
         <div className="muted small">
           {d.author} &lt;{d.email}&gt; · {new Date(d.time * 1000).toLocaleString()}
@@ -193,6 +202,7 @@ function BranchList({ project, branches, refs, onSelect }: { project: Project; b
   const current = useGit((s) => s.repos[project.id]?.branches?.current ?? null);
   const [q, setQ] = useState("");
   const revision = useGit((s) => s.repos[project.id]?.revision ?? 0);
+  const [width] = usePaneSize(project, "gitBranchesWidth");
   const collapsedList = useWorkspace((s) => s.ui[project.id]?.gitCollapsed);
   const collapsed = useMemo(() => new Set(collapsedList ?? []), [collapsedList]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
@@ -248,7 +258,7 @@ function BranchList({ project, branches, refs, onSelect }: { project: Project; b
   ];
 
   return (
-    <div className="log-branches">
+    <div className="log-branches" style={{ flexBasis: width }}>
       <input className="find-input small" placeholder="Filter branches" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="log-branch-list">
         <div className={"log-branch" + (refs.length === 0 ? " selected" : "")} onClick={() => onSelect([])}>
@@ -316,9 +326,10 @@ function StashView({ project, root }: { project: Project; root: string }) {
   const [selected, setSelected] = useState<number | null>(null);
   const sel = stashes.find((s) => s.index === selected) ?? stashes[0];
   const ref = (i: number) => `stash@{${i}}`;
+  const [width, setWidth] = usePaneSize(project, "gitStashListWidth");
   return (
     <div className="log-body">
-      <div className="stash-list">
+      <div className="stash-list" style={{ flexBasis: width }}>
         <div className="stash-actions">
           <button
             className="btn small"
@@ -374,6 +385,7 @@ function StashView({ project, root }: { project: Project; root: string }) {
           </div>
         )}
       </div>
+      <Splitter vertical value={width} min={160} max={900} onChange={setWidth} />
       <div className="log-details wide">{sel ? <Details project={project} root={root} hash={sel.hash} /> : <div className="se-empty">Select a stash</div>}</div>
     </div>
   );
@@ -406,6 +418,8 @@ export function GitPanel({ project }: { project: Project }) {
   const root = r?.root ?? null;
   const branches = useMemo(() => r?.branches?.branches ?? [], [r?.branches]);
   const [view, setView] = useState<"log" | "stashes" | "console">("log");
+  const [branchesWidth, setBranchesWidth] = usePaneSize(project, "gitBranchesWidth");
+  const [detailsWidth, setDetailsWidth] = usePaneSize(project, "gitDetailsWidth");
   const [query, setQuery] = useState<LogQuery>({ limit: PAGE, refs: [], text: null, author: null, path: null, firstParent: false });
   const [textInput, setTextInput] = useState("");
   const [authorInput, setAuthorInput] = useState("");
@@ -617,6 +631,7 @@ export function GitPanel({ project }: { project: Project }) {
       ) : (
         <div className="log-body">
           <BranchList project={project} branches={branches} refs={query.refs} onSelect={(refs) => setQuery((q) => ({ ...q, refs, limit: PAGE }))} />
+          <Splitter vertical value={branchesWidth} min={120} max={600} onChange={setBranchesWidth} />
           <div
             ref={listRef}
             className="log-list"
@@ -673,7 +688,8 @@ export function GitPanel({ project }: { project: Project }) {
               })}
             </div>
           </div>
-          <div className="log-details">
+          <Splitter vertical value={detailsWidth} min={200} max={1200} invert onChange={setDetailsWidth} />
+          <div className="log-details" style={{ flexBasis: detailsWidth }}>
             {selected ? <Details project={project} root={root} hash={selected} /> : <div className="se-empty">Select a commit</div>}
           </div>
         </div>

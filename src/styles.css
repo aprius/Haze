@@ -1819,7 +1819,6 @@ kbd {
   flex-direction: column;
   gap: 4px;
   padding: 6px;
-  border-right: 1px solid var(--border);
   min-height: 0;
 }
 
@@ -1957,7 +1956,6 @@ kbd {
 
 .log-details {
   flex: 0 0 340px;
-  border-left: 1px solid var(--border);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1980,12 +1978,24 @@ kbd {
   cursor: pointer;
 }
 
+/* A commit only adds, modifies or deletes: green, orange, red. */
+.commit-files .git-added .tree-name {
+  color: var(--mk-green);
+}
+
+.commit-files .git-modified .tree-name,
+.commit-files .git-renamed .tree-name {
+  color: var(--mk-orange);
+}
+
+.commit-files .git-deleted .tree-name {
+  color: var(--mk-red);
+}
+
 .commit-meta {
-  flex: 0 1 auto;
-  max-height: 50%;
+  flex: none;
   overflow: auto;
   padding: 8px 10px;
-  border-top: 1px solid var(--border);
   user-select: text;
 }
 
@@ -2380,7 +2390,6 @@ kbd {
   flex-direction: column;
   gap: 4px;
   padding: 6px;
-  border-right: 1px solid var(--border);
   overflow: auto;
 }
 

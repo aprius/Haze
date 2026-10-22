@@ -42,6 +42,11 @@ export interface ProjectUi {
   commitGroupByDir: boolean;
   /** Commit details in the Git log list changed files in a directory tree rather than flat. */
   logGroupByDir: boolean;
+  /** Sizes of the Git tool window panes: branch list, commit details, stash list, commit message under the files. */
+  gitBranchesWidth: number;
+  gitDetailsWidth: number;
+  gitStashListWidth: number;
+  gitMetaHeight: number;
   /** Collapsed groups and folders of the Git branch list ("Local", "Remote/origin", …). */
   gitCollapsed: string[];
   /** Selected run configuration id (see RunBar). */
@@ -71,6 +76,10 @@ export const defaultUi = (): ProjectUi => ({
   bottomTab: "build",
   commitGroupByDir: false,
   logGroupByDir: true,
+  gitBranchesWidth: 210,
+  gitDetailsWidth: 340,
+  gitStashListWidth: 320,
+  gitMetaHeight: 140,
   gitCollapsed: [],
   runConfig: null,
 });
