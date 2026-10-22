@@ -7,7 +7,8 @@ import { api, type FileHit, type SearchMatch } from "../lib/ipc";
 import { symbolKindName } from "../lib/lsp/convert";
 import { workspaceSymbols, type WorkspaceSymbolHit } from "../lib/lsp/csharp";
 import { basename, dirname, relative } from "../lib/path";
-import { closeSearchEverywhere, useUi, type SeTab } from "../store/ui";
+import { keepSearchFocus } from "../lib/popupFocus";
+import { closeSearchEverywhere, toggleSeIncludeAll, useUi, type SeTab } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { FileIcon } from "./FileIcon";
 
@@ -103,6 +104,7 @@ function SymbolIcon({ kind }: { kind: number }) {
 
 export function SearchEverywhere({ project }: { project: Project | null }) {
   const { open, tab: initialTab, nonce, query: initialQuery } = useUi((s) => s.searchEverywhere);
+  const includeAll = useUi((s) => s.seIncludeAll);
   const [tab, setTab] = useState<SeTab>(initialTab);
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<FileHit[]>([]);
@@ -131,7 +133,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
     let stale = false;
     const t = setTimeout(() => {
       api
-        .findFiles(project.path, query, tab === "files" ? 60 : 12)
+        .findFiles(project.path, query, tab === "files" ? 60 : 12, includeAll)
         .then((hits) => !stale && setFiles(hits))
         .catch(() => !stale && setFiles([]));
     }, 40);
@@ -139,7 +141,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
       stale = true;
       clearTimeout(t);
     };
-  }, [open, project, query, tab]);
+  }, [open, project, query, tab, includeAll]);
 
   // Symbols from the C# language server.
   useEffect(() => {
@@ -171,7 +173,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
         .searchText(
           ++textSearchId,
           { query, isRegex: false, matchCase: false, wholeWord: false, context: "anywhere", replacement: null, preserveCase: false },
-          { dirs: [project.path], files: [], fileMask: null, includeIgnored: false, overrides: {} },
+          { dirs: [project.path], files: [], fileMask: null, includeIgnored: includeAll, overrides: {} },
           60,
         )
         .then((r) => !stale && setText(r.files.flatMap((f) => f.matches.map((m) => ({ path: f.path, match: m })))))
@@ -181,7 +183,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
       stale = true;
       clearTimeout(t);
     };
-  }, [open, project, query, tab]);
+  }, [open, project, query, tab, includeAll]);
 
   const items = useMemo<Item[]>(() => {
     const out: Item[] = [];
@@ -253,13 +255,17 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
   let lastGroup = "";
   return (
     <div className="modal-backdrop se-backdrop" onMouseDown={(e) => e.target === e.currentTarget && closeSearchEverywhere()}>
-      <div className="se-popup se-main" tabIndex={-1} onKeyDown={onKeyDown}>
+      <div className="se-popup se-main" tabIndex={-1} onKeyDown={onKeyDown} onMouseDown={keepSearchFocus}>
         <div className="se-tabs">
           {TABS.map((t) => (
-            <button key={t.id} className={"se-tab" + (t.id === tab ? " active" : "")} onMouseDown={(e) => e.preventDefault()} onClick={() => setTab(t.id)}>
+            <button key={t.id} className={"se-tab" + (t.id === tab ? " active" : "")} onClick={() => setTab(t.id)}>
               {t.label}
             </button>
           ))}
+          <label className="se-include" title="Also search ignored files: bin/, obj/, Library/, .gitignore'd (Double Shift)">
+            <input type="checkbox" checked={includeAll} onChange={toggleSeIncludeAll} />
+            Include non-solution items
+          </label>
         </div>
         <label className="se-field">
           <Search size={16} className="ico" />

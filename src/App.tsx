@@ -31,7 +31,7 @@ import { resetZoom, zoomIn, zoomOut } from "./lib/zoom";
 import { restore } from "./store/persist";
 import { startTerminals, syncSessions } from "./store/terminals";
 import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
-import { openCommitWindow, openFindInFiles, openSearchEverywhere, toggleCommitWindow, useUi } from "./store/ui";
+import { openCommitWindow, openFindInFiles, openSearchEverywhere, toggleCommitWindow, toggleSeIncludeAll, useUi } from "./store/ui";
 import { projectForPath, useWorkspace, type BottomTab, type Project } from "./store/workspace";
 
 function ProjectView({ project }: { project: Project }) {
@@ -161,8 +161,12 @@ function useGlobalShortcuts(project: Project | null) {
     const onUp = (e: KeyboardEvent) => {
       if (e.key !== "Shift" || otherKey) return;
       const now = Date.now();
-      // Double Shift: two lone Shift presses within 350 ms.
-      if (now - lastShift < 350 && !popupOpen()) {
+      // Double Shift: two lone Shift presses within 350 ms. Again in Search
+      // Everywhere toggles "Include non-solution items", as in Rider.
+      if (now - lastShift < 350 && useUi.getState().searchEverywhere.open) {
+        lastShift = 0;
+        toggleSeIncludeAll();
+      } else if (now - lastShift < 350 && !popupOpen()) {
         lastShift = 0;
         openSearchEverywhere("all");
       } else {

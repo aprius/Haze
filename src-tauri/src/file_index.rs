@@ -15,9 +15,12 @@ use crate::search::walker;
 
 const MAX_FILES: usize = 300_000;
 
+/// Root, and whether ignored files (bin/, .gitignore'd, …) are in.
+type CacheKey = (String, bool);
+
 #[derive(Default)]
 pub struct FileIndex {
-    cache: Mutex<HashMap<String, Arc<Vec<String>>>>,
+    cache: Mutex<HashMap<CacheKey, Arc<Vec<String>>>>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -31,9 +34,9 @@ pub struct FileHit {
     pub name_indices: Vec<u32>,
 }
 
-fn build(root: &Path) -> Vec<String> {
+fn build(root: &Path, include_ignored: bool) -> Vec<String> {
     let mut out = Vec::new();
-    for entry in walker(root, false).build().flatten() {
+    for entry in walker(root, include_ignored).build().flatten() {
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
@@ -48,31 +51,66 @@ fn build(root: &Path) -> Vec<String> {
 }
 
 impl FileIndex {
-    fn files(&self, root: &str) -> Arc<Vec<String>> {
-        if let Some(f) = self.cache.lock().get(root) {
+    fn files(&self, root: &str, include_ignored: bool) -> Arc<Vec<String>> {
+        let key = (root.to_string(), include_ignored);
+        if let Some(f) = self.cache.lock().get(&key) {
             return f.clone();
         }
-        let files = Arc::new(build(Path::new(root)));
-        self.cache.lock().insert(root.to_string(), files.clone());
+        let files = Arc::new(build(Path::new(root), include_ignored));
+        self.cache.lock().insert(key, files.clone());
         files
     }
 
     pub fn invalidate(&self, root: &str) {
-        self.cache.lock().remove(root);
+        let mut cache = self.cache.lock();
+        cache.remove(&(root.to_string(), false));
+        cache.remove(&(root.to_string(), true));
     }
 
-    pub fn find(&self, root: &str, query: &str, limit: usize) -> Vec<FileHit> {
+    pub fn find(
+        &self,
+        root: &str,
+        query: &str,
+        limit: usize,
+        include_ignored: bool,
+    ) -> Vec<FileHit> {
         let query = query.trim();
         if query.is_empty() {
             return Vec::new();
         }
-        let files = self.files(root);
+        let files = self.files(root, include_ignored);
         rank(root, &files, query, limit)
+    }
+}
+
+/// Scripts first, then text assets, then everything else (textures, models, …).
+const SCRIPTS: &[&str] = &[
+    "cs", "shader", "hlsl", "cginc", "compute", "ts", "tsx", "js", "jsx", "rs", "py", "go", "java",
+    "kt", "swift", "c", "cc", "cpp", "h", "hpp", "m", "mm", "lua", "sh",
+];
+const TEXT_ASSETS: &[&str] = &[
+    "json", "txt", "md", "xml", "yaml", "yml", "csv", "toml", "ini", "uxml", "uss", "asmdef",
+    "asmref", "html", "css", "csproj", "sln", "props", "targets", "config", "bytes",
+];
+
+fn kind_bonus(name: &str) -> u32 {
+    let ext = name
+        .rsplit_once('.')
+        .map_or("", |(_, e)| e)
+        .to_ascii_lowercase();
+    if SCRIPTS.contains(&ext.as_str()) {
+        40
+    } else if TEXT_ASSETS.contains(&ext.as_str()) {
+        20
+    } else {
+        0
     }
 }
 
 pub fn rank(root: &str, files: &[String], query: &str, limit: usize) -> Vec<FileHit> {
     let path_query = query.contains('/') || query.contains('\\');
+    // Unity's `.meta` sidecars (one per folder too) only when asked for, as in Rider.
+    let want_meta = query.to_ascii_lowercase().contains(".meta");
     let query = query.replace('\\', "/");
     let pattern = Pattern::parse(&query, CaseMatching::Smart, Normalization::Smart);
     let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
@@ -80,16 +118,17 @@ pub fn rank(root: &str, files: &[String], query: &str, limit: usize) -> Vec<File
     let mut hits: Vec<(u32, &String, usize)> = Vec::new();
     for (i, rel) in files.iter().enumerate() {
         let name = rel.rsplit('/').next().unwrap_or(rel);
-        // Prefer matches in the file name, like Rider's Go to File.
-        let name_score = if path_query {
-            None
+        if !want_meta && name.ends_with(".meta") {
+            continue;
+        }
+        // Like Rider's Go to File: the file name only, unless the query has a
+        // `/` — a folder's name alone doesn't list everything inside it.
+        let score = if path_query {
+            pattern.score(Utf32Str::new(rel, &mut buf), &mut matcher)
         } else {
-            pattern
-                .score(Utf32Str::new(name, &mut buf), &mut matcher)
-                .map(|s| s * 2 + 1000)
-        };
-        let score =
-            name_score.or_else(|| pattern.score(Utf32Str::new(rel, &mut buf), &mut matcher));
+            pattern.score(Utf32Str::new(name, &mut buf), &mut matcher)
+        }
+        .map(|s| s + kind_bonus(name));
         if let Some(s) = score {
             hits.push((s, rel, i));
         }
@@ -163,6 +202,37 @@ mod tests {
     }
 
     #[test]
+    fn scripts_first_without_meta_or_folder_matches() {
+        let files: Vec<String> = [
+            "Assets/Player.meta",
+            "Assets/Player/Idle.png",
+            "Assets/Player/Player.png",
+            "Assets/Player/Player.json",
+            "Assets/Player/Player.cs",
+            "Assets/Player/Player.cs.meta",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let rels: Vec<_> = rank("/r", &files, "player", 10)
+            .into_iter()
+            .map(|h| h.rel)
+            .collect();
+        assert_eq!(
+            rels,
+            [
+                "Assets/Player/Player.cs",
+                "Assets/Player/Player.json",
+                "Assets/Player/Player.png"
+            ]
+        );
+        assert_eq!(
+            rank("/r", &files, "player.meta", 10)[0].rel,
+            "Assets/Player.meta"
+        );
+    }
+
+    #[test]
     fn builds_from_disk_skipping_bin() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("bin")).unwrap();
@@ -170,8 +240,9 @@ mod tests {
         std::fs::write(dir.path().join("A.cs"), "").unwrap();
         let idx = FileIndex::default();
         let root = dir.path().to_string_lossy().into_owned();
-        let hits = idx.find(&root, "cs", 10);
+        let hits = idx.find(&root, "cs", 10, false);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].rel, "A.cs");
+        assert_eq!(idx.find(&root, "cs", 10, true).len(), 2);
     }
 }

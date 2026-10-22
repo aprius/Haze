@@ -6,6 +6,8 @@ export type SeTab = "all" | "files" | "symbols" | "actions" | "text";
 
 interface UiState {
   searchEverywhere: { open: boolean; tab: SeTab; nonce: number; query: string | null };
+  /** Search Everywhere's "Include non-solution items": ignored files (bin/, obj/, .gitignore'd) too. */
+  seIncludeAll: boolean;
   findInFiles: { open: boolean; replace: boolean; initialQuery: string | null; directory: string | null; nonce: number };
   /** Project whose floating Commit window is open. */
   commitWindow: string | null;
@@ -15,6 +17,7 @@ interface UiState {
 
 export const useUi = create<UiState>(() => ({
   searchEverywhere: { open: false, tab: "all", nonce: 0, query: null },
+  seIncludeAll: false,
   findInFiles: { open: false, replace: false, initialQuery: null, directory: null, nonce: 0 },
   commitWindow: null,
   diffWindow: null,
@@ -28,6 +31,10 @@ export function openSearchEverywhere(tab: SeTab = "all", query: string | null = 
 /** Lets the editor take focus back after a popup closes (see EditorArea). */
 export function popupClosed(): void {
   window.dispatchEvent(new Event("haze:popup-closed"));
+}
+
+export function toggleSeIncludeAll(): void {
+  useUi.setState((s) => ({ seIncludeAll: !s.seIncludeAll }));
 }
 
 export function closeSearchEverywhere(): void {

@@ -1372,21 +1372,45 @@ kbd {
   padding: 3px 10px;
 }
 
+.se-include {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.se-include input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* Boxed like Find in Files' query field: the accent border while typing. */
 .se-field {
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border);
+  margin: 8px 10px 4px;
+  padding: 0 8px;
+  background: var(--editor-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
   cursor: text;
+}
+
+.se-field:focus-within {
+  border-color: var(--accent);
 }
 
 .se-main .se-input {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
-  padding: 9px 0;
+  padding: 6px 0;
   background: transparent;
   border: 0;
   border-radius: 0;

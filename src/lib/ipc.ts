@@ -480,8 +480,8 @@ export const api = {
   replaceInFiles: (query: SearchQuery, targets: ReplaceTarget[]) =>
     invoke<ReplaceOutcome>("replace_in_files", { query, targets }),
   undoReplace: (id: number) => invoke<{ path: string; reason: string }[]>("undo_replace", { id }),
-  findFiles: (root: string, query: string, limit?: number) =>
-    invoke<FileHit[]>("find_files", { root, query, limit: limit ?? null }),
+  findFiles: (root: string, query: string, limit?: number, includeIgnored = false) =>
+    invoke<FileHit[]>("find_files", { root, query, limit: limit ?? null, includeIgnored }),
   readImage: (path: string) => invoke<{ mime: string; base64: string }>("read_image", { path }),
   clipboardFilePaths: () => invoke<string[]>("clipboard_file_paths"),
 

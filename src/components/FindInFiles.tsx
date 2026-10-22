@@ -12,6 +12,7 @@ import { api, errorMessage, type FileMatches, type ReplaceTarget, type SearchCon
 import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, isWithin, relative } from "../lib/path";
+import { keepSearchFocus } from "../lib/popupFocus";
 import { closeFindInFiles, useUi } from "../store/ui";
 import { solutionDirs, useDotnet } from "../store/dotnet";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -609,6 +610,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
         className="find-popup"
         tabIndex={-1}
         onKeyDown={onKeyDown}
+        onMouseDown={keepSearchFocus}
         style={bounds ? { left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h } : undefined}
       >
         <div className="find-header" onPointerDown={moveBy} onDoubleClick={(e) => !(e.target as HTMLElement).closest("button") && useLayout.setState({ bounds: null })}>
@@ -707,7 +709,10 @@ export function FindInFiles({ project }: { project: Project | null }) {
               </button>
             </span>
           )}
-          <select className="find-select" value={opts.context} onChange={(e) => set({ context: e.target.value as SearchContext })} title="Context (C# files)">
+          <select className="find-select" value={opts.context} onChange={(e) => {
+              set({ context: e.target.value as SearchContext });
+              queryRef.current?.focus();
+            }} title="Context (C# files)">
             {CONTEXTS.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.label}

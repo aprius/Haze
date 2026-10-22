@@ -271,9 +271,11 @@ async fn find_files(
     root: String,
     query: String,
     limit: Option<usize>,
+    include_ignored: Option<bool>,
 ) -> CmdResult<Vec<file_index::FileHit>> {
     let index = index.inner().clone();
-    blocking(move || Ok(index.find(&root, &query, limit.unwrap_or(50)))).await
+    let include_ignored = include_ignored.unwrap_or(false);
+    blocking(move || Ok(index.find(&root, &query, limit.unwrap_or(50), include_ignored))).await
 }
 
 /// Files copied in Finder: the webview hides their paths from a paste, and
