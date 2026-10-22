@@ -133,10 +133,10 @@ export function UnityPanel({ project }: { project: Project }) {
             ))}
           </div>
           <button className="icon-btn" title="Clear" onClick={() => clearUnityLogs(project.id)}>
-            <Trash2 size={14} />
+            <Trash2 size={16} />
           </button>
           <button className="icon-btn" title="Hide" onClick={() => useWorkspace.getState().updateUi(project.id, { bottomVisible: false })}>
-            <ChevronDown size={14} />
+            <ChevronDown size={16} />
           </button>
         </div>
       </div>
@@ -255,13 +255,13 @@ export function TestsPanel({ project }: { project: Project }) {
             title="Rerun failed tests"
             onClick={() => run(`^(${failed.map((f) => escape(f.fullName)).join("|")})$`, "Failed tests")}
           >
-            <RotateCcw size={14} />
+            <RotateCcw size={16} />
           </button>
           <button className="icon-btn run" disabled={tests?.running} title="Run all tests (Edit Mode and Play Mode)" onClick={() => run(".*", "All tests")}>
-            <Play size={14} />
+            <Play size={16} />
           </button>
           <button className="icon-btn" title="Hide" onClick={() => useWorkspace.getState().updateUi(project.id, { bottomVisible: false })}>
-            <ChevronDown size={14} />
+            <ChevronDown size={16} />
           </button>
         </div>
       </div>

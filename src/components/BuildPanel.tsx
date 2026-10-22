@@ -42,7 +42,7 @@ export function BuildPanel({ project }: { project: Project }) {
           </div>
           {build?.running ? (
             <button className="icon-btn" title="Cancel build" onClick={() => cancelBuild(project.id)}>
-              <Square size={14} />
+              <Square size={16} />
             </button>
           ) : (
             <button
@@ -50,11 +50,11 @@ export function BuildPanel({ project }: { project: Project }) {
               title={`Build (${shortcutLabel("build")})`}
               onClick={() => void buildProject(project.id, project.path)}
             >
-              <Hammer size={14} />
+              <Hammer size={16} />
             </button>
           )}
           <button className="icon-btn" title="Hide" onClick={() => useWorkspace.getState().updateUi(project.id, { bottomVisible: false })}>
-            <ChevronDown size={14} />
+            <ChevronDown size={16} />
           </button>
         </div>
       </div>

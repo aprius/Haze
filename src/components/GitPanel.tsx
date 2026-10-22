@@ -116,17 +116,17 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
             title="Group by Directory"
             onClick={() => useWorkspace.getState().updateUi(project.id, { logGroupByDir: !byDir })}
           >
-            <FolderTree size={14} />
+            <FolderTree size={16} />
           </button>
           <button className="icon-btn" title="Expand All" onClick={() => setCollapsed({})}>
-            <ChevronsUpDown size={14} />
+            <ChevronsUpDown size={16} />
           </button>
           <button
             className="icon-btn"
             title="Collapse All"
             onClick={() => setCollapsed(Object.fromEntries(changeRows("files", d.files, true, {}).flatMap((row) => (row.kind === "dir" ? [[row.key, true]] : []))))}
           >
-            <ChevronsDownUp size={14} />
+            <ChevronsDownUp size={16} />
           </button>
         </div>
       </div>
@@ -619,10 +619,10 @@ export function GitPanel({ project }: { project: Project }) {
         <div className="panel-actions">
           {r?.busy && <span className="muted small">{r.busy}</span>}
           <button className="icon-btn" title="Refresh" onClick={() => void load()}>
-            <RefreshCw size={14} />
+            <RefreshCw size={16} />
           </button>
           <button className="icon-btn" title="Hide (Alt+9)" onClick={() => useWorkspace.getState().updateUi(project.id, { bottomVisible: false })}>
-            <ChevronDown size={14} />
+            <ChevronDown size={16} />
           </button>
         </div>
       </div>

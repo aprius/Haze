@@ -253,17 +253,17 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
             title="Create a checkpoint (before letting an AI agent work), to review what changed since"
             onClick={() => void createCheckpoint(project.id, project.path)}
           >
-            <Camera size={14} />
+            <Camera size={16} />
           </button>
           <button
             className={"icon-btn" + (byDir ? " on" : "")}
             title="Group by Directory"
             onClick={() => useWorkspace.getState().updateUi(project.id, { commitGroupByDir: !byDir })}
           >
-            <FolderTree size={14} />
+            <FolderTree size={16} />
           </button>
           <button className="icon-btn" title="Expand All" onClick={() => setCollapsed({})}>
-            <ChevronsUpDown size={14} />
+            <ChevronsUpDown size={16} />
           </button>
           <button
             className="icon-btn"
@@ -277,17 +277,17 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
               setCollapsed(next);
             }}
           >
-            <ChevronsDownUp size={14} />
+            <ChevronsDownUp size={16} />
           </button>
           <button className="icon-btn" title="Refresh" onClick={() => refreshRepo(project.id, project.path)}>
-            <RefreshCw size={14} />
+            <RefreshCw size={16} />
           </button>
           <button
             className="icon-btn"
             title="Rollback selected changes, or the checked ones (Ctrl+Alt+Z)"
             onClick={rollbackSelected}
           >
-            <Undo2 size={14} />
+            <Undo2 size={16} />
           </button>
         </div>
       </div>

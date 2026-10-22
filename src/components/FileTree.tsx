@@ -511,17 +511,17 @@ export function ProjectViewHeader({ project, onHide }: { project: Project; onHid
           title="Show All Files"
           onClick={() => updateUi(project.id, (u) => ({ treeShowAll: !u.treeShowAll }))}
         >
-          <Eye size={14} />
+          <Eye size={16} />
         </button>
       )}
       <button className="icon-btn" title="Select Opened File" disabled={!ui?.activeTab} onClick={locate}>
-        <LocateFixed size={14} />
+        <LocateFixed size={16} />
       </button>
       <button className="icon-btn" title="Collapse All" onClick={() => updateUi(project.id, { expanded: [project.path] })}>
-        <ChevronsDownUp size={14} />
+        <ChevronsDownUp size={16} />
       </button>
       <button className="icon-btn" title="Hide" onClick={onHide}>
-        <ChevronLeft size={14} />
+        <ChevronLeft size={16} />
       </button>
     </div>
   );

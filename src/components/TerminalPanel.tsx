@@ -406,13 +406,13 @@ function SearchBar({ id, onClose }: { id: string; onClose: () => void }) {
         }}
       />
       <button className="icon-btn" title="Previous (Shift+Enter)" onClick={() => view?.search.findPrevious(q, opts)}>
-        <ChevronUp size={14} />
+        <ChevronUp size={16} />
       </button>
       <button className="icon-btn" title="Next (Enter)" onClick={() => view?.search.findNext(q, opts)}>
-        <ChevronDown size={14} />
+        <ChevronDown size={16} />
       </button>
       <button className="icon-btn" title="Close (Esc)" onClick={onClose}>
-        <X size={14} />
+        <X size={16} />
       </button>
     </div>
   );
@@ -508,15 +508,15 @@ export function TerminalPanel({ project }: { project: Project }) {
             );
           })}
           <button className="icon-btn" title="New terminal" onClick={() => void newTerminal(project.id, project.path)}>
-            <Plus size={14} />
+            <Plus size={16} />
           </button>
         </div>
         <div className="panel-actions">
           <button className="icon-btn" title="Find (Ctrl+F)" onClick={() => setSearching((v) => !v)}>
-            <Search size={14} />
+            <Search size={16} />
           </button>
           <button className="icon-btn" title={`Hide (${shortcutLabel("terminal")})`} onClick={() => updateUi(project.id, { terminalVisible: false })}>
-            <ChevronRight size={14} />
+            <ChevronRight size={16} />
           </button>
         </div>
       </div>
