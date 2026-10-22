@@ -220,7 +220,7 @@ function FontSettingsSection() {
         <div className="settings-row static">
           <div className="settings-row-text">
             <div>Layout</div>
-            <div className="muted small">Islands draws each panel as a rounded block with gaps between them, and tabs as rounded chips, like Rider's Islands UI. Colours stay Monokai Pro.</div>
+            <div className="muted small">Islands draws each panel as a rounded block with gaps between them, and tabs as rounded chips.</div>
           </div>
           <div className="seg">
             {UI_STYLES.map(([id, name]) => (
