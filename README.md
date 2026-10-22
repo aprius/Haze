@@ -327,5 +327,3 @@ Issues and pull requests are welcome. Please run the checks in [Tests](#tests) b
 Haze is released under the [MIT License](LICENSE).
 
 The file and folder icons in `src/assets/jb` are JetBrains' (IntelliJ Platform and the Rider Unity plugin), used under the Apache License 2.0; see [their license](src/assets/jb/LICENSE).
-
-Haze takes **ideas** from Tervia (AGPL-3.0) but contains none of its code.
