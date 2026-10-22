@@ -14,7 +14,7 @@ Makes Haze a Unity **External Script Editor**:
 In Unity: *Window → Package Manager → + → Add package from git URL…*
 
 ```
-https://github.com/aprius/Haze.git?path=/unity/com.haze.ide
+https://github.com/aprius/Haze.git?path=/unity/com.aprius.ide.haze
 ```
 
 Then pick **Haze** in *Preferences → External Tools → External Script Editor*.
