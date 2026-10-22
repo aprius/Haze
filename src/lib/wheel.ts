@@ -42,6 +42,36 @@ function isMouseWheel(x: number, y: number): boolean {
   return total <= 0.5;
 }
 
+/**
+ * How far a wheel event scrolls an editor with lines `lineHeight` tall, on
+ * one axis at a time like Monaco's scrollPredominantAxis.
+ */
+function wheelDelta(e: WheelEvent, lineHeight: number): { dx: number; dy: number } {
+  let { deltaX: dx, deltaY: dy } = e;
+  if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    dx *= PX_PER_LINE;
+    dy *= PX_PER_LINE;
+  }
+  if (isMouseWheel(dx / PX_PER_LINE, dy / PX_PER_LINE)) {
+    dx = (dx / PX_PER_LINE) * lineHeight;
+    dy = (dy / PX_PER_LINE) * lineHeight;
+  }
+  if (e.altKey) {
+    dx *= FAST;
+    dy *= FAST;
+  }
+  return Math.abs(dy) >= Math.abs(dx) ? { dx: 0, dy } : { dx, dy: 0 };
+}
+
+/** Scrolls `editor` by a wheel event, at once. */
+export function wheelScroll(editor: monaco.editor.ICodeEditor, e: WheelEvent) {
+  const { dx, dy } = wheelDelta(e, editor.getOption(monaco.editor.EditorOption.lineHeight));
+  editor.setScrollPosition(
+    { scrollTop: editor.getScrollTop() + dy, scrollLeft: editor.getScrollLeft() + dx },
+    monaco.editor.ScrollType.Immediate,
+  );
+}
+
 /** Takes over wheel scrolling of the editor's text area. */
 export function zedWheel(editor: monaco.editor.ICodeEditor): monaco.IDisposable {
   const node = editor.getDomNode();
@@ -50,29 +80,9 @@ export function zedWheel(editor: monaco.editor.ICodeEditor): monaco.IDisposable 
     if (e.defaultPrevented || e.ctrlKey || e.metaKey) return;
     // Hovers, suggestions and other widgets scroll themselves.
     if ((e.target as Element | null)?.closest(".monaco-scrollable-element:not(.editor-scrollable)")) return;
-    let { deltaX: dx, deltaY: dy } = e;
-    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
-      dx *= PX_PER_LINE;
-      dy *= PX_PER_LINE;
-    }
-    if (isMouseWheel(dx / PX_PER_LINE, dy / PX_PER_LINE)) {
-      const line = editor.getOption(monaco.editor.EditorOption.lineHeight);
-      dx = (dx / PX_PER_LINE) * line;
-      dy = (dy / PX_PER_LINE) * line;
-    }
-    if (e.altKey) {
-      dx *= FAST;
-      dy *= FAST;
-    }
-    // One axis at a time, like Monaco's scrollPredominantAxis.
-    if (Math.abs(dy) >= Math.abs(dx)) dx = 0;
-    else dy = 0;
     e.preventDefault();
     e.stopPropagation();
-    editor.setScrollPosition(
-      { scrollTop: editor.getScrollTop() + dy, scrollLeft: editor.getScrollLeft() + dx },
-      monaco.editor.ScrollType.Immediate,
-    );
+    wheelScroll(editor, e);
   };
   node.addEventListener("wheel", onWheel, { capture: true, passive: false });
   return { dispose: () => node.removeEventListener("wheel", onWheel, { capture: true }) };

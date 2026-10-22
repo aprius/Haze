@@ -11,6 +11,7 @@ import { diffPath, diffTitle, type DiffSpec } from "../lib/diffSpec";
 import { absPath } from "../store/git";
 import { closeDiffWindow, useUi } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
+import { wheelScroll, zedWheel } from "../lib/wheel";
 import { FloatWindow } from "./Overlays";
 
 export { diffPath, diffTitle, parseDiffPath, type DiffSpec } from "../lib/diffSpec";
@@ -36,6 +37,25 @@ const ARROW_DOWN =
   '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M4 4l7.5 7.5M11.5 6v5.5H6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 /**
+ * The two sides of `spec`. The right side of a "working" diff is the file's
+ * real buffer; the models made here are added to `owned`, to dispose.
+ */
+async function diffModels(spec: DiffSpec, owned: monaco.editor.ITextModel[]) {
+  const lang = languageFor(spec.rel);
+  const fromRev = async (rev: string | null, rel: string) => {
+    const text = rev ? ((await api.gitFileAt(spec.root, rev, rel)) ?? "") : "";
+    const m = monaco.editor.createModel(text, lang);
+    owned.push(m);
+    return m;
+  };
+  const original = await fromRev(spec.left, spec.oldRel ?? spec.rel);
+  if (spec.right !== "working") return { original, modified: await fromRev(spec.right, spec.rel) };
+  const path = absPath(spec.root, spec.rel);
+  await ensureBuffer(path);
+  return { original, modified: getModel(path) ?? (await fromRev(null, spec.rel)) };
+}
+
+/**
  * Rider-style diff: two plain editors (no filler lines), curved connectors
  * between matching blocks in the gap, scrolling kept in step block by block.
  * As in IntelliJ, the left editor is mirrored: its gutter (`>>` icons, then
@@ -50,6 +70,9 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
   const gap = useRef<HTMLDivElement>(null);
   const sides = useRef<Sides | null>(null);
   const chunks = useRef<Chunk[]>([]);
+  // The side last typed or clicked in: F7 and the toolbar step from its caret.
+  const leftActive = useRef(false);
+  const stickyScroll = useWorkspace((s) => s.stickyScroll);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<number | null>(null);
   const editable = spec.right === "working";
@@ -67,6 +90,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       ...codeFontOptions(),
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
+      stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
       glyphMargin: false,
       suggest: suggestOptions,
       theme: monacoTheme(),
@@ -116,7 +140,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     let frame = 0;
     // The mirrored left gutter: band tints and edges, `>>` icons on each
     // block's first line (where IntelliJ puts them), then right-aligned line numbers.
-    const drawGutter = () => {
+    const drawGutter = (height: number) => {
       const model = left.getModel();
       if (!model) return void (gutterEl.innerHTML = "");
       const line = left.getOption(monaco.editor.EditorOption.lineHeight);
@@ -125,7 +149,6 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       const width = `${Math.ceil(ICON + 6 + digits * font.typicalHalfwidthCharacterWidth + 8)}px`;
       if (gutterEl.style.width !== width) gutterEl.style.width = width;
       Object.assign(gutterEl.style, { fontFamily: font.fontFamily, fontSize: `${font.fontSize}px`, lineHeight: `${line}px` });
-      const height = gutterEl.clientHeight;
       let html = "";
       chunks.current.forEach((c, i) => {
         const y0 = boundaryY(left, c.a0);
@@ -159,9 +182,10 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
 
     const draw = () => {
       frame = 0;
-      drawGutter();
+      // Sizes read before anything is written, so a frame lays out once.
       const width = gapEl.clientWidth;
       const height = gapEl.clientHeight;
+      drawGutter(gutterEl.clientHeight);
       let paths = "";
       chunks.current.forEach((c) => {
         const l0 = boundaryY(left, c.a0);
@@ -238,10 +262,12 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       redraw();
     };
 
-    // Wheel over the gutter or the gap scrolls like over the editors.
+    // Wheel scrolling like the code editor's (Zed's, no easing); over the
+    // gutter or the gap it scrolls as over the editors.
+    const wheels = [zedWheel(left), zedWheel(right)];
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
-      right.setScrollPosition({ scrollTop: right.getScrollTop() + e.deltaY, scrollLeft: right.getScrollLeft() + e.deltaX });
+      wheelScroll(right, e);
     };
     gutterEl.addEventListener("wheel", wheel, { passive: false });
     gapEl.addEventListener("wheel", wheel, { passive: false });
@@ -272,6 +298,8 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       left.onDidLayoutChange(redraw),
       left.onDidChangeCursorPosition(redraw),
       right.onDidLayoutChange(redraw),
+      left.onDidFocusEditorText(() => (leftActive.current = true)),
+      right.onDidFocusEditorText(() => (leftActive.current = false)),
       differ.onDidUpdateDiff(() => {
         update();
         if (first && chunks.current.length) goTo(0);
@@ -281,24 +309,9 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
 
     const owned: monaco.editor.ITextModel[] = [];
     let cancelled = false;
-    const lang = languageFor(spec.rel);
-    const fromRev = async (rev: string | null, rel: string) => {
-      const text = rev ? ((await api.gitFileAt(spec.root, rev, rel)) ?? "") : "";
-      const m = monaco.editor.createModel(text, lang);
-      owned.push(m);
-      return m;
-    };
     void (async () => {
       try {
-        const original = await fromRev(spec.left, spec.oldRel ?? spec.rel);
-        let modified: monaco.editor.ITextModel;
-        if (editable) {
-          const path = absPath(spec.root, spec.rel);
-          await ensureBuffer(path);
-          modified = getModel(path) ?? (await fromRev(null, spec.rel));
-        } else {
-          modified = await fromRev(spec.right, spec.rel);
-        }
+        const { original, modified } = await diffModels(spec, owned);
         if (cancelled) return;
         left.setModel(original);
         right.setModel(modified);
@@ -315,6 +328,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       win.removeEventListener("keyup", modifiers);
       win.removeEventListener("blur", modifiers);
       gapEl.removeEventListener("wheel", wheel);
+      wheels.forEach((w) => w.dispose());
       subs.forEach((s) => s.dispose());
       differ.dispose();
       left.dispose();
@@ -325,20 +339,33 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     };
   }, [spec.root, spec.rel, spec.oldRel, spec.left, spec.right]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const s = sides.current;
+    for (const ed of s ? [s.left, s.right] : []) ed.updateOptions({ stickyScroll: { enabled: stickyScroll } });
+  }, [stickyScroll]);
+
   function goTo(i: number) {
     const s = sides.current;
     const c = chunks.current[i];
     if (!s || !c) return;
     const line = Math.min(c.b0 + 1, s.right.getModel()?.getLineCount() ?? 1);
-    s.right.revealLinesInCenter(line, Math.max(line, c.b1));
+    s.right.revealLinesInCenter(line, Math.max(line, c.b1), monaco.editor.ScrollType.Immediate);
+    // Both carets onto the block, so the next step goes on from it whichever side has focus.
     s.right.setPosition({ lineNumber: line, column: 1 });
+    s.left.setPosition({ lineNumber: Math.min(c.a0 + 1, s.left.getModel()?.getLineCount() ?? 1), column: 1 });
   }
 
   function step(dir: 1 | -1) {
     const s = sides.current;
     if (!s) return;
-    const fromLeft = s.left.hasTextFocus();
-    const caret = (fromLeft ? s.left : s.right).getPosition()?.lineNumber ?? 0;
+    const fromLeft = leftActive.current;
+    const ed = fromLeft ? s.left : s.right;
+    let caret = ed.getPosition()?.lineNumber ?? 0;
+    // Scrolled away from the caret: step from the middle of what is shown instead.
+    const shown = ed.getVisibleRanges();
+    if (shown.length && (caret < shown[0].startLineNumber || caret > shown[shown.length - 1].endLineNumber)) {
+      caret = Math.floor((shown[0].startLineNumber + shown[shown.length - 1].endLineNumber) / 2);
+    }
     // A caret on the left is mapped to the right side first.
     const line = fromLeft ? Math.floor(mapBoundary(chunks.current, caret - 1, true)) + 1 : caret;
     const i = nextChunk(chunks.current, line, dir);
@@ -362,7 +389,8 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
 
   return (
     <div className="diff-view">
-      <div className="diff-toolbar">
+      {/* Clicks keep focus in the editors, so the caret side stays the one stepped from. */}
+      <div className="diff-toolbar" onMouseDown={(e) => (e.target as HTMLElement).closest("button") && e.preventDefault()}>
         <button className="icon-btn" title="Previous difference (Shift+F7)" onClick={() => step(-1)}>
           <ChevronUp size={14} />
         </button>
@@ -388,6 +416,115 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
         <div ref={gap} className="diff-gap" style={{ width: GAP }} />
         <div ref={rightHost} className="diff-side" />
         <div ref={differHost} className="diff-differ" aria-hidden />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The Commit window's preview, like Rider's: one editor (IntelliJ's unified
+ * viewer), the file as it is now with the removed lines shown between its
+ * own. Ctrl+D opens the side-by-side diff.
+ */
+export function UnifiedDiffView({ spec }: { spec: DiffSpec }) {
+  const host = useRef<HTMLDivElement>(null);
+  const diff = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<number | null>(null);
+  const stickyScroll = useWorkspace((s) => s.stickyScroll);
+  const editable = spec.right === "working";
+
+  useEffect(() => {
+    if (!host.current) return;
+    const win = host.current.ownerDocument.defaultView ?? window;
+    const ed = monaco.editor.createDiffEditor(host.current, {
+      renderSideBySide: false,
+      automaticLayout: true,
+      disableLayerHinting: win !== window,
+      ...codeFontOptions(),
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
+      glyphMargin: false,
+      ignoreTrimWhitespace: false,
+      renderOverviewRuler: false,
+      originalEditable: false,
+      readOnly: !editable,
+      renderMarginRevertIcon: editable,
+      suggest: suggestOptions,
+      theme: monacoTheme(),
+    });
+    diff.current = ed;
+    const shown = ed.getModifiedEditor();
+    const wheel = zedWheel(shown);
+    // Monaco's F7 opens its accessible diff viewer; IntelliJ's goes to the next change.
+    shown.addCommand(monaco.KeyCode.F7, () => step(1));
+    shown.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F7, () => step(-1));
+    let first = true;
+    const sub = ed.onDidUpdateDiff(() => {
+      const changes = ed.getLineChanges() ?? [];
+      setStats(changes.length);
+      if (first && changes.length) {
+        const line = Math.max(1, changes[0].modifiedStartLineNumber);
+        shown.revealLineInCenter(line, monaco.editor.ScrollType.Immediate);
+        shown.setPosition({ lineNumber: line, column: 1 });
+      }
+      first = false;
+    });
+
+    const owned: monaco.editor.ITextModel[] = [];
+    let cancelled = false;
+    void (async () => {
+      try {
+        const models = await diffModels(spec, owned);
+        if (!cancelled) ed.setModel(models);
+      } catch (e) {
+        setError(errorMessage(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      sub.dispose();
+      wheel.dispose();
+      ed.dispose();
+      owned.forEach((m) => m.dispose());
+      diff.current = null;
+    };
+  }, [spec.root, spec.rel, spec.oldRel, spec.left, spec.right]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    diff.current?.updateOptions({ stickyScroll: { enabled: stickyScroll } });
+  }, [stickyScroll]);
+
+  function step(dir: 1 | -1) {
+    const ed = diff.current;
+    if (!ed) return;
+    const shown = ed.getModifiedEditor();
+    // Scrolled away from the caret: step from the middle of what is shown instead.
+    const caret = shown.getPosition()?.lineNumber ?? 0;
+    const ranges = shown.getVisibleRanges();
+    if (ranges.length && (caret < ranges[0].startLineNumber || caret > ranges[ranges.length - 1].endLineNumber)) {
+      shown.setPosition({ lineNumber: Math.floor((ranges[0].startLineNumber + ranges[ranges.length - 1].endLineNumber) / 2), column: 1 });
+    }
+    ed.goToDiff(dir === 1 ? "next" : "previous");
+  }
+
+  return (
+    <div className="diff-view">
+      <div className="diff-toolbar" onMouseDown={(e) => (e.target as HTMLElement).closest("button") && e.preventDefault()}>
+        <button className="icon-btn" title="Previous difference (Shift+F7)" onClick={() => step(-1)}>
+          <ChevronUp size={14} />
+        </button>
+        <button className="icon-btn" title="Next difference (F7)" onClick={() => step(1)}>
+          <ChevronDown size={14} />
+        </button>
+        <span className="muted small">
+          {error ? <span className="error">{error}</span> : stats === null ? "Comparing…" : stats === 0 ? "Contents are identical" : `${stats} difference(s)`}
+        </span>
+        <span className="muted small diff-hint">Ctrl+D: side-by-side diff</span>
+      </div>
+      <div className="diff-host">
+        <div ref={host} className="diff-side" />
       </div>
     </div>
   );

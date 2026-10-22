@@ -15,7 +15,7 @@ import { withTask } from "../store/tasks";
 import { refreshGit as refreshTreeGit } from "../store/tree";
 import { closeCommitWindow, openDiffWindow, useUi } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
-import { DiffView } from "./DiffView";
+import { UnifiedDiffView } from "./DiffView";
 import { openMerge } from "./MergeView";
 import { choose, FloatWindow, openMenu, toast } from "./Overlays";
 import { openPushDialog } from "./GitDialogs";
@@ -536,7 +536,7 @@ function CommitWindowBody({ project }: { project: Project }) {
         <Splitter vertical value={listWidth} min={260} max={900} onChange={setListWidth} />
         <div className="commit-window-diff">
           {r?.root && change && change.status !== "conflict" ? (
-            <DiffView spec={changeDiffSpec(r.root, change)} />
+            <UnifiedDiffView spec={changeDiffSpec(r.root, change)} />
           ) : change?.status === "conflict" ? (
             <div className="se-empty">
               {basename(change.rel)} has merge conflicts.{" "}
