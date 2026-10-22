@@ -2,7 +2,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
-import { DefinitionAction } from "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js";
+import { DefinitionAction, SymbolNavigationAction } from "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js";
 import { disposeBuffer, ensureBuffer, getModel, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
@@ -157,7 +157,7 @@ function installRiderKeymap() {
     { keybinding: M.Shift | K.F12, command: "editor.action.marker.prevInFiles", when: "editorFocus" },
   ];
   monaco.editor.addKeybindingRules([...common, ...(isMac ? mac : other)]);
-  installDeclarationsList();
+  installRiderResultLists();
   // Ctrl+Click / Ctrl+B in languages Roslyn does not cover, and in C# until it is up.
   registerTextNavigation();
   registerUnityCompletion();
@@ -182,21 +182,31 @@ function installRiderKeymap() {
   });
 }
 
+// Monaco's Go to References and Peek References (the right-click menu, and
+// Ctrl+Click on a declaration, which runs Go to References instead).
+const REFERENCE_ACTIONS = new Set(["editor.action.goToReferences", "editor.action.referenceSearch.trigger"]);
+
 /**
- * Ctrl+B / Ctrl+Click with several declarations (a partial class, say) lists
- * them under the name like Rider, instead of Monaco's peek view. Monaco has no
- * public hook for this, so its Go to Definition result handling is wrapped;
- * Peek Definition and Open to the Side keep Monaco's own.
+ * Lists results the way Rider does instead of in Monaco's peek view: several
+ * declarations (a partial class, say) in the declarations list under the name,
+ * usages in the usages list (as Alt+F7). Monaco has no public hook for this, so
+ * its result handling for symbol navigation is wrapped. Open to the Side and
+ * the other navigations (implementations, type definitions) keep Monaco's own.
  */
-function installDeclarationsList() {
-  const proto = DefinitionAction.prototype;
+function installRiderResultLists() {
+  const proto = SymbolNavigationAction.prototype;
   const onResult = proto._onResult;
-  proto._onResult = function (editorService, symbolNavService, editor, model, range) {
-    const refs = model.references;
+  proto._onResult = function (editorService, symbolNavService, editor, result, range) {
+    const refs = result.references;
     const pos = editor.getPosition();
+    const path = editor.getModel()?.uri.fsPath;
     const word = pos && editor.getModel()?.getWordAtPosition(pos);
-    if (refs.length < 2 || this.configuration.openInPeek || this.configuration.openToSide || !pos || !word || refs.some((r) => r.uri.scheme !== "file"))
-      return onResult.call(this, editorService, symbolNavService, editor, model, range);
+    const usages = REFERENCE_ACTIONS.has(this.desc.id);
+    const declarations = this instanceof DefinitionAction && (refs.length > 1 || this.configuration.openInPeek);
+    if (!(usages || declarations) || this.configuration.openToSide || !pos || !path || !word || refs.some((r) => r.uri.scheme !== "file"))
+      return onResult.call(this, editorService, symbolNavService, editor, result, range);
+    // Peek Definition with one result goes there, like Go to Definition.
+    if (declarations && refs.length === 1) return this._openReference(editor, editorService, refs[0], false, true).then(() => result.dispose());
     const found = refs.map((r) => ({
       path: r.uri.fsPath,
       line: r.range.startLineNumber,
@@ -204,8 +214,11 @@ function installDeclarationsList() {
       endLine: r.range.endLineNumber,
       endColumn: r.range.endColumn,
     }));
-    model.dispose();
-    void showDeclarations(word.word, found, anchorBelow(editor, { lineNumber: pos.lineNumber, column: word.startColumn }));
+    result.dispose();
+    const anchor = anchorBelow(editor, { lineNumber: pos.lineNumber, column: word.startColumn });
+    const project = projectForPath(path) ?? activeProject();
+    if (!usages) void showDeclarations(word.word, found, anchor);
+    else if (project) void showLocations(project, `Usages of ${word.word}`, async () => found, false, anchor);
     return Promise.resolve();
   };
 }

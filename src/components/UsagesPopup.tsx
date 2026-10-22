@@ -67,8 +67,7 @@ export async function showDeclarations(name: string, found: FoundLocation[], anc
   useUsages.setState({ open: true, kind: "declarations", title: `Declarations of '${name}'`, loading: true, error: null, items: [], anchor });
   try {
     const items = (await withText(found)).sort((a, b) => basename(a.path).localeCompare(basename(b.path)) || a.path.localeCompare(b.path) || a.line - b.line);
-    const re = new RegExp(`\\b(class|struct|interface|enum|record|delegate|namespace|trait|protocol)\\b[^;{=(]*?\\b${name.replace(/\$/g, "\\$&")}\\b`);
-    const kinds = new Set(items.map((u) => re.exec(u.text)?.[1]));
+    const kinds = new Set(items.map((u) => declKind(u.text, name)));
     const kind = kinds.size === 1 ? [...kinds][0] : undefined;
     useUsages.setState({ loading: false, items, title: kind ? `Declarations of ${kind} '${name}'` : `Declarations of '${name}'` });
   } catch (e) {
@@ -80,6 +79,15 @@ export async function showDeclarations(name: string, found: FoundLocation[], anc
 export function showAssetUsages(title: string, usages: AssetUsage[], anchor: { x: number; y: number } | null): void {
   const items = usages.map((u) => ({ path: u.path, line: u.line, column: 1, endLine: u.line, endColumn: 1, text: "", object: u.object, fileId: u.fileId }));
   useUsages.setState({ open: true, kind: "assets", title, loading: false, error: null, items, anchor });
+}
+
+/** What `name` is declared as on `line` ("class", "method"), as far as the text tells. */
+function declKind(line: string, name: string): string | undefined {
+  const n = name.replace(/\$/g, "\\$&");
+  const type = new RegExp(`\\b(class|struct|interface|enum|record|delegate|namespace|trait|protocol)\\b[^;{=(]*?\\b${n}\\b`).exec(line);
+  if (type) return type[1];
+  // `void Save(`, `T Get<T>(`, `func save(`: the name, then its parameters.
+  if (new RegExp(`\\b${n}\\s*(?:<[^>]*>)?\\s*\\(`).test(line) && !new RegExp(`\\bnew\\s+${n}\\b`).test(line)) return "method";
 }
 
 /** Adds each location's line text: from open buffers, else read from disk in one batch. */

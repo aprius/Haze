@@ -631,7 +631,8 @@ export function registerProviders(): void {
   });
 
   // Ctrl+Click on a declaration falls back to Go to References (Monaco's
-  // alternativeDefinitionCommand), which lists the usages like Rider.
+  // alternativeDefinitionCommand), which lists the usages like Rider (see
+  // installRiderResultLists in EditorArea).
   L.registerReferenceProvider("csharp", {
     async provideReferences(model, position, context, token) {
       const s = ready(model);
