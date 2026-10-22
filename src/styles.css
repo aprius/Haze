@@ -594,7 +594,7 @@ kbd {
 .editor-tabs {
   flex: none;
   display: flex;
-  height: 36px;
+  height: 30px;
   overflow-x: auto;
   overflow-y: hidden;
   border-bottom: 1px solid var(--border);
@@ -736,6 +736,7 @@ kbd {
 }
 
 .term-header {
+  height: 30px;
   gap: 4px;
   padding: 0 4px 0 6px;
   border-bottom: 1px solid var(--border);
@@ -756,7 +757,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: 24px;
   min-width: 64px;
   max-width: 180px;
   padding: 0 2px 0 8px;
