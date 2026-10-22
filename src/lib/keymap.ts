@@ -33,6 +33,8 @@ const app = {
   build: { mac: ["meta shift B"], other: ["ctrl shift B"] },
   run: { mac: ["ctrl F5", "shift F10"], other: ["shift F10"] },
   rename: { mac: ["F2", "shift F6"], other: ["shift F6", "F2"] },
+  // Project view. Most Mac keyboards have no forward Delete: Cmd+Backspace, as in Rider.
+  delete: { mac: ["meta BACK_SPACE", "DELETE"], other: ["DELETE"] },
   copyContext: { mac: ["meta shift C"], other: ["ctrl shift C"] },
   zoomIn: { mac: ["meta EQUALS", "meta shift EQUALS", "meta NUMPAD_ADD"], other: ["ctrl EQUALS", "ctrl shift EQUALS", "ctrl NUMPAD_ADD"] },
   zoomOut: { mac: ["meta MINUS", "meta NUMPAD_SUBTRACT"], other: ["ctrl MINUS", "ctrl NUMPAD_SUBTRACT"] },
@@ -113,6 +115,8 @@ export function matches(e: KeyboardEvent, cmd: Command): boolean {
   return keystrokes(cmd).some((ks) => matchesKeystroke(e, ks));
 }
 
+const macLabel: Record<string, string> = { BACK_SPACE: "⌫", DELETE: "⌦" };
+
 const label: Record<string, string> = {
   COMMA: ",",
   PERIOD: ".",
@@ -139,7 +143,7 @@ export function shortcutLabel(cmd: Command): string | undefined {
   if (!ks) return cmd === "searchEverywhere" ? "Double Shift" : undefined;
   const p = parse(ks);
   const raw = ks.split(" ").pop()!.toUpperCase();
-  const key = label[raw] ?? (raw.length === 1 ? raw : raw.charAt(0) + raw.slice(1).toLowerCase().replace(/_(\w)/g, (_, c: string) => c.toUpperCase()));
+  const key = (isMac ? macLabel[raw] : undefined) ?? label[raw] ?? (raw.length === 1 ? raw : raw.charAt(0) + raw.slice(1).toLowerCase().replace(/_(\w)/g, (_, c: string) => c.toUpperCase()));
   const keyText = /^F\d+$/i.test(raw) ? raw : key;
   if (isMac) return (p.ctrl ? "⌃" : "") + (p.alt ? "⌥" : "") + (p.shift ? "⇧" : "") + (p.meta ? "⌘" : "") + keyText;
   return [p.ctrl && "Ctrl", p.alt && "Alt", p.shift && "Shift", keyText].filter(Boolean).join("+");

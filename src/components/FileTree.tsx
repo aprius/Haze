@@ -12,6 +12,7 @@ import { revealInTree } from "./EditorArea";
 import { showHistory } from "./GitPanel";
 import { isIgnored, loadDir, loadUnityPackages, refreshDirs, refreshGit, setSelection, useTree, type GitView } from "../store/tree";
 import { useWorkspace, type Project, type TreeView } from "../store/workspace";
+import { matches, shortcutLabel } from "../lib/keymap";
 import { buildRows, isUnityProject, resolveView, type Row } from "../lib/treeRows";
 import { confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
 
@@ -27,6 +28,16 @@ function statusOf(view: GitView | undefined, entry: DirEntry, unsaved: boolean):
   if (unsaved) return "modified";
   if (entry.isDir && view.changedDirs.has(entry.path)) return "changed-dir";
   return null;
+}
+
+/** Rider's wording: "Delete file 'Foo.cs'?", "Delete 2 files and 1 directory?". */
+function deleteQuestion(list: DirEntry[]): string {
+  if (list.length === 1) return `Delete ${list[0].isDir ? "directory" : "file"} '${list[0].name}'?`;
+  const dirs = list.filter((e) => e.isDir).length;
+  const files = list.length - dirs;
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const parts = [files && count(files, "file", "files"), dirs && count(dirs, "directory", "directories")].filter(Boolean);
+  return `Delete ${parts.join(" and ")}?`;
 }
 
 const validName = (v: string) => (!v.trim() ? "Name cannot be empty" : /[\\/]/.test(v) ? "Name cannot contain / or \\" : null);
@@ -187,8 +198,11 @@ export function FileTree({ project }: { project: Project }) {
   const remove = async (entries: DirEntry[]) => {
     const list = entries.filter((e) => e.path !== project.path);
     if (!list.length) return;
-    const what = list.length === 1 ? `"${list[0].name}"` : `${list.length} items`;
-    if (!(await confirmAction("Delete", `Move ${what} to the trash?`, "Delete", true))) return;
+    if (!(await confirmAction("Delete", `${deleteQuestion(list)} It will be moved to the Trash.`, "Delete", true))) return;
+    // As in Rider, the row after the deleted ones (or before them) is selected next.
+    const at = rows.findIndex((r) => list.some((e) => e.path === r.entry.path));
+    const rest = rows.filter((r) => !list.some((e) => isWithin(r.entry.path, e.path)));
+    const next = rest.find((r) => rows.indexOf(r) > at) ?? rest.filter((r) => rows.indexOf(r) < at).pop();
     const paths = withMeta(list.map((e) => e.path));
     const ok = await run("Delete", () => api.trashPaths(paths));
     if (ok === null) return;
@@ -199,7 +213,7 @@ export function FileTree({ project }: { project: Project }) {
     const clean = closing.filter((p) => !metaDirty(meta[p]));
     ws.closeTabs(project.id, clean);
     clean.forEach(disposeBuffer);
-    setSelection(project.id, []);
+    setSelection(project.id, next ? [next.entry.path] : [], next?.entry.path);
     afterChange();
   };
 
@@ -259,7 +273,7 @@ export function FileTree({ project }: { project: Project }) {
       { label: "Copy Relative Path", action: () => copyText(entries.map((e) => relative(project.path, e.path)).join("\n")) },
       { separator: true },
       { label: "Rename…", shortcut: "Shift+F6", disabled: isRoot, action: () => void rename(entry) },
-      { label: "Delete", shortcut: "Delete", disabled: isRoot, danger: true, action: () => void remove(entries) },
+      { label: "Delete…", shortcut: shortcutLabel("delete"), disabled: isRoot, danger: true, action: () => void remove(entries) },
       { separator: true },
       { label: "Open in Terminal", action: () => void newTerminal(project.id, dir, { title: basename(dir) }) },
       { separator: true },
@@ -332,7 +346,7 @@ export function FileTree({ project }: { project: Project }) {
         for (let i = idx - 1; i >= 0; i--) if (rows[i].depth < row.depth) return select(i);
       }
     } else if (e.key === "Enter" && row) onRowDoubleClick(row);
-    else if (e.key === "Delete" && row) void remove(selectedEntries(row.entry));
+    else if (matches(e.nativeEvent, "delete") && row) void remove(selectedEntries(row.entry));
     else if ((e.key === "F2" || (e.shiftKey && e.key === "F6")) && row) void rename(row.entry);
     else if (e.altKey && e.key === "Insert" && row) {
       const r = (e.target as HTMLElement).getBoundingClientRect();
