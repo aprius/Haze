@@ -20,8 +20,8 @@ const app = {
   nextTab: { mac: ["ctrl TAB", "meta shift CLOSE_BRACKET"], other: ["ctrl TAB"] },
   previousTab: { mac: ["ctrl shift TAB", "meta shift OPEN_BRACKET"], other: ["ctrl shift TAB"] },
   selectInProject: { mac: ["alt F1"], other: ["alt F1"] },
-  // Rider's "Open Claude in Terminal" (Alt+2, Cmd+Esc) shows Haze's terminal, where agents run.
-  terminal: { mac: ["meta ctrl 1", "alt 2", "meta ESCAPE", "alt F12", "ctrl BACK_QUOTE"], other: ["alt F12", "ctrl BACK_QUOTE"] },
+  // Cmd+J like VS Code; Rider's "Open Claude in Terminal" (Alt+2, Cmd+Esc) also shows Haze's terminal, where agents run.
+  terminal: { mac: ["meta J", "meta ctrl 1", "alt 2", "meta ESCAPE", "alt F12", "ctrl BACK_QUOTE"], other: ["alt F12", "ctrl BACK_QUOTE"] },
   projectView: { mac: ["alt 1"], other: ["alt 1"] },
   commitView: { mac: ["alt 0"], other: ["alt 0"] },
   gitView: { mac: ["alt 9"], other: ["alt 9"] },
