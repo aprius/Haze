@@ -5,6 +5,7 @@ import * as monaco from "monaco-editor";
 // Vite's `?worker` import bundles it properly.
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker";
+import { csharpLanguage } from "./csharpGrammar";
 import { codeFontFamily, codeLineHeight, loadCodeFont, useFonts } from "./fonts";
 import { monacoTheme, useTheme } from "./theme";
 
@@ -60,6 +61,16 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
       { token: "attribute.value", foreground: strip(c.yellow) },
       { token: "key", foreground: strip(c.fg) },
       { token: "namespace", foreground: strip(c.fg) },
+      // What Rider's Monokai Pro colours by meaning: C# (csharpGrammar.ts and
+      // Roslyn's semantic tokens, lsp/csharp.ts) emits these.
+      { token: "type.cs", foreground: strip(c.blue), fontStyle: "" },
+      { token: "method", foreground: strip(c.green) },
+      { token: "parameter", foreground: strip(c.orange), fontStyle: "italic" },
+      { token: "static", foreground: strip(c.purple) },
+      { token: "constant.cs", foreground: strip(c.purple), fontStyle: "italic" },
+      { token: "variable.cs", foreground: strip(c.fg) },
+      { token: "comment.doc.tag", foreground: strip(c.gutterActive), fontStyle: "italic bold" },
+      { token: "comment.doc.value", foreground: strip(c.orange), fontStyle: "italic" },
     ],
     colors: {
       "editor.background": c.bg,
@@ -101,6 +112,10 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
 
 defineMonokai("haze-dark", "vs-dark", MONOKAI.dark);
 defineMonokai("haze-light", "vs", MONOKAI.light);
+
+// Replaces Monaco's grammar (registered tokenizers win over the lazy one;
+// the language configuration still comes from Monaco).
+monaco.languages.setMonarchTokensProvider("csharp", csharpLanguage);
 
 // Comments are dim by design, too dim on a diff block's tint. Token classes
 // are numbered from the theme's colour map, so look up the comment's class

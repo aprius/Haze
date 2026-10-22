@@ -26,6 +26,7 @@ import {
 } from "./convert";
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
 import { MIN_PREFIX, pickInline, type LspCompletionItem } from "./inline";
+import { SEMANTIC_LEGEND, semanticTranslator, type LspSemanticLegend } from "./semantic";
 
 // What Roslyn reloads on: sources, project files and restore output. Other
 // JSON (Unity's Library writes plenty) would only be parsed and dropped.
@@ -35,6 +36,7 @@ interface ServerCapabilities {
   textDocumentSync?: number | { change?: number };
   completionProvider?: { triggerCharacters?: string[]; resolveProvider?: boolean };
   signatureHelpProvider?: { triggerCharacters?: string[] };
+  semanticTokensProvider?: { legend: LspSemanticLegend; full?: boolean | object; range?: boolean };
   [k: string]: unknown;
 }
 
@@ -50,6 +52,8 @@ export class CsharpSession {
   private readyWaiters: (() => void)[] = [];
   private synced = new Map<string, monaco.IDisposable>();
   private disposed = false;
+  /** Server semantic tokens in Haze's legend (none when the server has none). */
+  semanticTokens?: (data: ArrayLike<number>) => Uint32Array;
   /** Called when the server exits on its own after starting (see startCsharp). */
   onCrash?: () => void;
 
@@ -84,6 +88,7 @@ export class CsharpSession {
           workspaceEdit: { documentChanges: true },
           didChangeWatchedFiles: { dynamicRegistration: true },
           symbol: { dynamicRegistration: false },
+          semanticTokens: { refreshSupport: true },
         },
         textDocument: {
           synchronization: { didSave: true, dynamicRegistration: false },
@@ -104,11 +109,24 @@ export class CsharpSession {
           },
           formatting: {},
           rename: { prepareSupport: true },
+          semanticTokens: {
+            requests: { full: true, range: true },
+            tokenTypes: [
+              "namespace", "type", "class", "enum", "interface", "struct", "typeParameter", "parameter", "variable", "property", "enumMember",
+              "event", "function", "method", "macro", "keyword", "modifier", "comment", "string", "number", "regexp", "operator",
+            ],
+            tokenModifiers: ["declaration", "definition", "readonly", "static", "deprecated", "abstract", "async", "modification", "documentation", "defaultLibrary"],
+            formats: ["relative"],
+            overlappingTokenSupport: false,
+            multilineTokenSupport: false,
+          },
         },
         window: { workDoneProgress: true, showMessage: {} },
       },
     });
     this.caps = init.capabilities;
+    const legend = this.caps.semanticTokensProvider?.legend;
+    if (legend) this.semanticTokens = semanticTranslator(legend);
     await this.client.notify("initialized", {});
     this.usable = true;
     setCsharpStatus(this.projectId, { state: "loading", kind: this.kind, message: "Loading projects…" });
@@ -123,6 +141,10 @@ export class CsharpSession {
     c.onRequest("workspace/applyEdit", async (p) => {
       await applyWorkspaceEdit((p as { edit: WorkspaceEdit }).edit);
       return { applied: true };
+    });
+    c.onRequest("workspace/semanticTokens/refresh", () => {
+      semanticTokensChanged.fire();
+      return null;
     });
     c.onNotification("workspace/projectInitializationComplete", () => this.markReady());
     c.onNotification("$/progress", (p) => {
@@ -161,6 +183,7 @@ export class CsharpSession {
     this.ready = true;
     setCsharpStatus(this.projectId, { state: "ready", kind: this.kind, message });
     this.readyWaiters.splice(0).forEach((r) => r());
+    semanticTokensChanged.fire();
   }
 
   /** Waits for the projects to load, at most `ms`: a project that never loads must not block queries. */
@@ -459,6 +482,9 @@ export async function workspaceSymbols(projectId: string, query: string): Promis
 
 let registered = false;
 
+// Asks open C# editors for their semantic tokens again (projects loaded, server refresh).
+const semanticTokensChanged = new monaco.Emitter<void>();
+
 type DefinitionFallback = (
   model: monaco.editor.ITextModel,
   position: monaco.IPosition,
@@ -708,6 +734,38 @@ export function registerProviders(): void {
         command: { id: "haze.applyCodeAction", title: a.title, arguments: [model.uri.fsPath, a] },
       }));
       return { actions, dispose() {} };
+    },
+  });
+
+  // Rider-like colours by meaning, once the projects are loaded (before
+  // that Roslyn knows no symbols and would undo the grammar's guesses).
+  const semanticSession = (model: monaco.editor.ITextModel) => {
+    const s = ready(model);
+    return s?.ready && s.semanticTokens ? s : undefined;
+  };
+  L.registerDocumentSemanticTokensProvider("csharp", {
+    onDidChange: semanticTokensChanged.event,
+    getLegend: () => SEMANTIC_LEGEND,
+    async provideDocumentSemanticTokens(model, _lastResultId, token) {
+      const s = semanticSession(model);
+      if (!s?.caps.semanticTokensProvider?.full) return null;
+      const res = await s.request<{ data: number[] } | null>("textDocument/semanticTokens/full", { textDocument: { uri: model.uri.toString() } }, token);
+      return res ? { data: s.semanticTokens!(res.data) } : null;
+    },
+    releaseDocumentSemanticTokens() {},
+  });
+  L.registerDocumentRangeSemanticTokensProvider("csharp", {
+    onDidChange: semanticTokensChanged.event,
+    getLegend: () => SEMANTIC_LEGEND,
+    async provideDocumentRangeSemanticTokens(model, range, token) {
+      const s = semanticSession(model);
+      if (!s?.caps.semanticTokensProvider?.range) return null;
+      const res = await s.request<{ data: number[] } | null>(
+        "textDocument/semanticTokens/range",
+        { textDocument: { uri: model.uri.toString() }, range: toLspRange(range) },
+        token,
+      );
+      return res ? { data: s.semanticTokens!(res.data) } : null;
     },
   });
 

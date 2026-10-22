@@ -512,6 +512,8 @@ export function EditorArea({ project }: { project: Project }) {
       stickyScroll: { enabled: true },
       suggest: suggestOptions,
       bracketPairColorization: { enabled: true },
+      // Roslyn's semantic tokens (lsp/csharp.ts); the theme alone would leave them off.
+      "semanticHighlighting.enabled": true,
       theme: monacoTheme(),
     });
     editor.onDidChangeCursorSelection((e) => {

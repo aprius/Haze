@@ -11,7 +11,7 @@ const host = process.env.TAURI_DEV_HOST;
 const MONACO_UNUSED = /monaco-editor\/esm\/(external\/monaco-lsp-client\/out\/index|vs\/languages\/features\/(typescript|css|html)\/register)\.js$/;
 
 // Editor contributions for features Haze has no provider for (colors, inlay
-// hints, code lenses, semantic tokens, linked editing) or never shows (GPU
+// hints, code lenses, linked editing) or never shows (GPU
 // rendering, iPad keyboard, token inspector, high contrast toggle). Only
 // Monaco's feature lists import these files.
 const MONACO_CONTRIB_UNUSED = new RegExp(
@@ -20,7 +20,6 @@ const MONACO_CONTRIB_UNUSED = new RegExp(
       "contrib/colorPicker/browser/colorPickerContribution",
       "contrib/inlayHints/browser/inlayHintsContribution",
       "contrib/codelens/browser/codelensController",
-      "contrib/semanticTokens/browser/(viewportSemanticTokens|documentSemanticTokens)",
       "contrib/linkedEditing/browser/linkedEditing",
       "contrib/gpu/browser/gpuActions",
       "standalone/browser/(iPadShowKeyboard/iPadShowKeyboard|inspectTokens/inspectTokens|toggleHighContrast/toggleHighContrast)",
