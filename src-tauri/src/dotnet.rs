@@ -161,6 +161,13 @@ const UNITY_GENERATED_DIRS: &[&str] =
     &["Library", "Temp", "Logs", "Build", "Builds", "UserSettings"];
 
 pub fn info(root: &Path) -> DotnetInfo {
+    // Runs while the folders are walked: a cold `dotnet` takes a while to start.
+    let version = dotnet_command()
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
     let mut solutions = Vec::new();
     let mut loose_projects = Vec::new();
     // Not filtered by .gitignore: Unity (and others) generate the .sln and
@@ -201,9 +208,8 @@ pub fn info(root: &Path) -> DotnetInfo {
             projects.push(p);
         }
     }
-    let dotnet_version = dotnet_command()
-        .arg("--version")
-        .output()
+    let dotnet_version = version
+        .and_then(|c| c.wait_with_output())
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());

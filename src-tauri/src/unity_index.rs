@@ -3,15 +3,15 @@
 //! MonoBehaviour, through user and package code), and which scenes, prefabs
 //! and assets use a script or call a method from a UnityEvent.
 //!
-//! Built on first use per project and kept up to date from file changes:
-//! changed files are read again on the next query.
+//! Built when the project opens (or on first use) and kept up to date from
+//! file changes: changed files are read again on the next query.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use regex::Regex;
 use serde::Serialize;
 
@@ -80,20 +80,6 @@ struct AssetFile {
     calls: Vec<EventCall>,
 }
 
-#[derive(Default)]
-struct Index {
-    built: bool,
-    classes: HashMap<PathBuf, Vec<ClassDecl>>,
-    assets: HashMap<PathBuf, AssetFile>,
-    /// Files changed since they were read.
-    stale: HashSet<PathBuf>,
-}
-
-#[derive(Default)]
-pub struct UnityIndexes {
-    roots: Mutex<HashMap<PathBuf, Arc<Mutex<Index>>>>,
-}
-
 fn ext_of(path: &Path) -> Option<String> {
     path.extension()
         .and_then(OsStr::to_str)
@@ -136,31 +122,18 @@ fn walk(dir: &Path, mut f: impl FnMut(&Path)) {
     }
 }
 
-/// What one file holds, read off the index's lock.
-enum Parsed {
-    Classes(Vec<ClassDecl>),
-    Asset(AssetFile),
-    /// Gone, unreadable, or a binary-serialized asset (Force Binary).
-    Nothing,
-}
-
-fn parse_file(path: &Path) -> Parsed {
-    let Ok(bytes) = std::fs::read(path) else {
-        return Parsed::Nothing;
-    };
-    let text = String::from_utf8_lossy(&bytes);
-    if is_script(path) {
-        Parsed::Classes(parse_classes(&text))
-    } else if text.starts_with("%YAML") {
-        Parsed::Asset(parse_asset(&text))
-    } else {
-        Parsed::Nothing
-    }
+/// A file's text; nothing for a file gone or unreadable.
+fn read_text(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Parses files on all cores: a Unity project has thousands of scripts in its
 /// package cache and scenes of tens of megabytes.
-fn parse_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, Parsed)> {
+fn parse_files<T: Send>(
+    paths: Vec<PathBuf>,
+    parse: fn(&Path) -> Option<T>,
+) -> Vec<(PathBuf, Option<T>)> {
     let threads = std::thread::available_parallelism()
         .map_or(4, |n| n.get())
         .min(16);
@@ -168,7 +141,7 @@ fn parse_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, Parsed)> {
         return paths
             .into_iter()
             .map(|p| {
-                let parsed = parse_file(&p);
+                let parsed = parse(&p);
                 (p, parsed)
             })
             .collect();
@@ -184,7 +157,7 @@ fn parse_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, Parsed)> {
                     loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let Some(p) = paths.get(i) else { break };
-                        out.push((p.clone(), parse_file(p)));
+                        out.push((p.clone(), parse(p)));
                     }
                     out
                 })
@@ -197,55 +170,127 @@ fn parse_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, Parsed)> {
     })
 }
 
-impl Index {
-    fn build(&mut self, root: &Path) {
-        self.classes.clear();
-        self.assets.clear();
-        self.stale.clear();
-        let mut paths = Vec::new();
-        for dir in source_dirs(root) {
-            // Assets in the package cache are read-only and rarely matter; scripts there do (base classes).
-            let assets = !dir.ends_with("PackageCache");
-            walk(&dir, |p| {
-                if is_script(p) || (assets && is_asset(p)) {
-                    paths.push(p.to_path_buf());
-                }
-            });
-        }
-        self.store(parse_files(paths));
-        self.built = true;
-    }
+/// The files of one kind (scripts or assets) and what each holds.
+struct Files<T> {
+    built: bool,
+    parsed: HashMap<PathBuf, T>,
+}
 
-    fn store(&mut self, parsed: Vec<(PathBuf, Parsed)>) {
-        for (path, p) in parsed {
-            self.classes.remove(&path);
-            self.assets.remove(&path);
-            match p {
-                Parsed::Classes(c) => {
-                    self.classes.insert(path, c);
-                }
-                Parsed::Asset(a) => {
-                    self.assets.insert(path, a);
-                }
-                Parsed::Nothing => {}
-            }
-        }
-    }
+#[derive(Default)]
+struct Stale {
+    /// Changed since they were read.
+    files: HashSet<PathBuf>,
+    /// Too much changed (a checkout, a reimport) to trust the lists: read everything again.
+    all: bool,
+}
 
-    fn refresh(&mut self, root: &Path) {
-        if !self.built {
-            self.build(root);
-            return;
-        }
-        if !self.stale.is_empty() {
-            let stale = std::mem::take(&mut self.stale).into_iter().collect();
-            self.store(parse_files(stale));
+/// One kind of file of a project. `files` stays locked while they are read
+/// (seconds in a big project); changes only touch `stale`, so reporting them
+/// never waits for that (the watcher reports to the UI on the same thread).
+struct Part<T> {
+    files: Mutex<Files<T>>,
+    stale: Mutex<Stale>,
+}
+
+impl<T> Default for Part<T> {
+    fn default() -> Self {
+        Part {
+            files: Mutex::new(Files {
+                built: false,
+                parsed: HashMap::new(),
+            }),
+            stale: Mutex::default(),
         }
     }
 }
 
+impl<T: Send> Part<T> {
+    /// The files, read first, or again where they changed.
+    fn current(
+        &self,
+        list: impl FnOnce() -> Vec<PathBuf>,
+        parse: fn(&Path) -> Option<T>,
+    ) -> MutexGuard<'_, Files<T>> {
+        let mut files = self.files.lock();
+        let stale = std::mem::take(&mut *self.stale.lock());
+        let paths = if stale.all || !files.built {
+            files.parsed.clear();
+            files.built = true;
+            list()
+        } else {
+            stale.files.into_iter().collect()
+        };
+        for (path, parsed) in parse_files(paths, parse) {
+            match parsed {
+                Some(p) => files.parsed.insert(path, p),
+                None => files.parsed.remove(&path),
+            };
+        }
+        files
+    }
+
+    fn changed(&self, path: &Path) {
+        self.stale.lock().files.insert(path.to_path_buf());
+    }
+
+    fn changed_all(&self) {
+        self.stale.lock().all = true;
+    }
+}
+
+/// A project's index: scripts and assets apart, so base classes never wait
+/// for the scenes.
+#[derive(Default)]
+struct Index {
+    scripts: Part<Vec<ClassDecl>>,
+    assets: Part<AssetFile>,
+}
+
+impl Index {
+    fn scripts(&self, root: &Path) -> MutexGuard<'_, Files<Vec<ClassDecl>>> {
+        let list = || {
+            let mut paths = Vec::new();
+            for dir in source_dirs(root) {
+                walk(&dir, |p| {
+                    if is_script(p) {
+                        paths.push(p.to_path_buf());
+                    }
+                });
+            }
+            paths
+        };
+        self.scripts
+            .current(list, |p| Some(parse_classes(&read_text(p)?)))
+    }
+
+    fn assets(&self, root: &Path) -> MutexGuard<'_, Files<AssetFile>> {
+        let list = || {
+            let mut paths = Vec::new();
+            // Assets in the package cache are read-only and rarely matter; scripts there do (base classes).
+            for dir in &source_dirs(root)[..2] {
+                walk(dir, |p| {
+                    if is_asset(p) {
+                        paths.push(p.to_path_buf());
+                    }
+                });
+            }
+            paths
+        };
+        self.assets.current(list, |p| {
+            let text = read_text(p)?;
+            // A binary-serialized asset (Force Binary) holds nothing readable.
+            text.starts_with("%YAML").then(|| parse_asset(&text))
+        })
+    }
+}
+
+#[derive(Default)]
+pub struct UnityIndexes {
+    roots: Mutex<HashMap<PathBuf, Arc<Index>>>,
+}
+
 impl UnityIndexes {
-    fn index(&self, root: &Path) -> Arc<Mutex<Index>> {
+    fn index(&self, root: &Path) -> Arc<Index> {
         self.roots
             .lock()
             .entry(root.to_path_buf())
@@ -258,10 +303,9 @@ impl UnityIndexes {
         let Some(index) = self.roots.lock().get(Path::new(&change.root)).cloned() else {
             return;
         };
-        let mut index = index.lock();
         if change.overflow || change.lost {
-            // Too much changed (a checkout, a reimport) to trust the lists.
-            index.built = false;
+            index.scripts.changed_all();
+            index.assets.changed_all();
             return;
         }
         for f in change
@@ -271,8 +315,10 @@ impl UnityIndexes {
             .chain(&change.removed)
         {
             let p = Path::new(f);
-            if is_script(p) || is_asset(p) {
-                index.stale.insert(p.to_path_buf());
+            if is_script(p) {
+                index.scripts.changed(p);
+            } else if is_asset(p) {
+                index.assets.changed(p);
             }
         }
     }
@@ -281,13 +327,19 @@ impl UnityIndexes {
         self.roots.lock().remove(root);
     }
 
+    /// Reads a project's scripts, then its assets, so that queries answer at once.
+    pub fn warm(&self, root: &Path) {
+        let index = self.index(root);
+        drop(index.scripts(root));
+        drop(index.assets(root));
+    }
+
     /// Every class of the project and its packages, with the bases each declaration lists.
     pub fn classes(&self, root: &Path) -> HashMap<String, Vec<String>> {
         let index = self.index(root);
-        let mut index = index.lock();
-        index.refresh(root);
+        let scripts = index.scripts(root);
         let mut out: HashMap<String, Vec<String>> = HashMap::new();
-        for c in index.classes.values().flatten() {
+        for c in scripts.parsed.values().flatten() {
             let bases = out.entry(c.name.clone()).or_default();
             for b in &c.bases {
                 if !bases.contains(b) {
@@ -303,13 +355,12 @@ impl UnityIndexes {
     pub fn asset_usages(&self, root: &Path, script: &Path, classes: &[String]) -> AssetUsages {
         let guid = script_guid(script);
         let index = self.index(root);
-        let mut index = index.lock();
-        index.refresh(root);
+        let assets = index.assets(root);
         let mut out = AssetUsages::default();
-        let mut paths: Vec<&PathBuf> = index.assets.keys().collect();
+        let mut paths: Vec<&PathBuf> = assets.parsed.keys().collect();
         paths.sort();
         for path in paths {
-            let file = &index.assets[path];
+            let file = &assets.parsed[path];
             let usage = |line, object: &Option<String>, file_id: &Option<String>| AssetUsage {
                 path: path.to_string_lossy().into_owned(),
                 line,
@@ -577,20 +628,24 @@ MonoBehaviour:
         let Ok(root) = std::env::var("HAZE_BENCH_UNITY") else {
             return;
         };
-        let started = std::time::Instant::now();
+        let root = Path::new(&root);
         let indexes = UnityIndexes::default();
-        let classes = indexes.classes(Path::new(&root));
-        let built = started.elapsed();
-        let index = indexes.index(Path::new(&root));
-        let (scripts, assets) = {
-            let i = index.lock();
-            (i.classes.len(), i.assets.len())
-        };
         let started = std::time::Instant::now();
-        let any = PathBuf::from(&root).join("Assets/Bench/S0.cs");
-        let _ = indexes.asset_usages(Path::new(&root), &any, &["S0".into()]);
+        let classes = indexes.classes(root);
+        let scripts = started.elapsed();
+        let started = std::time::Instant::now();
+        let any = root.join("Assets/Bench/S0.cs");
+        let _ = indexes.asset_usages(root, &any, &["S0".into()]);
+        let assets = started.elapsed();
+        let index = indexes.index(root);
+        let (n_scripts, n_assets) = (
+            index.scripts.files.lock().parsed.len(),
+            index.assets.files.lock().parsed.len(),
+        );
+        let started = std::time::Instant::now();
+        let _ = indexes.asset_usages(root, &any, &["S0".into()]);
         println!(
-            "{scripts} scripts, {assets} assets, {} classes: built in {built:?}, query in {:?}",
+            "{n_scripts} scripts ({} classes) in {scripts:?}, {n_assets} assets in {assets:?}, query in {:?}",
             classes.len(),
             started.elapsed()
         );
@@ -652,5 +707,26 @@ MonoBehaviour:
         });
         let usages = indexes.asset_usages(root, &player, &["Player".into()]);
         assert!(usages.scripts.is_empty() && usages.methods.is_empty());
+
+        // Too much changed to list (a checkout): everything is read again.
+        std::fs::write(
+            root.join("Assets/Scripts/Enemy.cs"),
+            "class Enemy : MonoBehaviour {}",
+        )
+        .unwrap();
+        indexes.changed(&FsChange {
+            root: root.to_string_lossy().into_owned(),
+            dirs: vec![],
+            files: vec![],
+            created: vec![],
+            removed: vec![],
+            overflow: true,
+            lost: false,
+            git: false,
+        });
+        assert_eq!(
+            indexes.classes(root)["Enemy"],
+            vec!["MonoBehaviour".to_string()]
+        );
     }
 }

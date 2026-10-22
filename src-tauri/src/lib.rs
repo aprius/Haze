@@ -562,6 +562,20 @@ async fn unity_classes(
     blocking(move || Ok(indexes.classes(root.as_ref()))).await
 }
 
+/// Indexes a Unity project's scripts and assets ahead of Code Vision asking.
+#[tauri::command]
+async fn unity_warm_index(
+    indexes: State<'_, Arc<unity_index::UnityIndexes>>,
+    root: String,
+) -> CmdResult<()> {
+    let indexes = indexes.inner().clone();
+    blocking(move || {
+        indexes.warm(root.as_ref());
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command]
 async fn unity_asset_usages(
     indexes: State<'_, Arc<unity_index::UnityIndexes>>,
@@ -571,6 +585,12 @@ async fn unity_asset_usages(
 ) -> CmdResult<unity_index::AssetUsages> {
     let indexes = indexes.inner().clone();
     blocking(move || Ok(indexes.asset_usages(root.as_ref(), script.as_ref(), &classes))).await
+}
+
+/// Types and members of C# source, for Code Vision before (and without) a language server.
+#[tauri::command]
+async fn csharp_outline(text: String) -> CmdResult<Vec<syntax::OutlineSymbol>> {
+    blocking(move || Ok(syntax::csharp_outline(&text))).await
 }
 
 #[tauri::command]
@@ -906,6 +926,8 @@ pub fn run() {
             unity_send,
             unity_classes,
             unity_asset_usages,
+            unity_warm_index,
+            csharp_outline,
             lsp_find_server,
             lsp_start,
             lsp_send,

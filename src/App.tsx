@@ -22,7 +22,7 @@ import { notifyFileChanges, startCsharp, stopCsharp } from "./lib/lsp/csharp";
 import { invalidateTextNav } from "./lib/textNav";
 import { loadDotnetInfo, useDotnet } from "./store/dotnet";
 import { buildProject, startUnityLink, stopUnityLink, unityFilesChanged, useUnity } from "./store/unity";
-import { unityFilesChangedForCode } from "./lib/unity/scripts";
+import { unityFilesChangedForCode, warmUnityIndex } from "./lib/unity/scripts";
 import { handleDiskChanges } from "./lib/buffers";
 import { matches, type Command } from "./lib/keymap";
 import { api, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
@@ -292,7 +292,7 @@ export default function App() {
   useEffect(() => {
     if (!loaded) return;
     const open = useWorkspace.getState().projects.filter((p) => p.open);
-    for (const p of open) void startUnityLink(p.id, p.path);
+    for (const p of open) void startUnityLink(p.id, p.path).then((linked) => linked && warmUnityIndex(p.path));
     for (const id of Object.keys(useUnity.getState().projects)) {
       if (!open.some((p) => p.id === id)) stopUnityLink(id);
     }

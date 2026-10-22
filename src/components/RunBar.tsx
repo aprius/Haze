@@ -1,8 +1,8 @@
 // Title bar: the window's drag area with the project name, and for a .NET project
 // the C# server status, run configuration and Build / Run / Test; for a Unity
 // project, Play / Pause / Step and Refresh in its Unity Editor.
-import { FlaskConical, Hammer, Pause, Play, RefreshCw, Square, StepForward } from "lucide-react";
-import { useMemo } from "react";
+import { FlaskConical, Hammer, Pause, Play, RefreshCw, Square, StepForward, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import type { DotnetInfo } from "../lib/ipc";
 import { restartCsharp } from "../lib/lsp/csharp";
 import { basename, dirname } from "../lib/path";
@@ -62,6 +62,38 @@ export async function runConfig(project: Project, cfg: RunConfig): Promise<void>
   await newTerminal(project.id, cfg.cwd, { title: cfg.label, command: cfg.command });
 }
 
+const ROSLYN_INSTALL = ["dotnet", "tool", "install", "--global", "roslyn-language-server", "--prerelease"];
+/** Set when the user chose to stay on csharp-ls: Haze stops suggesting Roslyn. */
+const KEEP_CSHARP_LS = "haze.keepCsharpLs";
+
+function keepsCsharpLs(): boolean {
+  try {
+    return localStorage.getItem(KEEP_CSHARP_LS) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Installs Roslyn's language server in a terminal (which shows any failure),
+ * then starts C# again, now with Roslyn, where it was missing or csharp-ls ran.
+ */
+async function installRoslyn(project: Project): Promise<void> {
+  const id = await newTerminal(project.id, project.path, { title: "Install C# server", command: ROSLYN_INSTALL });
+  if (!id) return;
+  const unsubscribe = useTerminals.subscribe((s) => {
+    const t = s.sessions[id];
+    if (t?.running) return;
+    unsubscribe();
+    if (t?.exitCode !== 0) return;
+    const { csharp } = useDotnet.getState();
+    for (const p of useWorkspace.getState().projects) {
+      const status = csharp[p.id];
+      if (p.open && status && (status.state === "missing" || status.kind === "csharp-ls")) void restartCsharp(p.id, p.path);
+    }
+  });
+}
+
 function csharpLabel(s: CsharpStatus | undefined): { text: string; tone: string } {
   switch (s?.state) {
     case "ready":
@@ -86,6 +118,7 @@ function RunControls({ project }: { project: Project }) {
   const selected = useWorkspace((s) => s.ui[project.id]?.runConfig ?? null);
   const configs = useMemo(() => runConfigs(info), [info]);
   const unity = useUnity((s) => !!s.projects[project.id]);
+  const [keepCsharpLs, setKeepCsharpLs] = useState(keepsCsharpLs);
   if (!info || info.projects.length === 0)
     return unity ? (
       <>
@@ -96,6 +129,8 @@ function RunControls({ project }: { project: Project }) {
   const current = configs.find((c) => c.id === selected) ?? configs[0];
   const target = defaultBuildTarget(project.id);
   const label = csharpLabel(csharp);
+  // Roslyn loads projects faster and has more fixes and refactorings; it needs the .NET 10 runtime.
+  const suggestRoslyn = csharp?.kind === "csharp-ls" && csharp.state !== "missing" && !keepCsharpLs && Number(info.dotnetVersion?.split(".")[0]) >= 10;
 
   return (
     <>
@@ -103,17 +138,34 @@ function RunControls({ project }: { project: Project }) {
         <span className={"csharp-status " + label.tone} title={[csharp?.kind && `Language server: ${csharp.kind}`, csharp?.message].filter(Boolean).join("\n") || undefined}>
           {label.text}
           {csharp?.state === "missing" && (
-            <button
-              className="btn small"
-              onClick={() =>
-                void newTerminal(project.id, project.path, {
-                  title: "Install C# server",
-                  command: ["dotnet", "tool", "install", "--global", "roslyn-language-server", "--prerelease"],
-                })
-              }
-            >
+            <button className="btn small" onClick={() => void installRoslyn(project)}>
               Install
             </button>
+          )}
+          {suggestRoslyn && (
+            <>
+              <button
+                className="btn small"
+                title={"C# runs on csharp-ls. Microsoft's Roslyn language server loads projects faster and offers more quick fixes and refactorings.\nInstalls it (" + ROSLYN_INSTALL.join(" ") + "), then starts C# again with it."}
+                onClick={() => void installRoslyn(project)}
+              >
+                Use Roslyn
+              </button>
+              <button
+                className="icon-btn"
+                title="Keep csharp-ls (stop suggesting Roslyn)"
+                onClick={() => {
+                  try {
+                    localStorage.setItem(KEEP_CSHARP_LS, "1");
+                  } catch {
+                    /* storage unavailable: hidden until Haze restarts */
+                  }
+                  setKeepCsharpLs(true);
+                }}
+              >
+                <X size={16} />
+              </button>
+            </>
           )}
           {(csharp?.state === "missing" || csharp?.state === "stopped" || csharp?.state === "error") && (
             <button className="icon-btn" title="Start the C# server again" onClick={() => void restartCsharp(project.id, project.path)}>

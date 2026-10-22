@@ -156,10 +156,10 @@ function listen() {
   });
 }
 
-/** Links an open project to its Unity Editor, if it is a Unity project. */
-export async function startUnityLink(projectId: string, root: string): Promise<void> {
+/** Links an open project to its Unity Editor, if it is a Unity project; true when it was linked now. */
+export async function startUnityLink(projectId: string, root: string): Promise<boolean> {
   listen();
-  if (useUnity.getState().projects[projectId]) return;
+  if (useUnity.getState().projects[projectId]) return false;
   // Known before connecting, so the link's first events find the project.
   useUnity.setState((s) => ({
     projects: {
@@ -170,6 +170,7 @@ export async function startUnityLink(projectId: string, root: string): Promise<v
   const unity = await api.unityConnect(root).catch(() => false);
   if (!unity)
     forget(projectId);
+  return unity;
 }
 
 function forget(projectId: string) {

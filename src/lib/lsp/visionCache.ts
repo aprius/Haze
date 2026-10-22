@@ -27,7 +27,8 @@ export const QUICK_MS = 120;
 const MAX_ENTRIES = 20_000;
 /** Usage counts kept across restarts (authors come back quickly from git). */
 const MAX_SAVED = 8_000;
-const STORAGE_KEY = "haze.codeVision.v1";
+/** v1 keyed symbols by Roslyn's names ("Load(Level) : void"), v2 by Haze's own ("Load"). */
+const STORAGE_KEY = "haze.codeVision.v2";
 
 const entries = new Map<string, Entry>();
 const inflight = new Map<string, Promise<VisionAnswer | null>>();
@@ -97,6 +98,7 @@ export function visionAnswer(key: string, compute: () => Promise<VisionAnswer | 
 /** Answers from the last session: shown before Roslyn has loaded the projects, never greying. */
 function load() {
   try {
+    globalThis.localStorage?.removeItem("haze.codeVision.v1");
     const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
     if (!raw) return;
     for (const [key, title, tooltip, n] of JSON.parse(raw) as [string, string, string | null, number | null][])

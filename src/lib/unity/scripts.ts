@@ -76,9 +76,20 @@ function cached<T>(map: Map<string, Entry<T>>, root: string, key: string, load: 
 /** Base types already worked out, per answer of the index. */
 const bases = new WeakMap<Record<string, string[]>, Map<string, UnityBase | null>>();
 
+const classesOf = (root: string) => cached(classes, root, root, () => api.unityClasses(root));
+
+/**
+ * Indexes a Unity project as it opens: the scripts' base classes are at hand
+ * when the first script shows (its scenes and prefabs are read after them).
+ */
+export function warmUnityIndex(root: string): void {
+  void api.unityWarmIndex(root).catch((err) => console.warn("Unity index", err));
+  classesOf(root);
+}
+
 /** The Unity base type of a class, or null (also while the index loads). */
 export function unityBaseFor(root: string, className: string): UnityBase | null {
-  const all = cached(classes, root, root, () => api.unityClasses(root));
+  const all = classesOf(root);
   if (!all) return null;
   let known = bases.get(all);
   if (!known) bases.set(all, (known = new Map()));

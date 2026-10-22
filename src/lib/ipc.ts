@@ -289,6 +289,19 @@ export interface AssetUsages {
   methods: Record<string, AssetUsage[]>;
 }
 
+/** A type or member of C# source (syntax.rs), shaped like LSP's DocumentSymbol; 0-based lines, UTF-16 columns. */
+export interface OutlineSymbol {
+  /** Plain: "Jump", "IFoo.Bar" (explicit implementation), "this[]". */
+  name: string;
+  /** LSP SymbolKind. */
+  kind: number;
+  /** The whole declaration, attributes included. */
+  range: { start: { line: number; character: number }; end: { line: number; character: number } };
+  /** The name. */
+  selectionRange: { start: { line: number; character: number }; end: { line: number; character: number } };
+  children: OutlineSymbol[];
+}
+
 /** Messages from one Unity Editor, a burst at a time. */
 export interface UnityEvent {
   root: string;
@@ -513,6 +526,8 @@ export const api = {
   unitySend: (root: string, message: UnityRequest) => invoke<boolean>("unity_send", { root, message }),
   unityClasses: (root: string) => invoke<Record<string, string[]>>("unity_classes", { root }),
   unityAssetUsages: (root: string, script: string, classes: string[]) => invoke<AssetUsages>("unity_asset_usages", { root, script, classes }),
+  unityWarmIndex: (root: string) => invoke<void>("unity_warm_index", { root }),
+  csharpOutline: (text: string) => invoke<OutlineSymbol[]>("csharp_outline", { text }),
   lspFindServer: () => invoke<ServerCommand | null>("lsp_find_server"),
   lspStart: (cwd: string) => invoke<{ id: number; kind: ServerCommand["kind"] }>("lsp_start", { cwd }),
   lspSend: (id: number, message: unknown) => invoke<void>("lsp_send", { id, message }),
