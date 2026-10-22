@@ -249,7 +249,7 @@ kbd {
 }
 
 :root[data-ui="islands"] .project-view {
-  padding: 2px 4px 4px 0;
+  padding: 2px 5px 5px 0;
 }
 
 :root[data-ui="islands"] .sidebar,
@@ -265,11 +265,11 @@ kbd {
 }
 
 :root[data-ui="islands"] .splitter.vertical {
-  width: 4px;
+  width: 5px;
 }
 
 :root[data-ui="islands"] .splitter.horizontal {
-  height: 4px;
+  height: 5px;
 }
 
 :root[data-ui="islands"] .title-bar,
