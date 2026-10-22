@@ -318,8 +318,14 @@ export function disposeView(id: string): void {
 
 function TerminalView({ id, project, active }: { id: string; project: Project; active: boolean }) {
   const host = useRef<HTMLDivElement>(null);
+  // A tab attaches when first shown: at startup only the active one replays
+  // its scrollback (up to megabytes each). Agent states and exits reach the
+  // tab bar without it.
+  const [shown, setShown] = useState(active || views.has(id));
+  if (active && !shown) setShown(true);
 
   useEffect(() => {
+    if (!shown) return;
     let view = views.get(id);
     if (!view) {
       view = createView(id, project);
@@ -350,7 +356,7 @@ function TerminalView({ id, project, active }: { id: string; project: Project; a
       fontListeners.delete(fit);
       if (v.refit === fit) v.refit = null;
     };
-  }, [id, project]);
+  }, [id, project, shown]);
 
   useEffect(() => {
     const v = views.get(id);

@@ -476,7 +476,15 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
         let mut s = session.lock();
         s.info.running = false;
         s.info.exit_code = code;
-        broadcast(&exit_host, &s.subscribers, Event::Exit { id, code });
+        // Every client: a tab not shown yet is not attached, and its tab still shows it ended.
+        for tx in exit_host.clients.lock().values() {
+            let _ = tx.send(ServerMsg::Event {
+                body: Event::Exit {
+                    id: id.clone(),
+                    code,
+                },
+            });
+        }
     });
 
     Ok(info)
