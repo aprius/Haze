@@ -293,6 +293,8 @@ function AgentsSection() {
 
 function EditorSection() {
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
+  const lineBlame = useWorkspace((s) => s.lineBlame);
+  const codeVision = useWorkspace((s) => s.codeVision);
   return (
     <>
       <PageHeader title="Editor" />
@@ -302,6 +304,18 @@ function EditorSection() {
           desc="Keeps the enclosing namespace, class and method lines pinned at the top while you scroll."
           checked={stickyScroll}
           onChange={(on) => useWorkspace.setState({ stickyScroll: on })}
+        />
+        <SwitchRow
+          label="Git blame for the current line"
+          desc="Shows who last changed the caret line, when, and in which commit, at the end of the line."
+          checked={lineBlame}
+          onChange={(on) => useWorkspace.setState({ lineBlame: on })}
+        />
+        <SwitchRow
+          label="Code Vision"
+          desc="Usages and author above C# classes and methods; private members nothing uses are greyed out."
+          checked={codeVision}
+          onChange={(on) => useWorkspace.setState({ codeVision: on })}
         />
       </div>
     </>

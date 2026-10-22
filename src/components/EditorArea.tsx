@@ -3,11 +3,11 @@ import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { disposeBuffer, ensureBuffer, getModel, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers, type BufferMeta } from "../lib/buffers";
-import { api, errorMessage } from "../lib/ipc";
+import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
-import { basename, dirname, extname, relative } from "../lib/path";
-import { findImplementations, findUsages, prepareRename, renameSymbol } from "../lib/lsp/csharp";
+import { basename, dirname, extname, isWithin, relative } from "../lib/path";
+import { clearUnusedMarks, findImplementations, findUsages, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
@@ -221,20 +221,19 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
     const meta = useBuffers.getState().meta[path];
     const dirty = meta?.status === "text" && meta.dirty;
     const lines = await api.gitBlame(root, rel, dirty ? model.getValue() : null, meta?.status === "text" ? meta.encoding : null);
-    const uncommitted = "0".repeat(40);
     const ids = model.deltaDecorations(
       [],
       lines
         .filter((l) => l.line >= 1 && l.line <= model.getLineCount())
         .map((l) => {
           const date = new Date(l.time * 1000).toISOString().slice(0, 10);
-          const label = l.hash === uncommitted ? "Not committed yet".padEnd(31) : `${l.hash.slice(0, 7)} ${date} ${l.author.slice(0, 12).padEnd(12)}`;
+          const label = l.hash === UNCOMMITTED ? "Not committed yet".padEnd(31) : `${l.hash.slice(0, 7)} ${date} ${l.author.slice(0, 12).padEnd(12)}`;
           return {
             range: new monaco.Range(l.line, 1, l.line, 1),
             options: {
               showIfCollapsed: true,
               before: { content: label + "  ", inlineClassName: "blame-text", cursorStops: monaco.editor.InjectedTextCursorStops.None },
-              hoverMessage: l.hash === uncommitted ? undefined : { value: `**${l.summary}**\n\n${l.author} · ${new Date(l.time * 1000).toLocaleString()} · \`${l.hash.slice(0, 12)}\`` },
+              hoverMessage: l.hash === UNCOMMITTED ? undefined : { value: `**${l.summary}**\n\n${l.author} · ${new Date(l.time * 1000).toLocaleString()} · \`${l.hash.slice(0, 12)}\`` },
             },
           };
         }),
@@ -243,6 +242,136 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
   } catch (e) {
     toast(`Annotate failed: ${errorMessage(e)}`, "error");
   }
+}
+
+// Inline blame for the caret line, like Rider's GitToolBox: "Author, 2 days ago • summary"
+// after the line's end, the commit's details on hover. One blame per model version
+// (dirty text is blamed as is, so lines match), asked once the caret rests.
+const UNCOMMITTED = "0".repeat(40);
+const lineBlames = new WeakMap<monaco.editor.ITextModel, { version: number; at: number; lines: Promise<Map<number, BlameLine> | null> }>();
+
+function caretLineBlames(project: Project, model: monaco.editor.ITextModel): Promise<Map<number, BlameLine> | null> {
+  const version = model.getAlternativeVersionId();
+  const cached = lineBlames.get(model);
+  // Re-asked after a while too: a commit changes the answer without changing the text.
+  if (cached && cached.version === version && Date.now() - cached.at < 15_000) return cached.lines;
+  const root = repo(project.id).root;
+  const path = model.uri.fsPath;
+  if (!root || !isWithin(path, root)) return Promise.resolve(null);
+  const meta = useBuffers.getState().meta[path];
+  const dirty = meta?.status === "text" && meta.dirty;
+  const lines = api
+    .gitBlame(root, relative(root, path), dirty ? model.getValue() : null, meta?.status === "text" ? meta.encoding : null)
+    .then((ls) => new Map(ls.map((l) => [l.line, l])))
+    .catch(() => null); // untracked or outside git: nothing to show
+  lineBlames.set(model, { version, at: Date.now(), lines });
+  return lines;
+}
+
+function timeAgo(t: number): string {
+  const s = Math.max(0, Date.now() / 1000 - t);
+  const steps: [number, string][] = [
+    [60, "second"], [60, "minute"], [24, "hour"], [7, "day"], [4.35, "week"], [12, "month"], [Infinity, "year"],
+  ];
+  let n = s;
+  for (const [size, unit] of steps) {
+    if (n < size) {
+      const v = Math.floor(n);
+      return unit === "second" ? "just now" : `${v} ${unit}${v === 1 ? "" : "s"} ago`;
+    }
+    n /= size;
+  }
+  return "";
+}
+
+// Code Vision's author ("aprius +2", Rider style): who wrote most of the declaration's lines.
+setCodeVisionAuthor(async (model, from, to) => {
+  const project = projectForPath(model.uri.fsPath);
+  const lines = project && (await caretLineBlames(project, model));
+  if (!lines) return null;
+  const count = new Map<string, number>();
+  for (let l = from; l <= to; l++) {
+    const b = lines.get(l);
+    if (!b) continue;
+    const who = b.hash === UNCOMMITTED ? "You" : b.author;
+    count.set(who, (count.get(who) ?? 0) + 1);
+  }
+  const ranked = [...count].sort((a, b) => b[1] - a[1]);
+  if (!ranked.length) return null;
+  return {
+    title: ranked[0][0] + (ranked.length > 1 ? ` +${ranked.length - 1}` : ""),
+    tooltip: ranked.map(([who, n]) => `${who}: ${n} line${n === 1 ? "" : "s"}`).join("\n"),
+  };
+});
+
+// A Code Vision usages count opens the usages list for that symbol.
+monaco.editor.registerCommand("haze.codeVisionUsages", (_accessor, path: string, line: number, column: number, name: string) => {
+  const model = getModel(path);
+  const project = projectForPath(path);
+  if (model && project) void showLocations(project, `Usages of ${name}`, () => findUsages(model, { lineNumber: line, column }));
+});
+
+function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): monaco.IDisposable {
+  const shown = editor.createDecorationsCollection();
+  let shownKey = "";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = () => {
+    shown.clear();
+    shownKey = "";
+  };
+  const update = (delay: number) => {
+    clearTimeout(timer);
+    const model = editor.getModel();
+    const line = editor.getSelection()?.positionLineNumber;
+    const key = model && line ? `${model.uri}:${model.getAlternativeVersionId()}:${line}` : "";
+    // Moving along the same line keeps the annotation (no flicker).
+    if (key && key === shownKey) return;
+    clear();
+    if (!model || !line || model.uri.scheme !== "file" || !useWorkspace.getState().lineBlame) return;
+    timer = setTimeout(async () => {
+      // Full Annotate is on: it already says it.
+      if (blameDecorations.has(model)) return;
+      const b = (await caretLineBlames(project, model))?.get(line);
+      if (!b || editor.getModel() !== model || editor.getSelection()?.positionLineNumber !== line || line > model.getLineCount()) return;
+      if (`${model.uri}:${model.getAlternativeVersionId()}:${line}` !== key) return;
+      const summary = b.summary.length > 60 ? b.summary.slice(0, 59) + "…" : b.summary;
+      const label = b.hash === UNCOMMITTED ? "You, uncommitted changes" : `${b.author}, ${timeAgo(b.time)} • ${summary}`;
+      const end = model.getLineMaxColumn(line);
+      shown.set([
+        {
+          range: new monaco.Range(line, end, line, end),
+          options: {
+            showIfCollapsed: true,
+            after: { content: "\u2003\u2003" + label, inlineClassName: "line-blame-text", cursorStops: monaco.editor.InjectedTextCursorStops.None },
+            hoverMessage:
+              b.hash === UNCOMMITTED
+                ? undefined
+                : { value: `**${b.summary}**\n\n${b.author} · ${new Date(b.time * 1000).toLocaleString()} · \`${b.hash.slice(0, 12)}\`` },
+          },
+        },
+      ]);
+      shownKey = key;
+    }, delay);
+  };
+  const subs = [
+    editor.onDidChangeCursorSelection(() => update(200)),
+    editor.onDidChangeModel(() => update(200)),
+    // Typing re-blames the dirty text, so wait until it pauses.
+    editor.onDidChangeModelContent(() => update(800)),
+    editor.onDidBlurEditorText(() => {
+      clearTimeout(timer);
+      clear();
+    }),
+    editor.onDidFocusEditorText(() => update(200)),
+  ];
+  const unsub = useWorkspace.subscribe((s, prev) => s.lineBlame !== prev.lineBlame && update(0));
+  return {
+    dispose() {
+      clearTimeout(timer);
+      subs.forEach((d) => d.dispose());
+      unsub();
+    },
+  };
 }
 
 function symbolAt(editor: monaco.editor.ICodeEditor): string {
@@ -543,6 +672,7 @@ export function EditorArea({ project }: { project: Project }) {
   const ui = useWorkspace((s) => s.ui[project.id]);
   const reveal = useWorkspace((s) => s.reveal);
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
+  const codeVision = useWorkspace((s) => s.codeVision);
   const active = ui?.activeTab ?? null;
   const meta = useBuffers((s) => (active ? s.meta[active] : undefined));
   const host = useRef<HTMLDivElement>(null);
@@ -562,6 +692,7 @@ export function EditorArea({ project }: { project: Project }) {
       renderWhitespace: "selection",
       smoothScrolling: true,
       stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
+      codeLens: useWorkspace.getState().codeVision,
       suggest: suggestOptions,
       bracketPairColorization: { enabled: true },
       // Roslyn's semantic tokens (lsp/csharp.ts); the theme alone would leave them off.
@@ -574,7 +705,7 @@ export function EditorArea({ project }: { project: Project }) {
       useCursor.setState({
         line: sel.positionLineNumber,
         column: sel.positionColumn,
-        selected: model ? model.getValueInRange(sel).length : 0,
+        selected: model ? model.getValueLengthInRange(sel) : 0,
       });
     });
     editor.onDidChangeModelContent(() => {
@@ -621,9 +752,11 @@ export function EditorArea({ project }: { project: Project }) {
     codeAction("haze.rename", "Rename Symbol…", [M.Shift | K.F6, K.F2], () => {
       if (isCs()) void renameAt(editor);
     }, "1_modification");
+    const lineBlame = installLineBlame(project, editor);
     editorRef.current = editor;
     currentEditor = editor;
     return () => {
+      lineBlame.dispose();
       if (shownPath.current) viewStates.set(shownPath.current, editor.saveViewState());
       editor.dispose();
       editorRef.current = null;
@@ -637,6 +770,11 @@ export function EditorArea({ project }: { project: Project }) {
   useEffect(() => {
     editorRef.current?.updateOptions({ stickyScroll: { enabled: stickyScroll } });
   }, [stickyScroll]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ codeLens: codeVision });
+    if (!codeVision) clearUnusedMarks();
+  }, [codeVision]);
 
   // Load the active file (applying any recovered draft once).
   useEffect(() => {

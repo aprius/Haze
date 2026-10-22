@@ -46,6 +46,7 @@
   --mk-purple: #7058be;
   --mk-grey: #918c8e;
   --find-match: #cc7a0a;
+  --popup-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
   color-scheme: light;
 }
 
@@ -56,7 +57,7 @@
   --editor-bg: #2d2a2e;
   --rail: #19181a;
   --border: #19181a;
-  --fg: #fcfcfa;
+  --fg: #dfe1e5;
   --muted: #939293;
   --hover: #363337;
   --selected: #4a474b;
@@ -92,6 +93,7 @@
   --mk-purple: #ab9df2;
   --mk-grey: #939293;
   --find-match: #ffd866;
+  --popup-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04) inset, 0 4px 12px rgba(0, 0, 0, 0.25), 0 20px 48px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
 
@@ -922,7 +924,7 @@ kbd {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--popup-shadow);
   max-height: calc(100vh - 8px);
   overflow-y: auto;
 }
@@ -973,23 +975,63 @@ kbd {
   align-items: flex-start;
   justify-content: center;
   padding-top: 18vh;
+  animation: backdrop-in 0.12s ease-out;
 }
 
 .modal {
   width: min(440px, calc(100% - 32px));
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  border-radius: 10px;
+  padding: 18px 20px 16px;
+  box-shadow: var(--popup-shadow);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   outline: none;
 }
 
 .modal-title {
   font-weight: 600;
+  font-size: calc(var(--ui-font-size) * 14 / 13);
+}
+
+.modal-buttons .btn {
+  min-width: 76px;
+  justify-content: center;
+}
+
+/* Every popup opens the same way: the backdrop fades in, the box rises and settles. */
+.modal,
+.se-popup,
+.find-popup,
+.float-window {
+  animation: popup-in 0.14s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.context-menu {
+  animation: popup-in 0.08s ease-out;
+}
+@keyframes popup-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+@keyframes backdrop-in {
+  from {
+    background: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop,
+  .modal,
+  .se-popup,
+  .find-popup,
+  .float-window,
+  .context-menu,
+  .settings-dialog {
+    animation: none;
+  }
 }
 
 .modal-message {
@@ -1058,8 +1100,8 @@ kbd {
   flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  border-radius: 10px;
+  box-shadow: var(--popup-shadow);
   overflow: hidden;
 }
 
@@ -1173,8 +1215,8 @@ kbd {
   flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  border-radius: 10px;
+  box-shadow: var(--popup-shadow);
   overflow: hidden;
 }
 
@@ -2193,6 +2235,25 @@ kbd {
   color: var(--muted) !important;
   font-style: normal;
   opacity: 0.85;
+}
+
+.unused-symbol {
+  opacity: 0.5;
+}
+
+/* Code Vision above declarations: quiet until hovered, like Rider's. */
+.monaco-editor .codelens-decoration,
+.monaco-editor .codelens-decoration a {
+  color: var(--muted);
+}
+.monaco-editor .codelens-decoration a:hover {
+  color: var(--accent);
+}
+
+.line-blame-text {
+  color: var(--muted) !important;
+  font-style: italic;
+  opacity: 0.6;
 }
 
 .push-dialog {

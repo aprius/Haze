@@ -93,6 +93,10 @@ interface WorkspaceState {
   nestFiles: boolean;
   /** Pins the enclosing class/method lines at the top of the editor while scrolling. */
   stickyScroll: boolean;
+  /** Shows the caret line's author, date and commit at the end of the line. */
+  lineBlame: boolean;
+  /** Rider's Code Vision: usages and author above C# types and members; unused private members greyed. */
+  codeVision: boolean;
   /** Desktop notifications when an agent needs you or finishes. */
   notifyAgents: boolean;
 
@@ -121,6 +125,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   reveal: null,
   nestFiles: true,
   stickyScroll: true,
+  lineBlame: true,
+  codeVision: true,
   notifyAgents: true,
 
   addProject(path) {

@@ -15,6 +15,8 @@ interface Persisted {
   drafts: Record<string, { content: string; baseMtime: number }>;
   nestFiles: boolean;
   stickyScroll?: boolean;
+  lineBlame?: boolean;
+  codeVision?: boolean;
   notifyAgents?: boolean;
 }
 
@@ -35,6 +37,8 @@ function snapshot(): Persisted {
     drafts,
     nestFiles: s.nestFiles,
     stickyScroll: s.stickyScroll,
+    lineBlame: s.lineBlame,
+    codeVision: s.codeVision,
     notifyAgents: s.notifyAgents,
   };
 }
@@ -92,6 +96,8 @@ async function doRestore(): Promise<void> {
       ui,
       nestFiles: data.nestFiles ?? true,
       stickyScroll: data.stickyScroll ?? true,
+      lineBlame: data.lineBlame ?? true,
+      codeVision: data.codeVision ?? true,
       notifyAgents: data.notifyAgents ?? true,
     });
   }

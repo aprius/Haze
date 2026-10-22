@@ -184,6 +184,7 @@ export class CsharpSession {
     setCsharpStatus(this.projectId, { state: "ready", kind: this.kind, message });
     this.readyWaiters.splice(0).forEach((r) => r());
     semanticTokensChanged.fire();
+    if (codeVisionProvider) codeVisionChanged.fire(codeVisionProvider);
   }
 
   /** Waits for the projects to load, at most `ms`: a project that never loads must not block queries. */
@@ -485,6 +486,70 @@ let registered = false;
 // Asks open C# editors for their semantic tokens again (projects loaded, server refresh).
 const semanticTokensChanged = new monaco.Emitter<void>();
 
+// Asks open C# editors for their Code Vision again (projects loaded: usages count now).
+const codeVisionChanged = new monaco.Emitter<monaco.languages.CodeLensProvider>();
+let codeVisionProvider: monaco.languages.CodeLensProvider | null = null;
+
+/** Who wrote lines `from`..`to` of a model, for Code Vision ("aprius +2"); set by the editor, which knows git. */
+type CodeVisionAuthor = (model: monaco.editor.ITextModel, from: number, to: number) => Promise<{ title: string; tooltip: string } | null>;
+let codeVisionAuthor: CodeVisionAuthor | null = null;
+
+export function setCodeVisionAuthor(f: CodeVisionAuthor): void {
+  codeVisionAuthor = f;
+}
+
+// LSP SymbolKind: Class, Method, Property, Constructor, Enum, Interface, Struct, Event.
+const CODE_VISION_KINDS = new Set([5, 6, 7, 9, 10, 11, 23, 24]);
+// Members greyed out when nothing uses them: Method, Property, Event.
+const GREY_WHEN_UNUSED = new Set([6, 7, 24]);
+// Unity calls these by name, so "no usages" does not make them dead.
+const UNITY_MESSAGES = new Set(
+  (
+    "Awake Start Update FixedUpdate LateUpdate OnEnable OnDisable OnDestroy OnValidate Reset OnGUI OnApplicationQuit " +
+    "OnApplicationPause OnApplicationFocus OnBecameVisible OnBecameInvisible OnDrawGizmos OnDrawGizmosSelected " +
+    "OnTriggerEnter OnTriggerExit OnTriggerStay OnTriggerEnter2D OnTriggerExit2D OnTriggerStay2D OnCollisionEnter " +
+    "OnCollisionExit OnCollisionStay OnCollisionEnter2D OnCollisionExit2D OnCollisionStay2D OnControllerColliderHit " +
+    "OnMouseDown OnMouseUp OnMouseUpAsButton OnMouseEnter OnMouseExit OnMouseOver OnMouseDrag OnAnimatorMove OnAnimatorIK " +
+    "OnRenderObject OnWillRenderObject OnPreRender OnPostRender OnPreCull OnRenderImage OnTransformParentChanged " +
+    "OnTransformChildrenChanged OnRectTransformDimensionsChange OnParticleCollision OnParticleTrigger OnJointBreak OnJointBreak2D"
+  ).split(" "),
+);
+
+/** Whether a member with no usages is dead, as Rider greys it: private, no attribute, not called by name by Unity or an interface. */
+function deadWhenUnused(model: monaco.editor.ITextModel, kind: number, name: string, declStart: number, nameLine: number, nameColumn: number): boolean {
+  if (!GREY_WHEN_UNUSED.has(kind) || name.includes(".") || UNITY_MESSAGES.has(name)) return false;
+  const head = model.getValueInRange(new monaco.Range(declStart, 1, nameLine, nameColumn));
+  return !/\[|\b(public|protected|internal|override|abstract|virtual|extern|partial)\b/.test(head);
+}
+
+/** Removes every grey (Code Vision turned off: nothing keeps it current any more). */
+export function clearUnusedMarks(): void {
+  for (const m of monaco.editor.getModels()) pruneUnused(m, new Set());
+}
+
+// The grey on unused members, per model and symbol, kept in step with Code Vision.
+const unusedMarks = new WeakMap<monaco.editor.ITextModel, Map<string, string>>();
+
+function markUnused(model: monaco.editor.ITextModel, key: string, range: monaco.IRange | null) {
+  let marks = unusedMarks.get(model);
+  if (!marks) unusedMarks.set(model, (marks = new Map()));
+  const old = marks.get(key);
+  const [id] = model.deltaDecorations(old ? [old] : [], range ? [{ range, options: { inlineClassName: "unused-symbol", stickiness: 1 } }] : []);
+  if (id) marks.set(key, id);
+  else marks.delete(key);
+}
+
+/** Drops the grey of symbols that are gone (renamed, deleted, or Code Vision off). */
+function pruneUnused(model: monaco.editor.ITextModel, keep: Set<string>) {
+  const marks = unusedMarks.get(model);
+  if (!marks) return;
+  for (const [key, id] of marks) {
+    if (keep.has(key)) continue;
+    model.deltaDecorations([id], []);
+    marks.delete(key);
+  }
+}
+
 type DefinitionFallback = (
   model: monaco.editor.ITextModel,
   position: monaco.IPosition,
@@ -600,6 +665,74 @@ export function registerProviders(): void {
       return (res ?? []).filter((d) => "selectionRange" in d).map(toDocSymbol);
     },
   });
+
+  // Code Vision, like Rider: "3 usages | aprius +1" above types and members. Lenses are
+  // resolved only when scrolled into view, so a long file asks only for what is shown.
+  interface Vision {
+    kind: "usages" | "author";
+    symbol: number;
+    name: string;
+    key: string;
+    nameRange: monaco.IRange;
+    end: number;
+  }
+  type VisionLens = monaco.languages.CodeLens & { vision: Vision };
+  codeVisionProvider = {
+    onDidChange: codeVisionChanged.event,
+    async provideCodeLenses(model, token) {
+      const s = ready(model);
+      if (!s) return null;
+      const res = await s
+        .request<LspDocSymbol[] | null>("textDocument/documentSymbol", { textDocument: { uri: model.uri.toString() } }, token)
+        .catch(() => null);
+      if (token.isCancellationRequested) return null;
+      const lenses: VisionLens[] = [];
+      const walk = (ds: LspDocSymbol[]) => {
+        for (const d of ds) {
+          if (!("selectionRange" in d)) continue;
+          if (CODE_VISION_KINDS.has(d.kind)) {
+            const r = toMonacoRange(d.range);
+            const sel = toMonacoRange(d.selectionRange);
+            const range = new monaco.Range(r.startLineNumber, 1, r.startLineNumber, 1);
+            const vision = { symbol: d.kind, name: d.name, key: `${d.kind}:${d.name}:${sel.startLineNumber}`, nameRange: sel, end: r.endLineNumber };
+            lenses.push({ range, vision: { kind: "usages", ...vision } });
+            if (codeVisionAuthor) lenses.push({ range, vision: { kind: "author", ...vision } });
+          }
+          if (d.children) walk(d.children);
+        }
+      };
+      walk(res ?? []);
+      pruneUnused(model, new Set(lenses.map((l) => l.vision.key)));
+      return { lenses, dispose() {} };
+    },
+    async resolveCodeLens(model, lens, token) {
+      const { vision: v } = lens as VisionLens;
+      if (v.kind === "author") {
+        const a = await codeVisionAuthor?.(model, lens.range.startLineNumber, v.end).catch(() => null);
+        return { ...lens, command: { id: "", title: a?.title ?? "", tooltip: a?.tooltip } };
+      }
+      const s = ready(model);
+      const at = { lineNumber: v.nameRange.startLineNumber, column: v.nameRange.startColumn };
+      const res = s
+        ? await s
+            .request<unknown>("textDocument/references", { ...docParams(model, at), context: { includeDeclaration: false } }, token)
+            .catch(() => undefined)
+        : undefined;
+      const n = toLocations(res ?? null).length;
+      // Only a real answer from loaded projects may grey a name.
+      if (res !== undefined && s?.ready && !token.isCancellationRequested && !model.isDisposed())
+        markUnused(model, v.key, n === 0 && deadWhenUnused(model, v.symbol, v.name, lens.range.startLineNumber, at.lineNumber, at.column) ? v.nameRange : null);
+      return {
+        ...lens,
+        command: {
+          id: "haze.codeVisionUsages",
+          title: n === 0 ? "no usages" : n === 1 ? "1 usage" : `${n} usages`,
+          arguments: [model.uri.fsPath, at.lineNumber, at.column, v.name],
+        },
+      };
+    },
+  };
+  L.registerCodeLensProvider("csharp", codeVisionProvider);
 
   type HazeCompletion = monaco.languages.CompletionItem & { lsp: LspCompletionItem; path: string };
   L.registerCompletionItemProvider("csharp", {
