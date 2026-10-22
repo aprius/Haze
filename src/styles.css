@@ -865,6 +865,11 @@ kbd {
   -webkit-font-smoothing: auto;
 }
 
+/* Code in editors and diffs draws like the terminal; icons keep Monaco's own. */
+.monaco-editor .view-lines {
+  -webkit-font-smoothing: auto;
+}
+
 /* ------------------------------------------------------------ status bar */
 
 .status-bar {
