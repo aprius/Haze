@@ -688,6 +688,38 @@ fn forward_pty_event(app: &AppHandle, event: Option<PtyEvent>) {
     let _ = app.emit("pty://event", ui);
 }
 
+/// The main window, built here rather than from the config so that
+/// `window.open` gets real windows: the Commit and Diff windows render into
+/// them from the main webview (same JS context, like VS Code's auxiliary
+/// windows). The page names the window in the URL fragment, `about:blank#<label>`,
+/// so it can close it: WebKit does not act on `window.close()` here.
+fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
+    let Some(config) = app.config().app.windows.iter().find(|w| w.label == "main").cloned() else {
+        return Ok(());
+    };
+    let handle = app.handle().clone();
+    tauri::WebviewWindowBuilder::from_config(app, &config)?
+        .on_new_window(move |url, features| {
+            let label = url.fragment().filter(|f| f.starts_with("float-")).map(str::to_owned);
+            let Some(label) = label.filter(|l| handle.get_webview_window(l).is_none()) else {
+                return tauri::webview::NewWindowResponse::Deny;
+            };
+            let built = tauri::WebviewWindowBuilder::new(&handle, label, tauri::WebviewUrl::External(url))
+                .window_features(features)
+                .title("Haze")
+                .on_document_title_changed(|w, title| {
+                    let _ = w.set_title(&title);
+                })
+                .build();
+            match built {
+                Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+                Err(_) => tauri::webview::NewWindowResponse::Deny,
+            }
+        })
+        .build()?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     shell_env::load_login_path();
@@ -721,6 +753,7 @@ pub fn run() {
         .manage(Arc::new(lsp::LspServers::default()))
         .manage(dotnet::Builds::default())
         .setup(|app| {
+            create_main_window(app)?;
             if let Ok(dir) = app.path().app_config_dir() {
                 git_auth::init(git_auth::accounts_path(&dir));
             }

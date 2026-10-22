@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Haze",
         "width": 1400,
         "height": 900,

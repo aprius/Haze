@@ -505,50 +505,49 @@ function CommitWindowBody({ project }: { project: Project }) {
 
   const branch = r?.branches?.current ?? (r?.branches?.detached ? "detached HEAD" : null);
   return (
-    <div className="modal-backdrop float-backdrop">
-      <FloatWindow
-        className="commit-window"
-        width={1200}
-        height={760}
-        onClose={closeCommitWindow}
-        title={
-          <>
-            Commit Changes{branch && <span className="muted"> — {branch}</span>}
-          </>
-        }
+    <FloatWindow
+      className="commit-window"
+      width={1200}
+      height={760}
+      modal
+      onClose={closeCommitWindow}
+      title={
+        <>
+          Commit Changes{branch && <span className="muted"> — {branch}</span>}
+        </>
+      }
+    >
+      <div
+        className="commit-window-body"
+        onKeyDownCapture={(e) => {
+          // Ctrl+D anywhere but the message (where it deletes a character on macOS).
+          const mod = e.ctrlKey || e.metaKey;
+          if (!(mod && !e.altKey && !e.shiftKey && e.code === "KeyD") || (e.target as HTMLElement).tagName === "TEXTAREA") return;
+          if (!change || !r?.root) return;
+          e.preventDefault();
+          e.stopPropagation();
+          showChangeDiff(project, r.root, change);
+        }}
       >
-        <div
-          className="commit-window-body"
-          onKeyDownCapture={(e) => {
-            // Ctrl+D anywhere but the message (where it deletes a character on macOS).
-            const mod = e.ctrlKey || e.metaKey;
-            if (!(mod && !e.altKey && !e.shiftKey && e.code === "KeyD") || e.target instanceof HTMLTextAreaElement) return;
-            if (!change || !r?.root) return;
-            e.preventDefault();
-            e.stopPropagation();
-            showChangeDiff(project, r.root, change);
-          }}
-        >
-          <div className="commit-window-changes" style={{ width: listWidth }}>
-            <CommitPanel project={project} selected={selected} setSelected={setSelected} />
-          </div>
-          <Splitter vertical value={listWidth} min={260} max={900} onChange={setListWidth} />
-          <div className="commit-window-diff">
-            {r?.root && change && change.status !== "conflict" ? (
-              <DiffView spec={changeDiffSpec(r.root, change)} />
-            ) : change?.status === "conflict" ? (
-              <div className="se-empty">
-                {basename(change.rel)} has merge conflicts.{" "}
-                <button className="btn small" onClick={() => showChangeDiff(project, r!.root!, change)}>
-                  Merge…
-                </button>
-              </div>
-            ) : (
-              <div className="se-empty">Select a file to see its changes.</div>
-            )}
-          </div>
+        <div className="commit-window-changes" style={{ width: listWidth }}>
+          <CommitPanel project={project} selected={selected} setSelected={setSelected} />
         </div>
-      </FloatWindow>
-    </div>
+        <Splitter vertical value={listWidth} min={260} max={900} onChange={setListWidth} />
+        <div className="commit-window-diff">
+          {r?.root && change && change.status !== "conflict" ? (
+            <DiffView spec={changeDiffSpec(r.root, change)} />
+          ) : change?.status === "conflict" ? (
+            <div className="se-empty">
+              {basename(change.rel)} has merge conflicts.{" "}
+              <button className="btn small" onClick={() => showChangeDiff(project, r!.root!, change)}>
+                Merge…
+              </button>
+            </div>
+          ) : (
+            <div className="se-empty">Select a file to see its changes.</div>
+          )}
+        </div>
+      </div>
+    </FloatWindow>
   );
 }

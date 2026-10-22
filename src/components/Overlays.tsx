@@ -2,6 +2,7 @@
 // module can open them imperatively.
 import { Check, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { matches } from "../lib/keymap";
 
@@ -16,10 +17,12 @@ export interface MenuItem {
   action?: () => void;
 }
 
-const useMenu = create<{ x: number; y: number; items: MenuItem[] | null }>(() => ({ x: 0, y: 0, items: null }));
+const useMenu = create<{ x: number; y: number; items: MenuItem[] | null; doc: Document }>(() => ({ x: 0, y: 0, items: null, doc: document }));
 
-export function openMenu(e: { clientX: number; clientY: number }, items: MenuItem[]): void {
-  useMenu.setState({ x: e.clientX, y: e.clientY, items });
+/** Opens at the event's position, in the window it happened in. */
+export function openMenu(e: { clientX: number; clientY: number; target?: EventTarget | null }, items: MenuItem[]): void {
+  const doc = (e.target as Node | null | undefined)?.ownerDocument ?? useHost.getState().doc;
+  useMenu.setState({ x: e.clientX, y: e.clientY, items, doc });
 }
 
 function closeMenu() {
@@ -27,21 +30,23 @@ function closeMenu() {
 }
 
 export function ContextMenu() {
-  const { x, y, items } = useMenu();
+  const { x, y, items, doc } = useMenu();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
+  const win = doc.defaultView ?? window;
 
   useLayoutEffect(() => {
     if (!items || !ref.current) return;
     const r = ref.current.getBoundingClientRect();
     setPos({
-      x: Math.min(x, window.innerWidth - r.width - 4),
-      y: Math.min(y, window.innerHeight - r.height - 4),
+      x: Math.min(x, win.innerWidth - r.width - 4),
+      y: Math.min(y, win.innerHeight - r.height - 4),
     });
-  }, [items, x, y]);
+  }, [items, x, y, win]);
 
   useEffect(() => {
     if (!items) return;
+    const window = win;
     const onDown = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) closeMenu();
     };
@@ -54,10 +59,11 @@ export function ContextMenu() {
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("blur", closeMenu);
     };
-  }, [items]);
+  }, [items, win]);
 
   if (!items) return null;
-  return (
+  return inDoc(
+    doc,
     <div ref={ref} className="context-menu" style={{ left: pos.x, top: pos.y }} onContextMenu={(e) => e.preventDefault()}>
       {items.map((it, i) =>
         it.separator ? (
@@ -80,7 +86,7 @@ export function ContextMenu() {
           </button>
         ),
       )}
-    </div>
+    </div>,
   );
 }
 
@@ -99,12 +105,14 @@ interface DialogRequest {
   input?: { value: string; selectStem?: boolean; validate?: (v: string) => string | null };
   buttons: DialogButton[];
   resolve: (r: { button: string | null; value: string }) => void;
+  /** Shown in the window that asked. */
+  doc: Document;
 }
 
 const useDialog = create<{ current: DialogRequest | null }>(() => ({ current: null }));
 
-function show(req: Omit<DialogRequest, "resolve">): Promise<{ button: string | null; value: string }> {
-  return new Promise((resolve) => useDialog.setState({ current: { ...req, resolve } }));
+function show(req: Omit<DialogRequest, "resolve" | "doc">): Promise<{ button: string | null; value: string }> {
+  return new Promise((resolve) => useDialog.setState({ current: { ...req, resolve, doc: useHost.getState().doc } }));
 }
 
 /** Text input dialog; resolves to `null` when cancelled. */
@@ -170,7 +178,8 @@ export function Dialogs() {
   const primary =
     req.buttons.find((b) => b.primary)?.value ?? (dangers.length === 1 ? dangers[0].value : req.buttons[req.buttons.length - 1]?.value);
 
-  return (
+  return inDoc(
+    req.doc,
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && finish(null)}>
       <div
         className="modal"
@@ -178,7 +187,7 @@ export function Dialogs() {
         onKeyDown={(e) => {
           if (e.key === "Escape") finish(null);
           // A focused button (tabbed to "Cancel") handles Enter itself.
-          if (e.key === "Enter" && !e.nativeEvent.isComposing && !(e.target instanceof HTMLButtonElement)) finish(primary ?? null);
+          if (e.key === "Enter" && !e.nativeEvent.isComposing && (e.target as HTMLElement).tagName !== "BUTTON") finish(primary ?? null);
           e.stopPropagation();
         }}
         tabIndex={-1}
@@ -213,18 +222,186 @@ export function Dialogs() {
           ))}
         </div>
       </div>
-    </div>
+    </div>,
   );
 }
 
 // ------------------------------------------------------------------ floating windows
 
-/** A window over the app, moved by its title bar and resized from its corner, like Rider's commit and diff dialogs. */
+/**
+ * The document popups (menus, dialogs, toasts) show in: the window last
+ * focused, the main one or a floating window.
+ */
+const useHost = create<{ doc: Document }>(() => ({ doc: document }));
+window.addEventListener("focus", () => useHost.setState({ doc: document }));
+
+/** Renders `node` into `doc` when that is another window's document. */
+function inDoc(doc: Document, node: ReactNode): ReactNode {
+  return doc === document || !doc.defaultView || doc.defaultView.closed ? node : createPortal(node, doc.body);
+}
+
+let floatSeq = 0;
+const isTauri = "__TAURI_INTERNALS__" in window;
+
+/**
+ * Keeps `win`'s head in step with ours: stylesheets (Vite and Monaco add and
+ * change them as they go) and the theme and zoom set on `<html>`.
+ */
+function mirrorStyles(win: Window): () => void {
+  const doc = win.document;
+  const clones = new Map<Node, HTMLElement>();
+  const sheetText = (el: HTMLStyleElement) => {
+    // Rules added with insertRule are not in the element's text.
+    try {
+      const rules = el.sheet?.cssRules;
+      return rules ? Array.from(rules, (r) => r.cssText).join("\n") : el.textContent ?? "";
+    } catch {
+      return el.textContent ?? "";
+    }
+  };
+  const sync = () => {
+    const live = new Set<Node>();
+    for (const el of document.head.querySelectorAll<HTMLElement>("style, link[rel=stylesheet]")) {
+      live.add(el);
+      let c = clones.get(el);
+      if (!c) {
+        c = el instanceof HTMLStyleElement ? doc.createElement("style") : (el.cloneNode(true) as HTMLElement);
+        doc.head.appendChild(c);
+        clones.set(el, c);
+      }
+      if (el instanceof HTMLStyleElement) {
+        const text = sheetText(el);
+        if (c.textContent !== text) c.textContent = text;
+      }
+    }
+    for (const [el, c] of clones) {
+      if (!live.has(el)) {
+        c.remove();
+        clones.delete(el);
+      }
+    }
+    const from = document.documentElement;
+    const to = doc.documentElement;
+    for (const a of Array.from(to.attributes)) if (!from.hasAttribute(a.name)) to.removeAttribute(a.name);
+    for (const a of Array.from(from.attributes)) if (to.getAttribute(a.name) !== a.value) to.setAttribute(a.name, a.value);
+    doc.body.className = document.body.className;
+  };
+  sync();
+  let queued = false;
+  const later = () => {
+    if (queued) return;
+    queued = true;
+    // Not requestAnimationFrame: it stops while Haze's window is minimized.
+    setTimeout(() => {
+      queued = false;
+      if (!win.closed) sync();
+    }, 16);
+  };
+  const mo = new MutationObserver(later);
+  mo.observe(document.head, { childList: true, subtree: true, characterData: true });
+  mo.observe(document.documentElement, { attributes: true });
+  mo.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  const timer = setInterval(later, 1000);
+  return () => {
+    mo.disconnect();
+    clearInterval(timer);
+  };
+}
+
+/**
+ * Opens a real window that our React tree renders into (same JS context, so
+ * stores and Monaco models are shared). Null outside Tauri or when refused.
+ */
+function useExternalWindow(width: number, height: number, onClose: () => void): { win: Window; root: HTMLElement } | "opening" | null {
+  const [host, setHost] = useState<{ win: Window; root: HTMLElement } | "opening" | null>(isTauri ? "opening" : null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useLayoutEffect(() => {
+    if (!isTauri) return;
+    const label = `float-${++floatSeq}-${Date.now().toString(36)}`;
+    const w = Math.min(width, screen.availWidth - 40);
+    const h = Math.min(height, screen.availHeight - 40);
+    const left = Math.round(window.screenX + Math.max(0, (window.outerWidth - w) / 2));
+    const top = Math.round(window.screenY + Math.max(40, (window.outerHeight - h) / 3));
+    const win = window.open(`about:blank#${label}`, label, `width=${w},height=${h},left=${left},top=${top}`);
+    if (!win) return setHost(null);
+    let doc = win.document;
+    if (!doc.body) {
+      doc.open();
+      doc.write('<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>');
+      doc.close();
+    }
+    const root = doc.createElement("div");
+    root.className = "float-external";
+    doc.body.appendChild(root);
+    let unmirror = mirrorStyles(win);
+    // WebKit may still load the window's URL into it, replacing the document:
+    // move our content (and its styles) into the new one.
+    const reattach = () => {
+      if (win.closed || win.document === doc || !win.document.body) return;
+      doc = win.document;
+      unmirror();
+      doc.body.appendChild(doc.adoptNode(root));
+      unmirror = mirrorStyles(win);
+      win.addEventListener("keydown", forward, true);
+      win.addEventListener("focus", () => useHost.setState({ doc }));
+      useHost.setState({ doc });
+    };
+    let closing = false;
+    const closed = () => {
+      if (closing) return;
+      closing = true;
+      closeRef.current();
+    };
+    // Shortcuts the app handles on the main window (Save All) still work here.
+    const forward = (e: KeyboardEvent) => {
+      if (matches(e, "saveAll")) {
+        e.preventDefault();
+        window.dispatchEvent(new KeyboardEvent("keydown", e));
+      }
+    };
+    win.addEventListener("keydown", forward, true);
+    win.addEventListener("focus", () => useHost.setState({ doc }));
+    win.addEventListener("load", () => setTimeout(reattach));
+    const poll = setInterval(() => (win.closed ? closed() : reattach()), 400);
+    let unlisten: (() => void) | null = null;
+    void import("@tauri-apps/api/webviewWindow").then(async ({ WebviewWindow }) => {
+      const w = await WebviewWindow.getByLabel(label);
+      if (!w) return;
+      if (closing) return void w.destroy().catch(() => {});
+      unlisten = await w.once("tauri://destroyed", closed);
+    });
+    useHost.setState({ doc });
+    setHost({ win, root });
+    return () => {
+      closing = true;
+      clearInterval(poll);
+      unmirror();
+      unlisten?.();
+      if (useHost.getState().doc === doc) useHost.setState({ doc: document });
+      // WebKit ignores window.close() here; Tauri closes it by label.
+      void import("@tauri-apps/api/webviewWindow").then(async ({ WebviewWindow }) => {
+        const w = await WebviewWindow.getByLabel(label);
+        await w?.destroy();
+      }).catch(() => win.close());
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return host;
+}
+
+/**
+ * Rider's commit and diff dialogs: a window of its own that can leave Haze's
+ * window (another screen, behind the editor). Outside Tauri, or if the window
+ * cannot be opened, a panel over the app moved by its title bar instead.
+ */
 export function FloatWindow({
   title,
   className,
   width,
   height,
+  modal = false,
   onClose,
   children,
 }: {
@@ -232,15 +409,28 @@ export function FloatWindow({
   className?: string;
   width: number;
   height: number;
+  /** In-app fallback only: dims and blocks the app behind. */
+  modal?: boolean;
   onClose: () => void;
   children: ReactNode;
 }) {
+  const host = useExternalWindow(width, height, onClose);
+  const external = host === "opening" ? null : host;
   const [size] = useState(() => ({ w: Math.min(width, window.innerWidth - 32), h: Math.min(height, window.innerHeight - 32) }));
   const [pos, setPos] = useState(() => ({ x: (window.innerWidth - size.w) / 2, y: Math.max(16, (window.innerHeight - size.h) / 3) }));
   const ref = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLSpanElement>(null);
 
   // Take focus so Escape closes it; the content may move focus further in.
-  useEffect(() => ref.current?.focus(), []);
+  useEffect(() => {
+    if (external) external.win.focus();
+    ref.current?.focus();
+  }, [external]);
+
+  // The native title bar shows the title.
+  useEffect(() => {
+    if (external && titleRef.current) external.win.document.title = titleRef.current.textContent ?? "";
+  });
 
   const drag = (e: React.PointerEvent) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
@@ -260,22 +450,38 @@ export function FloatWindow({
     window.addEventListener("pointerup", up);
   };
 
-  return (
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    // Monaco handles its own Escape (closing find, suggestions) first.
+    if (e.key === "Escape" && !e.defaultPrevented) onClose();
+    // Keep Ctrl+W, Ctrl+Tab… away from the editor tabs behind; saving still works.
+    if (!matches(e.nativeEvent, "saveAll")) e.stopPropagation();
+  };
+
+  if (host === "opening") return null;
+  if (external) {
+    return createPortal(
+      <div ref={ref} className={"float-window external" + (className ? " " + className : "")} tabIndex={-1} onKeyDown={onKeyDown}>
+        <span ref={titleRef} hidden>
+          {title}
+        </span>
+        <div className="float-body">{children}</div>
+      </div>,
+      external.root,
+    );
+  }
+  const panel = (
     <div
       ref={ref}
       className={"float-window" + (className ? " " + className : "")}
       role="dialog"
       tabIndex={-1}
       style={{ left: pos.x, top: pos.y, width: size.w, height: size.h }}
-      onKeyDown={(e) => {
-        // Monaco handles its own Escape (closing find, suggestions) first.
-        if (e.key === "Escape" && !e.defaultPrevented) onClose();
-        // Keep Ctrl+W, Ctrl+Tab… away from the editor tabs behind; saving still works.
-        if (!matches(e.nativeEvent, "saveAll")) e.stopPropagation();
-      }}
+      onKeyDown={onKeyDown}
     >
       <div className="float-title" onPointerDown={drag} onDoubleClick={() => setPos({ x: (window.innerWidth - size.w) / 2, y: 16 })}>
-        <span className="float-title-text">{title}</span>
+        <span ref={titleRef} className="float-title-text">
+          {title}
+        </span>
         <button className="icon-btn" title="Close (Esc)" onClick={onClose}>
           <X size={14} />
         </button>
@@ -283,6 +489,7 @@ export function FloatWindow({
       <div className="float-body">{children}</div>
     </div>
   );
+  return modal ? <div className="modal-backdrop float-backdrop">{panel}</div> : panel;
 }
 
 // ------------------------------------------------------------------ toasts
@@ -308,7 +515,9 @@ export function toast(text: string, kind: "error" | "info" = "info", action?: To
 
 export function Toasts() {
   const items = useToasts((s) => s.items);
-  return (
+  const doc = useHost((s) => s.doc);
+  return inDoc(
+    doc,
     <div className="toasts">
       {items.map((t) => (
         <div key={t.id} className={"toast " + t.kind}>
@@ -326,6 +535,6 @@ export function Toasts() {
           )}
         </div>
       ))}
-    </div>
+    </div>,
   );
 }

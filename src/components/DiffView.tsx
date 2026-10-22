@@ -84,6 +84,8 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     const rightDecos = right.createDecorationsCollection();
     const gutterEl = gutter.current;
     const gapEl = gap.current;
+    // The window this diff is in: Haze's or a floating one.
+    const win = gapEl?.ownerDocument.defaultView ?? window;
 
     // Pixel position of a (fractional) line boundary, relative to the viewport.
     const boundaryY = (ed: monaco.editor.ICodeEditor, b: number) => {
@@ -176,7 +178,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       gapEl.innerHTML = `<svg width="${width}" height="${height}">${paths}</svg>`;
     };
     const redraw = () => {
-      if (!frame) frame = requestAnimationFrame(draw);
+      if (!frame) frame = win.requestAnimationFrame(draw);
     };
 
     // Scroll the other side so the line at mid-viewport stays matched.
@@ -251,15 +253,15 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     // IntelliJ tracks the Ctrl key itself (also on macOS), not Cmd.
     let ctrl = false;
     const modifiers = (e: KeyboardEvent | FocusEvent) => {
-      const now = e instanceof KeyboardEvent && e.ctrlKey;
+      const now = "ctrlKey" in e && e.ctrlKey;
       if (now !== ctrl) {
         ctrl = now;
         redraw();
       }
     };
-    window.addEventListener("keydown", modifiers);
-    window.addEventListener("keyup", modifiers);
-    window.addEventListener("blur", modifiers);
+    win.addEventListener("keydown", modifiers);
+    win.addEventListener("keyup", modifiers);
+    win.addEventListener("blur", modifiers);
 
     const subs = [
       left.onDidScrollChange(follow(left, right, true)),
@@ -304,11 +306,11 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     })();
     return () => {
       cancelled = true;
-      cancelAnimationFrame(frame);
+      win.cancelAnimationFrame(frame);
       gutterEl.removeEventListener("wheel", wheel);
-      window.removeEventListener("keydown", modifiers);
-      window.removeEventListener("keyup", modifiers);
-      window.removeEventListener("blur", modifiers);
+      win.removeEventListener("keydown", modifiers);
+      win.removeEventListener("keyup", modifiers);
+      win.removeEventListener("blur", modifiers);
       gapEl.removeEventListener("wheel", wheel);
       subs.forEach((s) => s.dispose());
       differ.dispose();
@@ -393,9 +395,9 @@ export function DiffWindow() {
   const w = useUi((s) => s.diffWindow);
   if (!w) return null;
   return (
-    <FloatWindow key={diffPath(w.spec)} className="diff-window" title={diffTitle(w.spec)} width={1100} height={700} onClose={closeDiffWindow}>
+    <FloatWindow className="diff-window" title={diffTitle(w.spec)} width={1100} height={700} onClose={closeDiffWindow}>
       <div className="float-diff">
-        <DiffView spec={w.spec} />
+        <DiffView key={diffPath(w.spec)} spec={w.spec} />
       </div>
     </FloatWindow>
   );
