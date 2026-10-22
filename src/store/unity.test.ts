@@ -36,7 +36,7 @@ const { useDotnet } = await import("./dotnet");
 const { buildProject, runUnityTests, startUnityLink, stopUnityLink, unityFilesChanged, useUnity } = await import("./unity");
 
 const ROOT = "/u/Game";
-const emit = (event: UnityEvent["event"]) => ipc.emit({ root: ROOT, event });
+const emit = (event: UnityEvent["events"][number]) => ipc.emit({ root: ROOT, events: [event] });
 const change = (files: string[]): FsChange => ({ root: ROOT, dirs: [], files, created: [], removed: [], overflow: false, lost: false, git: false });
 
 beforeEach(async () => {

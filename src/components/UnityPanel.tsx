@@ -40,6 +40,9 @@ interface Row {
   count: number;
 }
 
+/** Height of a Console row (.unity-row), for drawing only the rows in view. */
+const ROW = 22;
+
 /** A stack trace whose source frames open the file. */
 function StackTrace({ project, text }: { project: Project; text: string }) {
   const open = (target: { path: string; line: number }) => useWorkspace.getState().openFile(project.id, target.path, { line: target.line, column: 1 });
@@ -71,6 +74,8 @@ export function UnityPanel({ project }: { project: Project }) {
   const [selected, setSelected] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const atEnd = useRef(true);
+  // Only the rows in view are drawn: the Console keeps thousands of messages.
+  const [view, setView] = useState({ top: 0, height: 400 });
   const logs = unity?.logs ?? [];
 
   const counts = useMemo(() => {
@@ -97,6 +102,7 @@ export function UnityPanel({ project }: { project: Project }) {
   useEffect(() => {
     const el = listRef.current;
     if (el && atEnd.current) el.scrollTop = el.scrollHeight;
+    if (el) setView({ top: el.scrollTop, height: el.clientHeight });
   }, [rows.length]);
 
   const current = logs.find((l) => l.id === selected) ?? null;
@@ -147,22 +153,26 @@ export function UnityPanel({ project }: { project: Project }) {
           onScroll={(e) => {
             const el = e.currentTarget;
             atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+            setView({ top: el.scrollTop, height: el.clientHeight });
           }}
         >
           {rows.length === 0 && <div className="se-empty">{unity?.connected ? "No messages" : "Not connected to Unity"}</div>}
-          {rows.map(({ log, count }) => (
-            <div
-              key={log.id}
-              className={"problem" + (log.id === selected ? " selected" : "")}
-              onClick={() => setSelected(log.id)}
-              onDoubleClick={() => open(firstFrame(log))}
-              title={log.message}
-            >
-              <KindIcon kind={kindOf(log.type)} />
-              <span className="problem-msg">{log.message.split("\n")[0]}</span>
-              {count > 1 && <span className="unity-collapsed">{count}</span>}
-            </div>
-          ))}
+          <div style={{ height: rows.length * ROW, position: "relative" }}>
+            {rows.slice(Math.max(0, Math.floor(view.top / ROW) - 10), Math.ceil((view.top + view.height) / ROW) + 10).map(({ log, count }, i) => (
+              <div
+                key={log.id}
+                className={"problem unity-row" + (log.id === selected ? " selected" : "")}
+                style={{ top: (Math.max(0, Math.floor(view.top / ROW) - 10) + i) * ROW }}
+                onClick={() => setSelected(log.id)}
+                onDoubleClick={() => open(firstFrame(log))}
+                title={log.message}
+              >
+                <KindIcon kind={kindOf(log.type)} />
+                <span className="problem-msg">{log.message.split("\n")[0]}</span>
+                {count > 1 && <span className="unity-collapsed">{count}</span>}
+              </div>
+            ))}
+          </div>
         </div>
         <pre className="build-output unity-details">
           {current ? (

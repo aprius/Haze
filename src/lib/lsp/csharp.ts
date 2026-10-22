@@ -30,7 +30,8 @@ import { SEMANTIC_LEGEND, semanticTranslator, type LspSemanticLegend } from "./s
 import { useUnity, type TestResult } from "../../store/unity";
 import { unityMessage } from "../unity/messages";
 import { assetUsagesFor, onUnityCodeChanged, unityBaseFor, unityGenerateActive, unityRootFor } from "../unity/scripts";
-import { fixtureName, isTestHead, namespaceAt, testPattern, typeName } from "../unity/tests";
+import { fixtureName, isTestHead, testPattern, typeName } from "../unity/tests";
+import { bumpVisionGeneration, setVisionRefresh, visionAnswer, type VisionAnswer } from "./visionCache";
 
 // What Roslyn reloads on: sources, project files and restore output. Other
 // JSON (Unity's Library writes plenty) would only be parsed and dropped.
@@ -187,6 +188,8 @@ export class CsharpSession {
     this.ready = true;
     setCsharpStatus(this.projectId, { state: "ready", kind: this.kind, message });
     this.readyWaiters.splice(0).forEach((r) => r());
+    // Counts from before the projects loaded were partial.
+    bumpVisionGeneration();
     semanticTokensChanged.fire();
     if (codeVisionProvider) codeVisionChanged.fire(codeVisionProvider);
   }
@@ -351,6 +354,8 @@ export async function restartCsharp(projectId: string, root: string): Promise<vo
 }
 
 export function notifyFileChanges(change: FsChange): void {
+  // Usages and authors elsewhere may have changed (agents' edits, a checkout, a commit).
+  if (change.git || change.overflow || [...change.files, ...change.created, ...change.removed].some((f) => WATCHED.test(f))) bumpVisionGeneration();
   for (const s of sessions.values()) {
     if (!isWithin(change.root, s.root) && !isWithin(s.root, change.root)) continue;
     // Lost events leave no list of what changed, so Roslyn cannot catch up:
@@ -598,7 +603,13 @@ export function registerProviders(): void {
   registered = true;
   const L = monaco.languages;
 
+  const watchEdits = (m: monaco.editor.ITextModel) =>
+    m.onDidChangeContent(() => {
+      if (m.getLanguageId() === "csharp") bumpVisionGeneration();
+    });
+  monaco.editor.getModels().forEach(watchEdits);
   monaco.editor.onDidCreateModel((m) => {
+    watchEdits(m);
     // Models get their language right after creation.
     setTimeout(() => sessionForPath(m.uri.fsPath)?.syncModel(m), 0);
   });
@@ -689,13 +700,34 @@ export function registerProviders(): void {
     symbol: number;
     name: string;
     key: string;
+    /** Survives edits that move it (no line): "Game.Player/6:Jump#0", for the answer cache. */
+    stable: string;
     nameRange: monaco.IRange;
     end: number;
   }
   type VisionLens = monaco.languages.CodeLens & { vision: Vision };
   // Unity's answers (base classes, asset usages, test results) arrive later than Roslyn's.
   const refreshVision = () => codeVisionProvider && codeVisionChanged.fire(codeVisionProvider);
+  setVisionRefresh(refreshVision);
   onUnityCodeChanged(refreshVision);
+
+  // The symbols of a model's current text: asked again only after an edit (Code Vision redraws often).
+  const symbolCache = new WeakMap<monaco.editor.ITextModel, { version: number; symbols: Promise<LspDocSymbol[] | null> }>();
+  const documentSymbols = (s: CsharpSession, model: monaco.editor.ITextModel): Promise<LspDocSymbol[] | null> => {
+    const version = model.getVersionId();
+    const hit = symbolCache.get(model);
+    if (hit?.version === version) return hit.symbols;
+    const symbols = s
+      .request<LspDocSymbol[] | null>("textDocument/documentSymbol", { textDocument: { uri: model.uri.toString() } })
+      .catch(() => null)
+      .then((res) => {
+        // A failed answer is not kept.
+        if (!res && symbolCache.get(model)?.symbols === symbols) symbolCache.delete(model);
+        return res;
+      });
+    symbolCache.set(model, { version, symbols });
+    return symbols;
+  };
   useUnity.subscribe((s, prev) => {
     if (Object.keys(s.projects).some((id) => s.projects[id]?.tests.results !== prev.projects[id]?.tests.results)) refreshVision();
   });
@@ -704,12 +736,11 @@ export function registerProviders(): void {
     async provideCodeLenses(model, token) {
       const s = ready(model);
       if (!s) return null;
-      const res = await s
-        .request<LspDocSymbol[] | null>("textDocument/documentSymbol", { textDocument: { uri: model.uri.toString() } }, token)
-        .catch(() => null);
-      if (token.isCancellationRequested) return null;
+      const res = await documentSymbols(s, model);
+      if (token.isCancellationRequested || model.isDisposed()) return null;
       const lenses: VisionLens[] = [];
       const unity = unityContext(model, res ?? []);
+      const seen = new Map<string, number>();
       const walk = (ds: LspDocSymbol[], parents: LspDocSymbol[]) => {
         for (const d of ds) {
           if (!("selectionRange" in d)) continue;
@@ -718,7 +749,11 @@ export function registerProviders(): void {
             const sel = toMonacoRange(d.selectionRange);
             const line = declarationLine(model, r, sel);
             const range = new monaco.Range(line, 1, line, 1);
-            const vision = { symbol: d.kind, name: d.name, key: `${d.kind}:${d.name}:${sel.startLineNumber}`, nameRange: sel, end: r.endLineNumber };
+            // Overloads share a name: told apart by their order in the file.
+            const base = `${parents.map((p) => p.name).join(".")}/${d.kind}:${d.name}`;
+            const nth = seen.get(base) ?? 0;
+            seen.set(base, nth + 1);
+            const vision = { symbol: d.kind, name: d.name, key: `${d.kind}:${d.name}:${sel.startLineNumber}`, stable: `${base}#${nth}`, nameRange: sel, end: r.endLineNumber };
             const extra = unity ? unityLenses(model, unity, d, parents, range, sel) : null;
             // An event function is called by Unity, not by code: no "no usages", never greyed.
             if (extra?.eventFunction) lenses.push({ range, vision: { ...vision, kind: "unity" }, command: extra.eventFunction });
@@ -733,32 +768,37 @@ export function registerProviders(): void {
       pruneUnused(model, new Set(lenses.map((l) => l.vision.key)));
       return { lenses, dispose() {} };
     },
-    async resolveCodeLens(model, lens, token) {
+    // Answered from visionCache.ts at once when possible; Roslyn and git are asked in the background.
+    async resolveCodeLens(model, lens) {
       const { vision: v } = lens as VisionLens;
       if (v.kind === "unity") return lens;
+      const key = `${model.uri.fsPath}\n${v.stable}\n${v.kind}`;
+      const empty = { ...lens, command: { id: "", title: "" } };
       if (v.kind === "author") {
-        const a = await codeVisionAuthor?.(model, lens.range.startLineNumber, v.end).catch(() => null);
-        return { ...lens, command: { id: "", title: a?.title ?? "", tooltip: a?.tooltip } };
+        const from = lens.range.startLineNumber;
+        const a = await visionAnswer(key, async () => {
+          // No blame (a new file) is an answer too: empty, not asked again until something changes.
+          const r = await codeVisionAuthor?.(model, from, v.end);
+          return { title: r?.title ?? "", tooltip: r?.tooltip, real: true };
+        });
+        return a ? { ...lens, command: { id: "", title: a.title, tooltip: a.tooltip } } : empty;
       }
       const s = ready(model);
+      if (!s) return empty;
       const at = { lineNumber: v.nameRange.startLineNumber, column: v.nameRange.startColumn };
-      const res = s
-        ? await s
-            .request<unknown>("textDocument/references", { ...docParams(model, at), context: { includeDeclaration: false } }, token)
-            .catch(() => undefined)
-        : undefined;
-      const n = toLocations(res ?? null).length;
-      // Only a real answer from loaded projects may grey a name.
-      if (res !== undefined && s?.ready && !token.isCancellationRequested && !model.isDisposed())
-        markUnused(model, v.key, n === 0 && deadWhenUnused(model, v.symbol, v.name, lens.range.startLineNumber, at.lineNumber, at.column) ? v.nameRange : null);
-      return {
-        ...lens,
-        command: {
-          id: "haze.codeVisionUsages",
-          title: n === 0 ? "no usages" : n === 1 ? "1 usage" : `${n} usages`,
-          arguments: [model.uri.fsPath, at.lineNumber, at.column, v.name],
-        },
+      const count = async (): Promise<VisionAnswer | null> => {
+        const loaded = s.ready;
+        const res = await s.request<unknown>("textDocument/references", { ...docParams(model, at), context: { includeDeclaration: false } });
+        const n = toLocations(res ?? null).length;
+        return { title: n === 0 ? "no usages" : n === 1 ? "1 usage" : `${n} usages`, n, real: loaded };
       };
+      // Until the projects load, Roslyn counts too few: a count from before (this session or the last) stays.
+      const a = await visionAnswer(key, count, s.ready);
+      if (!a) return empty;
+      // Only a real answer from loaded projects may grey a name.
+      if (a.real && !model.isDisposed())
+        markUnused(model, v.key, a.n === 0 && deadWhenUnused(model, v.symbol, v.name, lens.range.startLineNumber, at.lineNumber, at.column) ? v.nameRange : null);
+      return { ...lens, command: { id: "haze.codeVisionUsages", title: a.title, arguments: [model.uri.fsPath, at.lineNumber, at.column, v.name] } };
     },
   };
   L.registerCodeLensProvider("csharp", codeVisionProvider);
@@ -767,7 +807,8 @@ export function registerProviders(): void {
     root: string;
     projectId: string | null;
     path: string;
-    text: string;
+    /** Namespace declarations by line, first to last. */
+    namespaces: { line: number; name: string }[];
     /** Asset usages of this script and its classes' methods; null while the index loads. */
     assets: ReturnType<typeof assetUsagesFor>;
   }
@@ -780,7 +821,10 @@ export function registerProviders(): void {
     const collect = (ds: LspDocSymbol[]) => ds.forEach((d) => (d.kind === 5 && classes.push(typeName(d.name)), d.children && collect(d.children)));
     collect(symbols);
     const projectId = Object.entries(useUnity.getState().projects).find(([, u]) => u.root === root)?.[0] ?? null;
-    return { root, projectId, path, text: model.getValue(), assets: classes.length ? assetUsagesFor(root, path, classes) : null };
+    const namespaces = model
+      .findMatches("^\\s*namespace\\s+([\\w.]+)", false, true, true, null, true)
+      .map((m) => ({ line: m.range.startLineNumber, name: m.matches?.[1] ?? "" }));
+    return { root, projectId, path, namespaces, assets: classes.length ? assetUsagesFor(root, path, classes) : null };
   }
 
   const plural = (n: number, one: string) => (n === 1 ? `1 ${one}` : `${n} ${one}s`);
@@ -814,7 +858,8 @@ export function registerProviders(): void {
     const more: monaco.languages.Command[] = [];
     const name = d.name.replace(/\(.*$/, "");
     const classes = [...parents.filter((p) => p.kind === 5).map((p) => p.name), ...(d.kind === 5 ? [d.name] : [])];
-    const fixture = classes.length ? fixtureName(namespaceAt(u.text, model.getOffsetAt({ lineNumber: sel.startLineNumber, column: 1 })), classes) : "";
+    const namespace = u.namespaces.filter((n) => n.line <= sel.startLineNumber).pop()?.name ?? "";
+    const fixture = classes.length ? fixtureName(namespace, classes) : "";
     const runTests = (pattern: string, label: string) => {
       more.push({ id: "haze.unityRunTests", title: "▶ Run", tooltip: `Run ${label} in Unity`, arguments: [u.path, pattern, label] });
       const status = testsStatus(u.projectId, pattern);

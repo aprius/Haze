@@ -37,7 +37,9 @@ namespace Haze.Ide.Editor
         const string k_PortKey = "Haze.Link.Port";
         const string k_TokenKey = "Haze.Link.Token";
         const string k_CompileKey = "Haze.Link.LastCompile";
-        const int k_MaxPending = 500;
+        /// <summary>Messages kept while Haze is not connected (batches of up to k_MaxBatch Console messages).</summary>
+        const int k_MaxPending = 200;
+        const int k_MaxBatch = 100;
 
         static TcpListener s_Listener;
         static Client s_Client;
@@ -198,7 +200,17 @@ namespace Haze.Ide.Editor
         static void Update()
         {
             while (s_Commands.TryDequeue(out var line)) Handle(line);
-            while (s_Logs.TryDequeue(out var log)) SendLog(log.message, log.stack, log.type);
+            if (!s_Logs.IsEmpty)
+            {
+                // One write for the frame's messages: a Debug.Log per object per frame adds up.
+                var batch = new StringBuilder();
+                for (var n = 0; n < k_MaxBatch && s_Logs.TryDequeue(out var log); n++)
+                {
+                    if (batch.Length > 0) batch.Append('\n');
+                    batch.Append(LogJson(log.message, log.stack, log.type));
+                }
+                Post(batch.ToString());
+            }
             if (s_ReportAt > 0 && EditorApplication.timeSinceStartup > s_ReportAt)
             {
                 s_ReportAt = 0;
@@ -343,18 +355,18 @@ namespace Haze.Ide.Editor
         // "Foo.Update () (at Packages/com.x/Runtime/Foo.cs:12)": package paths are virtual.
         static readonly Regex k_PackageFrame = new Regex(@"\(at (Packages/[^:)]+):(\d+)\)");
 
-        static void SendLog(string message, string stack, LogType type)
+        static string LogJson(string message, string stack, LogType type)
         {
             if (!string.IsNullOrEmpty(stack) && stack.Contains("(at Packages/"))
                 stack = k_PackageFrame.Replace(stack, m => $"(at {ProjectGeneration.Resolve(m.Groups[1].Value)}:{m.Groups[2].Value})");
-            Post("{\"t\":\"log\"," +
-                 $"\"type\":{Json.Str(LogTypeName(type))}," +
-                 $"\"message\":{Json.Str(message)}," +
-                 $"\"stack\":{Json.Str(stack)}" +
-                 "}");
+            return "{\"t\":\"log\"," +
+                   $"\"type\":{Json.Str(LogTypeName(type))}," +
+                   $"\"message\":{Json.Str(message)}," +
+                   $"\"stack\":{Json.Str(stack)}" +
+                   "}";
         }
 
-        /// <summary>Sends a message, or keeps it for when Haze connects again (after a domain reload, say). Main thread.</summary>
+        /// <summary>Sends messages (lines), or keeps them for when Haze connects again (after a domain reload, say). Main thread.</summary>
         internal static void Post(string json)
         {
             if (Send(json)) return;

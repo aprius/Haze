@@ -20,13 +20,15 @@ use serde::{Deserialize, Serialize};
 
 /// How often a disconnected link looks for Unity again.
 const RETRY: Duration = Duration::from_millis(1000);
+/// Most messages per event to the UI: a Debug.Log every frame arrives in bursts.
+const MAX_BATCH: usize = 500;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnityEvent {
     pub root: String,
-    /// A message from Unity, or `{"t":"link","connected":bool}` from Haze.
-    pub event: serde_json::Value,
+    /// Messages from Unity in the order sent, or `{"t":"link","connected":bool}` from Haze.
+    pub events: Vec<serde_json::Value>,
 }
 
 pub type UnitySink = Arc<dyn Fn(UnityEvent) + Send + Sync>;
@@ -113,10 +115,10 @@ impl UnityLinks {
 }
 
 fn run(link: &Link, root: &str, sink: &UnitySink) {
-    let emit = |event: serde_json::Value| {
+    let emit = |events: Vec<serde_json::Value>| {
         sink(UnityEvent {
             root: root.to_string(),
-            event,
+            events,
         })
     };
     while !link.stop.load(Ordering::Relaxed) {
@@ -133,15 +135,30 @@ fn run(link: &Link, root: &str, sink: &UnitySink) {
             link.close();
             break;
         }
-        emit(serde_json::json!({ "t": "link", "connected": true }));
-        for line in BufReader::new(stream).lines() {
-            let Ok(line) = line else { break };
-            if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
-                emit(event);
+        emit(vec![serde_json::json!({ "t": "link", "connected": true })]);
+        // Lines already received go out together: one UI event per burst, not per line.
+        let mut reader = BufReader::new(stream);
+        let mut batch = Vec::new();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(n) if n > 0 => {
+                    if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
+                        batch.push(event);
+                    }
+                    if reader.buffer().is_empty() || batch.len() >= MAX_BATCH {
+                        emit(std::mem::take(&mut batch));
+                    }
+                }
+                _ => break,
             }
         }
+        if !batch.is_empty() {
+            emit(batch);
+        }
         link.close();
-        emit(serde_json::json!({ "t": "link", "connected": false }));
+        emit(vec![serde_json::json!({ "t": "link", "connected": false })]);
         if !link.stop.load(Ordering::Relaxed) {
             thread::sleep(RETRY);
         }
@@ -197,7 +214,11 @@ mod tests {
         let tx = Mutex::new(tx);
         let links = UnityLinks::default();
         assert!(links.connect(&root, Arc::new(move |e| tx.lock().send(e).unwrap())));
-        let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap().event;
+        let next = || {
+            let mut events = rx.recv_timeout(Duration::from_secs(5)).unwrap().events;
+            assert_eq!(events.len(), 1);
+            events.remove(0)
+        };
 
         // Unity's side: check the hello, send a message, read a command.
         let (stream, _) = listener.accept().unwrap();
@@ -208,6 +229,10 @@ mod tests {
         assert_eq!(next()["connected"], true);
         (&stream).write_all(b"{\"t\":\"state\",\"playing\":true}\nnot json\n").unwrap();
         assert_eq!(next()["playing"], true);
+        // A burst comes as one event.
+        (&stream).write_all(b"{\"t\":\"log\",\"message\":\"a\"}\n{\"t\":\"log\",\"message\":\"b\"}\n").unwrap();
+        let burst = rx.recv_timeout(Duration::from_secs(5)).unwrap().events;
+        assert_eq!(burst.iter().map(|e| e["message"].as_str().unwrap()).collect::<Vec<_>>(), ["a", "b"]);
         assert!(links.send(&root, &serde_json::json!({ "t": "play" })));
         let mut command = String::new();
         reader.read_line(&mut command).unwrap();

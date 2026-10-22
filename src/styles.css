@@ -3469,3 +3469,11 @@ html:has(.float-external) body {
   top: 0;
   background: var(--bg);
 }
+
+.unity-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 22px;
+  box-sizing: border-box;
+}

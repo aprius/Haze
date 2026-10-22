@@ -18,7 +18,14 @@ use serde::Serialize;
 use crate::watcher::FsChange;
 
 /// Text-serialized Unity files that reference scripts.
-const ASSET_EXTS: &[&str] = &["unity", "prefab", "asset", "controller", "overridecontroller", "playable"];
+const ASSET_EXTS: &[&str] = &[
+    "unity",
+    "prefab",
+    "asset",
+    "controller",
+    "overridecontroller",
+    "playable",
+];
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ClassDecl {
@@ -88,7 +95,9 @@ pub struct UnityIndexes {
 }
 
 fn ext_of(path: &Path) -> Option<String> {
-    path.extension().and_then(OsStr::to_str).map(str::to_ascii_lowercase)
+    path.extension()
+        .and_then(OsStr::to_str)
+        .map(str::to_ascii_lowercase)
 }
 
 fn is_asset(path: &Path) -> bool {
@@ -101,7 +110,11 @@ fn is_script(path: &Path) -> bool {
 
 /// Where Unity reads scripts and assets from: Assets, embedded packages and the package cache.
 fn source_dirs(root: &Path) -> [PathBuf; 3] {
-    [root.join("Assets"), root.join("Packages"), root.join("Library").join("PackageCache")]
+    [
+        root.join("Assets"),
+        root.join("Packages"),
+        root.join("Library").join("PackageCache"),
+    ]
 }
 
 /// Files under `dir` Unity imports: not hidden, not `name~`.
@@ -123,35 +136,99 @@ fn walk(dir: &Path, mut f: impl FnMut(&Path)) {
     }
 }
 
+/// What one file holds, read off the index's lock.
+enum Parsed {
+    Classes(Vec<ClassDecl>),
+    Asset(AssetFile),
+    /// Gone, unreadable, or a binary-serialized asset (Force Binary).
+    Nothing,
+}
+
+fn parse_file(path: &Path) -> Parsed {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Parsed::Nothing;
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    if is_script(path) {
+        Parsed::Classes(parse_classes(&text))
+    } else if text.starts_with("%YAML") {
+        Parsed::Asset(parse_asset(&text))
+    } else {
+        Parsed::Nothing
+    }
+}
+
+/// Parses files on all cores: a Unity project has thousands of scripts in its
+/// package cache and scenes of tens of megabytes.
+fn parse_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, Parsed)> {
+    let threads = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(16);
+    if paths.len() < 64 || threads == 1 {
+        return paths
+            .into_iter()
+            .map(|p| {
+                let parsed = parse_file(&p);
+                (p, parsed)
+            })
+            .collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let paths = &paths;
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut out = Vec::new();
+                    // Work stealing by index: one big scene does not hold up a whole chunk.
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(p) = paths.get(i) else { break };
+                        out.push((p.clone(), parse_file(p)));
+                    }
+                    out
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap_or_default())
+            .collect()
+    })
+}
+
 impl Index {
     fn build(&mut self, root: &Path) {
         self.classes.clear();
         self.assets.clear();
         self.stale.clear();
+        let mut paths = Vec::new();
         for dir in source_dirs(root) {
             // Assets in the package cache are read-only and rarely matter; scripts there do (base classes).
             let assets = !dir.ends_with("PackageCache");
             walk(&dir, |p| {
                 if is_script(p) || (assets && is_asset(p)) {
-                    self.read(p);
+                    paths.push(p.to_path_buf());
                 }
             });
         }
+        self.store(parse_files(paths));
         self.built = true;
     }
 
-    fn read(&mut self, path: &Path) {
-        let Ok(bytes) = std::fs::read(path) else {
-            self.classes.remove(path);
-            self.assets.remove(path);
-            return;
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        if is_script(path) {
-            self.classes.insert(path.to_path_buf(), parse_classes(&text));
-        } else if text.starts_with("%YAML") {
-            // Binary-serialized assets (Force Binary) cannot be read.
-            self.assets.insert(path.to_path_buf(), parse_asset(&text));
+    fn store(&mut self, parsed: Vec<(PathBuf, Parsed)>) {
+        for (path, p) in parsed {
+            self.classes.remove(&path);
+            self.assets.remove(&path);
+            match p {
+                Parsed::Classes(c) => {
+                    self.classes.insert(path, c);
+                }
+                Parsed::Asset(a) => {
+                    self.assets.insert(path, a);
+                }
+                Parsed::Nothing => {}
+            }
         }
     }
 
@@ -160,15 +237,20 @@ impl Index {
             self.build(root);
             return;
         }
-        for path in std::mem::take(&mut self.stale) {
-            self.read(&path);
+        if !self.stale.is_empty() {
+            let stale = std::mem::take(&mut self.stale).into_iter().collect();
+            self.store(parse_files(stale));
         }
     }
 }
 
 impl UnityIndexes {
     fn index(&self, root: &Path) -> Arc<Mutex<Index>> {
-        self.roots.lock().entry(root.to_path_buf()).or_default().clone()
+        self.roots
+            .lock()
+            .entry(root.to_path_buf())
+            .or_default()
+            .clone()
     }
 
     /// Marks changed scripts and assets of a project indexed before, to be read again.
@@ -182,7 +264,12 @@ impl UnityIndexes {
             index.built = false;
             return;
         }
-        for f in change.files.iter().chain(&change.created).chain(&change.removed) {
+        for f in change
+            .files
+            .iter()
+            .chain(&change.created)
+            .chain(&change.removed)
+        {
             let p = Path::new(f);
             if is_script(p) || is_asset(p) {
                 index.stale.insert(p.to_path_buf());
@@ -275,9 +362,11 @@ fn strip_type_args(s: &str) -> String {
 
 /// Classes and structs declared in C# source, with the bases they list.
 pub fn parse_classes(text: &str) -> Vec<ClassDecl> {
-    static COMMENTS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?s)//[^\n]*|/\*.*?\*/"#).unwrap());
+    static COMMENTS: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"(?s)//[^\n]*|/\*.*?\*/"#).unwrap());
     static DECL: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\b(?:class|struct|record)\s+(?P<name>[A-Za-z_]\w*)(?P<rest>[^{;]*)[{;]").unwrap()
+        Regex::new(r"\b(?:class|struct|record)\s+(?P<name>[A-Za-z_]\w*)(?P<rest>[^{;]*)[{;]")
+            .unwrap()
     });
     let code = COMMENTS.replace_all(text, " ");
     DECL.captures_iter(&code)
@@ -287,7 +376,9 @@ pub fn parse_classes(text: &str) -> Vec<ClassDecl> {
             let rest = rest.split(" where ").next().unwrap_or(&rest).to_string();
             // Primary constructor parameters (records), then " : Bases where ...".
             let rest = match (rest.find('('), rest.find(':')) {
-                (Some(p), Some(colon)) if p < colon => rest[rest.find(')').map_or(0, |i| i + 1)..].to_string(),
+                (Some(p), Some(colon)) if p < colon => {
+                    rest[rest.find(')').map_or(0, |i| i + 1)..].to_string()
+                }
                 _ => rest,
             };
             let bases = rest
@@ -312,10 +403,11 @@ pub fn parse_classes(text: &str) -> Vec<ClassDecl> {
 
 /// Script references and UnityEvent calls in a text-serialized scene, prefab or asset.
 fn parse_asset(text: &str) -> AssetFile {
-    static HEADER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^--- !u!(\d+) &(-?\d+)").unwrap());
-    static SCRIPT: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^\s*m_Script: \{fileID: -?\d+, guid: ([0-9a-f]{32}), type: \d\}").unwrap());
-    static GAME_OBJECT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^  m_GameObject: \{fileID: (-?\d+)\}").unwrap());
+    static HEADER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^--- !u!(\d+) &(-?\d+)").unwrap());
+    static SCRIPT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^m_Script: \{fileID: -?\d+, guid: ([0-9a-f]{32}), type: \d\}").unwrap()
+    });
 
     // Refs first point at their component's GameObject id; names are filled in at the end.
     let mut out = AssetFile::default();
@@ -339,7 +431,9 @@ fn parse_asset(text: &str) -> AssetFile {
             }
             continue;
         }
-        if !line.contains("m_") {
+        // Most lines are other properties: told apart by their first bytes, no regex.
+        let t = line.trim_start();
+        if !(t.starts_with("m_") || t.starts_with("- m_Target:")) {
             continue;
         }
         if doc_class == 1 {
@@ -350,9 +444,18 @@ fn parse_asset(text: &str) -> AssetFile {
             }
             continue;
         }
-        if let Some(c) = GAME_OBJECT.captures(line) {
-            doc_object = c[1].parse().ok().filter(|id| *id != 0);
-        } else if let Some(c) = SCRIPT.captures(line) {
+        if let Some(id) = line.strip_prefix("  m_GameObject: {fileID: ") {
+            doc_object = id
+                .trim_end_matches('}')
+                .trim()
+                .parse()
+                .ok()
+                .filter(|id| *id != 0);
+        } else if let Some(c) = t
+            .starts_with("m_Script:")
+            .then(|| SCRIPT.captures(t))
+            .flatten()
+        {
             out.scripts.push(ScriptRef {
                 guid: c[1].to_string(),
                 line: n,
@@ -360,13 +463,14 @@ fn parse_asset(text: &str) -> AssetFile {
                 file_id: doc_id_text.clone(),
             });
             script_owner.push(doc_object);
-        } else if line.trim_start().starts_with("- m_Target:") {
+        } else if t.starts_with("- m_Target:") {
             call_type = None;
-        } else if let Some(t) = line.trim_start().strip_prefix("m_TargetAssemblyTypeName: ") {
+        } else if let Some(t) = t.strip_prefix("m_TargetAssemblyTypeName: ") {
             // "Game.UI.Menu+Panel, Assembly-CSharp" is "Panel".
             let t = t.split(',').next().unwrap_or(t).trim();
-            call_type = Some(t.rsplit(['.', '+']).next().unwrap_or(t).to_string()).filter(|t| !t.is_empty());
-        } else if let Some(m) = line.trim_start().strip_prefix("m_MethodName: ") {
+            call_type = Some(t.rsplit(['.', '+']).next().unwrap_or(t).to_string())
+                .filter(|t| !t.is_empty());
+        } else if let Some(m) = t.strip_prefix("m_MethodName: ") {
             let method = m.trim();
             if !method.is_empty() {
                 out.calls.push(EventCall {
@@ -409,7 +513,10 @@ mod tests {
         let got = parse_classes(src);
         let get = |n: &str| got.iter().find(|c| c.name == n).map(|c| c.bases.clone());
         assert_eq!(get("Commented"), None);
-        assert_eq!(get("Enemy"), Some(vec!["Character".into(), "IDamageable".into()]));
+        assert_eq!(
+            get("Enemy"),
+            Some(vec!["Character".into(), "IDamageable".into()])
+        );
         assert_eq!(get("Pool"), Some(vec!["MonoBehaviour".into()]));
         assert_eq!(get("Plain"), Some(vec![]));
         assert_eq!(get("Cache"), Some(vec![]));
@@ -449,12 +556,44 @@ MonoBehaviour:
         let file = parse_asset(SCENE);
         assert_eq!(file.scripts.len(), 2);
         assert_eq!(file.scripts[0].guid, "0123456789abcdef0123456789abcdef");
-        assert_eq!((file.scripts[0].line, file.scripts[0].file_id.as_deref()), (9, Some("200")));
+        assert_eq!(
+            (file.scripts[0].line, file.scripts[0].file_id.as_deref()),
+            (9, Some("200"))
+        );
         assert_eq!(file.scripts[0].object.as_deref(), Some("Player"));
         assert_eq!(file.calls.len(), 1);
         let call = &file.calls[0];
-        assert_eq!((call.type_name.as_deref(), call.method.as_str(), call.line), (Some("Player"), "Jump", 22));
+        assert_eq!(
+            (call.type_name.as_deref(), call.method.as_str(), call.line),
+            (Some("Player"), "Jump", 22)
+        );
         assert_eq!(call.object.as_deref(), Some("PlayButton"));
+    }
+
+    /// `HAZE_BENCH_UNITY=/path/to/UnityProject cargo test --release --lib bench_index -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_index() {
+        let Ok(root) = std::env::var("HAZE_BENCH_UNITY") else {
+            return;
+        };
+        let started = std::time::Instant::now();
+        let indexes = UnityIndexes::default();
+        let classes = indexes.classes(Path::new(&root));
+        let built = started.elapsed();
+        let index = indexes.index(Path::new(&root));
+        let (scripts, assets) = {
+            let i = index.lock();
+            (i.classes.len(), i.assets.len())
+        };
+        let started = std::time::Instant::now();
+        let any = PathBuf::from(&root).join("Assets/Bench/S0.cs");
+        let _ = indexes.asset_usages(Path::new(&root), &any, &["S0".into()]);
+        println!(
+            "{scripts} scripts, {assets} assets, {} classes: built in {built:?}, query in {:?}",
+            classes.len(),
+            started.elapsed()
+        );
     }
 
     #[test]
@@ -466,9 +605,21 @@ MonoBehaviour:
         std::fs::create_dir_all(root.join("Library/PackageCache/com.unity.ugui/Runtime")).unwrap();
         let player = root.join("Assets/Scripts/Player.cs");
         std::fs::write(&player, "class Player : Character {}").unwrap();
-        std::fs::write(root.join("Assets/Scripts/Player.cs.meta"), "fileFormatVersion: 2\nguid: 0123456789abcdef0123456789abcdef\n").unwrap();
-        std::fs::write(root.join("Assets/Ignored~/X.cs"), "class Hidden : MonoBehaviour {}").unwrap();
-        std::fs::write(root.join("Library/PackageCache/com.unity.ugui/Runtime/UIBehaviour.cs"), "abstract class UIBehaviour : MonoBehaviour {}").unwrap();
+        std::fs::write(
+            root.join("Assets/Scripts/Player.cs.meta"),
+            "fileFormatVersion: 2\nguid: 0123456789abcdef0123456789abcdef\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Assets/Ignored~/X.cs"),
+            "class Hidden : MonoBehaviour {}",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Library/PackageCache/com.unity.ugui/Runtime/UIBehaviour.cs"),
+            "abstract class UIBehaviour : MonoBehaviour {}",
+        )
+        .unwrap();
         let scene = root.join("Assets/Main.unity");
         std::fs::write(&scene, SCENE).unwrap();
 
@@ -484,7 +635,11 @@ MonoBehaviour:
         assert_eq!(usages.methods["Jump"].len(), 1);
 
         // The scene loses the component: read again once reported.
-        std::fs::write(&scene, "%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: Empty\n").unwrap();
+        std::fs::write(
+            &scene,
+            "%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: Empty\n",
+        )
+        .unwrap();
         indexes.changed(&FsChange {
             root: root.to_string_lossy().into_owned(),
             dirs: vec![],

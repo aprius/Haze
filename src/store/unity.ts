@@ -150,9 +150,9 @@ function handle(projectId: string, e: UnityMessage) {
 function listen() {
   if (listening) return;
   listening = true;
-  void onUnityEvent(({ root, event }) => {
+  void onUnityEvent(({ root, events }) => {
     const id = projectIdFor(root);
-    if (id) handle(id, event);
+    if (id) events.forEach((e) => handle(id, e));
   });
 }
 

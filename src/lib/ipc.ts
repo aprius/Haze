@@ -289,9 +289,10 @@ export interface AssetUsages {
   methods: Record<string, AssetUsage[]>;
 }
 
+/** Messages from one Unity Editor, a burst at a time. */
 export interface UnityEvent {
   root: string;
-  event: UnityMessage;
+  events: UnityMessage[];
 }
 
 export interface ServerCommand {
