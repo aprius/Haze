@@ -10,7 +10,7 @@ import { ProjectRail, Splitter, StatusBar, toggleBottom, toggleSidebar, Welcome 
 import { BuildPanel } from "./components/BuildPanel";
 import { CommitWindow } from "./components/CommitPanel";
 import { DiffWindow } from "./components/DiffView";
-import { BranchesPopup, openBranchesPopup, openPushDialog, PushDialog, updateProject } from "./components/GitDialogs";
+import { BranchesPopup, openBranchesPopup, openPullDialog, openPushDialog, PullDialog, PushDialog, updateProject } from "./components/GitDialogs";
 import { GitPanel } from "./components/GitPanel";
 import { RebaseDialog } from "./components/RebaseDialog";
 import { openSettings, SettingsDialog } from "./components/SettingsDialog";
@@ -128,6 +128,7 @@ function useGlobalShortcuts(project: Project | null) {
       // Capture phase: Monaco binds Alt+F12 to Peek Definition on Windows and macOS.
       else if (is("terminal") && project) toggleTerminal(project.id);
       else if (is("push") && project) openPushDialog(project);
+      else if (is("pull") && project) openPullDialog(project);
       else if (is("commit") && project) openCommitWindow(project.id);
       else if (is("updateProject") && project) void updateProject(project);
       else if (is("branches") && project) openBranchesPopup(project);
@@ -332,6 +333,7 @@ export default function App() {
       <UsagesPopup project={active} />
       <BranchesPopup project={active} />
       <PushDialog project={active} />
+      <PullDialog project={active} />
       <RebaseDialog project={active} />
       <CommitWindow project={active} />
       <DiffWindow />

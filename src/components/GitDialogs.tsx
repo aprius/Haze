@@ -1,5 +1,5 @@
 // Git popups: Branches (status bar / Ctrl+Shift+`), Push (Ctrl+Shift+K),
-// Update Project (Ctrl+T), plus branch actions shared with the Log.
+// Pull (Rider's "Pull to <branch>"), Update Project (Ctrl+T), plus branch actions shared with the Log.
 import { GitBranch, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
@@ -9,7 +9,7 @@ import { parseWorktrees, type Worktree } from "../lib/worktrees";
 
 export type { Worktree };
 import { saveAll } from "./EditorArea";
-import { repo, runGit, useGit } from "../store/git";
+import { refreshRepo, repo, runGit, useGit } from "../store/git";
 import { openCommitWindow, popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { choose, confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
@@ -128,6 +128,13 @@ function branchMenu(project: Project, b: Branch, current: string | null): MenuIt
     );
   } else if (b.kind === "remote") {
     const [remote, ...rest] = b.name.split("/");
+    if (current) {
+      items.push(
+        { separator: true },
+        { label: `Pull into '${current}' Using Merge`, action: () => void pull(project, remote, rest.join("/"), "merge") },
+        { label: `Pull into '${current}' Using Rebase`, action: () => void pull(project, remote, rest.join("/"), "rebase") },
+      );
+    }
     items.push(
       { separator: true },
       {
@@ -172,11 +179,13 @@ export function takeLogFilter(projectId: string): LogFilterPatch | undefined {
 interface DialogState {
   branches: { open: boolean; projectId: string | null };
   push: { open: boolean; projectId: string | null; branch: string | null };
+  pull: { open: boolean; projectId: string | null };
 }
 
 const useGitDialogs = create<DialogState>(() => ({
   branches: { open: false, projectId: null },
   push: { open: false, projectId: null, branch: null },
+  pull: { open: false, projectId: null },
 }));
 
 export function openBranchesPopup(project: Project): void {
@@ -185,6 +194,15 @@ export function openBranchesPopup(project: Project): void {
 
 export function openPushDialog(project: Project, branch: string | null = null): void {
   useGitDialogs.setState({ push: { open: true, projectId: project.id, branch } });
+}
+
+export function openPullDialog(project: Project): void {
+  useGitDialogs.setState({ pull: { open: true, projectId: project.id } });
+}
+
+function closePull() {
+  useGitDialogs.setState({ pull: { open: false, projectId: null } });
+  popupClosed();
 }
 
 function closeBranches() {
@@ -241,6 +259,7 @@ export function BranchesPopup({ project }: { project: Project | null }) {
   const actions: { label: string; key?: string; run: () => void }[] = [
     { label: "Update Project…", key: shortcutLabel("updateProject"), run: () => void updateProject(project) },
     { label: "Commit…", key: shortcutLabel("commit"), run: () => openCommitWindow(project.id) },
+    { label: "Pull…", key: shortcutLabel("pull"), run: () => openPullDialog(project) },
     { label: "Push…", key: shortcutLabel("push"), run: () => openPushDialog(project) },
     { label: "New Branch…", run: () => void newBranch(project, null) },
     { label: "New Worktree… (separate folder for a parallel task)", run: () => void newWorktree(project) },
@@ -438,6 +457,166 @@ export function PushDialog({ project }: { project: Project | null }) {
             onClick={() => void push()}
           >
             {force ? "Force Push" : "Push"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Pull dialog
+
+type PullMode = "merge" | "rebase" | "ff-only" | "no-ff" | "squash";
+
+const pullModes: { value: PullMode; label: string; arg: string }[] = [
+  { value: "merge", label: "Merge", arg: "--no-rebase" },
+  { value: "rebase", label: "Rebase (--rebase)", arg: "--rebase" },
+  { value: "ff-only", label: "Fast-forward only (--ff-only)", arg: "--ff-only" },
+  { value: "no-ff", label: "Always create a merge commit (--no-ff)", arg: "--no-ff" },
+  { value: "squash", label: "Squash commits (--squash)", arg: "--squash" },
+];
+
+let pullMode: PullMode = "merge";
+
+/** Pulls `remote`/`branch` into the current branch; local changes are stashed and restored. */
+async function pull(project: Project, remote: string, branch: string, mode: PullMode): Promise<void> {
+  pullMode = mode;
+  await saveAll();
+  const arg = pullModes.find((m) => m.value === mode)!.arg;
+  // --ff-only / --no-ff / --squash merge, so they need --no-rebase against a pull.rebase config.
+  const extra = mode === "merge" || mode === "rebase" ? [arg] : ["--no-rebase", arg];
+  await runGit(project.id, ["pull", "--autostash", ...extra, remote, branch], { label: `Pull ${remote}/${branch}` });
+}
+
+export function PullDialog({ project }: { project: Project | null }) {
+  const { open, projectId } = useGitDialogs((s) => s.pull);
+  const r = useGit((s) => (projectId ? s.repos[projectId] : undefined));
+  const [remote, setRemote] = useState("origin");
+  const [target, setTarget] = useState("");
+  const [mode, setMode] = useState<PullMode>(pullMode);
+  const [fetching, setFetching] = useState(false);
+  const [commits, setCommits] = useState<Outgoing[] | null>(null);
+
+  const current = r?.branches?.current ?? null;
+  const cur = r?.branches?.branches.find((b) => b.kind === "local" && b.current);
+  const remotes = r?.branches?.remotes ?? [];
+  const targets = useMemo(
+    () =>
+      (r?.branches?.branches ?? [])
+        .filter((b) => b.kind === "remote" && b.name.startsWith(`${remote}/`) && b.name !== `${remote}/HEAD`)
+        .map((b) => b.name.slice(remote.length + 1)),
+    [r?.branches, remote],
+  );
+
+  // Rider fetches the remote's branches when the dialog opens.
+  useEffect(() => {
+    if (!open || !r?.root || !project) return;
+    const upstream = cur?.upstream ?? null;
+    const rem = upstream ? upstream.split("/")[0] : (remotes[0] ?? "origin");
+    setRemote(rem);
+    setTarget(upstream ? upstream.split("/").slice(1).join("/") : (current ?? ""));
+    setMode(pullMode);
+    setFetching(true);
+    void api
+      .gitRun(r.root, ["fetch", "--prune", rem])
+      .catch(() => null)
+      .finally(() => {
+        setFetching(false);
+        refreshRepo(project.id, project.path);
+      });
+  }, [open, r?.root]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the branch valid for the chosen remote: same name, else main/master, else the first one.
+  useEffect(() => {
+    if (!open || targets.length === 0 || targets.includes(target)) return;
+    setTarget(targets.find((t) => t === current) ?? targets.find((t) => t === "main" || t === "master") ?? targets[0]);
+  }, [open, targets]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ref = `${remote}/${target}`;
+  const known = targets.includes(target);
+  useEffect(() => {
+    if (!open || !r?.root || !known || fetching) return;
+    setCommits(null);
+    void api
+      .gitRun(r.root, ["log", "--format=%H%x1f%s", "--max-count=200", `HEAD..refs/remotes/${ref}`])
+      .then((out) =>
+        setCommits(
+          out.stdout
+            .split("\n")
+            .filter(Boolean)
+            .map((l) => {
+              const [hash, subject] = l.split("\u001f");
+              return { hash, subject };
+            }),
+        ),
+      )
+      .catch(() => setCommits([]));
+  }, [open, r?.root, ref, known, fetching, r?.branches?.head]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!open || !project || project.id !== projectId) return null;
+  const canPull = remotes.length > 0 && !!current && !!target.trim();
+  const run = () => {
+    if (!canPull) return;
+    closePull();
+    void pull(project, remote, target.trim(), mode);
+  };
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && closePull()}>
+      <div
+        className="modal push-dialog"
+        tabIndex={-1}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") closePull();
+          if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run();
+          e.stopPropagation();
+        }}
+      >
+        <div className="modal-title">Pull to {current ?? "(detached HEAD)"}</div>
+        {remotes.length === 0 ? (
+          <div className="modal-message">This repository has no remote. Add one with `git remote add origin &lt;url&gt;`.</div>
+        ) : !current ? (
+          <div className="modal-message">HEAD is detached. Check out a branch to pull into.</div>
+        ) : (
+          <>
+            <div className="push-target">
+              <select className="find-select" value={remote} onChange={(e) => setRemote(e.target.value)}>
+                {remotes.map((x) => (
+                  <option key={x}>{x}</option>
+                ))}
+              </select>
+              <select className="find-select pull-branch" value={known ? target : ""} onChange={(e) => setTarget(e.target.value)}>
+                {!known && <option value="">{fetching ? "Fetching…" : "No branches"}</option>}
+                {targets.map((t) => (
+                  <option key={t}>{t}</option>
+                ))}
+              </select>
+              <select className="find-select" value={mode} onChange={(e) => setMode(e.target.value as PullMode)}>
+                {pullModes.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="push-commits">
+              {(commits === null || fetching) && <div className="muted small">{fetching ? `Fetching ${remote}…` : "Loading…"}</div>}
+              {!fetching && commits?.length === 0 && <div className="muted small">'{current}' is up to date with '{ref}'.</div>}
+              {!fetching &&
+                commits?.map((c) => (
+                  <div key={c.hash} className="push-commit">
+                    <span className="hash">{c.hash.slice(0, 8)}</span> {c.subject}
+                  </div>
+                ))}
+            </div>
+            <div className="muted small">Local changes are stashed and restored automatically.</div>
+          </>
+        )}
+        <div className="modal-buttons">
+          <button className="btn" onClick={closePull}>
+            Cancel
+          </button>
+          <button autoFocus className="btn primary" disabled={!canPull || !known} onClick={run}>
+            Pull
           </button>
         </div>
       </div>

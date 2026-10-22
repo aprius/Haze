@@ -2839,3 +2839,8 @@ kbd {
   padding: 6px;
   user-select: text;
 }
+
+.pull-branch {
+  flex: 1;
+  min-width: 0;
+}
