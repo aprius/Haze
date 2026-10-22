@@ -29,6 +29,9 @@ interface Sides {
 
 // IntelliJ's `diff.divider.width`.
 const GAP = 24;
+// The left editor's share of the two editors' width; dragging the gap sets it
+// for every diff after, as in Rider.
+let lastSplit = 0.5;
 const ICON = 16;
 const ARROW =
   '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 4.5 12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -75,6 +78,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<number | null>(null);
+  const [split, setSplit] = useState(lastSplit);
   const editable = spec.right === "working";
 
   useEffect(() => {
@@ -387,6 +391,26 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     s.right.pushUndoStop();
   }
 
+  // Drag the gap to share the width between the sides; double-click evens them.
+  function resize(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0 || !leftHost.current || !rightHost.current) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    const total = leftHost.current.offsetWidth + rightHost.current.offsetWidth;
+    const x0 = e.clientX;
+    const s0 = split;
+    el.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => setSplit((lastSplit = Math.min(0.9, Math.max(0.1, s0 + (ev.clientX - x0) / total))));
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  }
+
   return (
     <div className="diff-view">
       {/* Clicks keep focus in the editors, so the caret side stays the one stepped from. */}
@@ -403,7 +427,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
         {editable && <span className="muted small diff-hint">Right side is the local file — edits are saved as usual.</span>}
       </div>
       <div className="diff-host">
-        <div ref={leftHost} className="diff-side" />
+        <div ref={leftHost} className="diff-side" style={{ flex: `${split} 1 0` }} />
         <div
           ref={gutter}
           className="diff-lgutter"
@@ -413,8 +437,14 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
             if (b) apply(Number(b.dataset.chunk), b.dataset.append !== undefined);
           }}
         />
-        <div ref={gap} className="diff-gap" style={{ width: GAP }} />
-        <div ref={rightHost} className="diff-side" />
+        <div
+          ref={gap}
+          className="diff-gap"
+          style={{ width: GAP }}
+          onPointerDown={resize}
+          onDoubleClick={() => setSplit((lastSplit = 0.5))}
+        />
+        <div ref={rightHost} className="diff-side" style={{ flex: `${1 - split} 1 0` }} />
         <div ref={differHost} className="diff-differ" aria-hidden />
       </div>
     </div>

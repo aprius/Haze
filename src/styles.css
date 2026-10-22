@@ -2507,6 +2507,7 @@ kbd {
   position: relative;
   flex: none;
   overflow: hidden;
+  cursor: col-resize;
 }
 
 .diff-gap svg {
