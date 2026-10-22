@@ -412,6 +412,7 @@ export const api = {
   findFiles: (root: string, query: string, limit?: number) =>
     invoke<FileHit[]>("find_files", { root, query, limit: limit ?? null }),
   readImage: (path: string) => invoke<{ mime: string; base64: string }>("read_image", { path }),
+  clipboardFilePaths: () => invoke<string[]>("clipboard_file_paths"),
 
   readLines: (requests: { path: string; lines: number[] }[]) => invoke<string[][]>("read_lines", { requests }),
 

@@ -85,6 +85,10 @@ function isTextKey(e: KeyboardEvent): boolean {
   return [...e.key].length === 1 || /^(Key[A-Z]|Digit\d)$/.test(e.code) || !/^[A-Z][A-Za-z0-9]*$/.test(e.key);
 }
 
+function shellQuote(path: string): string {
+  return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
+}
+
 function decode(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -147,6 +151,25 @@ function createView(id: string, project: Project): View {
     pending += data;
     flush();
   });
+
+  // Files copied in Finder reach the webview without their paths, so xterm
+  // sent an empty paste and an agent took the file's icon for an image.
+  // Paste the paths instead, quoted for the shell, like Terminal.app.
+  el.addEventListener(
+    "paste",
+    (e) => {
+      const data = e.clipboardData;
+      if (!data || (!data.files.length && !data.types.includes("Files"))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const text = data.getData("text/plain");
+      void api
+        .clipboardFilePaths()
+        .catch(() => [])
+        .then((paths) => term.paste(paths.length ? paths.map(shellQuote).join(" ") : text));
+    },
+    true,
+  );
 
   // Input methods that type by injecting key events (Gõ Nhanh, EVKey, OpenKey)
   // send several characters in one event, but xterm takes text from keydown or

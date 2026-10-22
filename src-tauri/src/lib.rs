@@ -265,6 +265,34 @@ async fn find_files(
     blocking(move || Ok(index.find(&root, &query, limit.unwrap_or(50)))).await
 }
 
+/// Files copied in Finder: the webview hides their paths from a paste, and
+/// a terminal pastes them as paths.
+#[tauri::command]
+async fn clipboard_file_paths() -> CmdResult<Vec<String>> {
+    blocking(|| {
+        #[cfg(target_os = "macos")]
+        {
+            const SCRIPT: &str = r#"ObjC.import("AppKit");
+const urls = $.NSPasteboard.generalPasteboard.readObjectsForClassesOptions($([$.NSURL]), $({ NSPasteboardURLReadingFileURLsOnlyKey: true }));
+const out = [];
+for (let i = 0; i < urls.count; i++) out.push(urls.objectAtIndex(i).path.js);
+out.join("\n");"#;
+            let out = std::process::Command::new("osascript")
+                .args(["-l", "JavaScript", "-e", SCRIPT])
+                .output()?;
+            anyhow::ensure!(out.status.success(), "could not read the clipboard");
+            Ok(String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(str::to_owned)
+                .collect())
+        }
+        #[cfg(not(target_os = "macos"))]
+        Ok(Vec::new())
+    })
+    .await
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ImageData {
@@ -728,6 +756,7 @@ pub fn run() {
             undo_replace,
             find_files,
             read_image,
+            clipboard_file_paths,
             git_log,
             git_toplevel,
             git_commit,
