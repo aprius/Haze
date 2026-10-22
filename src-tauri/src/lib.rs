@@ -704,8 +704,13 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
             let Some(label) = label.filter(|l| handle.get_webview_window(l).is_none()) else {
                 return tauri::webview::NewWindowResponse::Deny;
             };
-            let built = tauri::WebviewWindowBuilder::new(&handle, label, tauri::WebviewUrl::External(url))
-                .window_features(features)
+            let size = features.size();
+            let mut builder = tauri::WebviewWindowBuilder::new(&handle, label, tauri::WebviewUrl::External(url))
+                .window_features(features);
+            if let Some((x, y)) = float_position(&handle, size) {
+                builder = builder.position(x, y);
+            }
+            let built = builder
                 .title("Haze")
                 .on_document_title_changed(|w, title| {
                     let _ = w.set_title(&title);
@@ -718,6 +723,27 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
         })
         .build()?;
     Ok(())
+}
+
+/// Where a Commit or Diff window opens: centred over the main window, a third
+/// of the way down, kept inside the main window's screen. WebKit's own
+/// `left`/`top` (from `window.screenX/Y`) can land off screen.
+fn float_position(handle: &AppHandle, size: Option<tauri::LogicalSize<f64>>) -> Option<(f64, f64)> {
+    let main = handle.get_webview_window("main")?;
+    let scale = main.scale_factor().ok()?;
+    let pos = main.outer_position().ok()?.to_logical::<f64>(scale);
+    let outer = main.outer_size().ok()?.to_logical::<f64>(scale);
+    let size = size.unwrap_or(tauri::LogicalSize::new(800.0, 600.0));
+    let mut x = pos.x + ((outer.width - size.width) / 2.0).max(0.0);
+    let mut y = pos.y + ((outer.height - size.height) / 3.0).max(40.0);
+    if let Some(monitor) = main.current_monitor().ok().flatten() {
+        let area = monitor.work_area();
+        let at = area.position.to_logical::<f64>(monitor.scale_factor());
+        let room = area.size.to_logical::<f64>(monitor.scale_factor());
+        x = x.min(at.x + room.width - size.width).max(at.x);
+        y = y.min(at.y + room.height - size.height).max(at.y);
+    }
+    Some((x, y))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

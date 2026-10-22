@@ -322,9 +322,8 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
     const label = `float-${++floatSeq}-${Date.now().toString(36)}`;
     const w = Math.min(width, screen.availWidth - 40);
     const h = Math.min(height, screen.availHeight - 40);
-    const left = Math.round(window.screenX + Math.max(0, (window.outerWidth - w) / 2));
-    const top = Math.round(window.screenY + Math.max(40, (window.outerHeight - h) / 3));
-    const win = window.open(`about:blank#${label}`, label, `width=${w},height=${h},left=${left},top=${top}`);
+    // The native side places it over the main window.
+    const win = window.open(`about:blank#${label}`, label, `width=${w},height=${h}`);
     if (!win) return setHost(null);
     let doc = win.document;
     if (!doc.body) {
