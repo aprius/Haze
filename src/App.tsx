@@ -237,7 +237,7 @@ export default function App() {
   const activeTab = useWorkspace((s) => (activeId ? s.ui[activeId]?.activeTab : null));
 
   useEffect(() => {
-    void restore().then(() => startTerminals());
+    void startTerminals(restore());
   }, []);
 
   // `haze <project> [<file>] --line N` (e.g. from Unity), at launch or from a second launch.

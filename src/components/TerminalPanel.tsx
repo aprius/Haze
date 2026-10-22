@@ -89,7 +89,11 @@ function shellQuote(path: string): string {
   return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
 }
 
+const fromBase64 = (Uint8Array as { fromBase64?: (s: string) => Uint8Array }).fromBase64?.bind(Uint8Array);
+
 function decode(b64: string): Uint8Array {
+  // Native where the webview has it: a replayed scrollback is megabytes.
+  if (fromBase64) return fromBase64(b64);
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

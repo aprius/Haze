@@ -728,7 +728,11 @@ pub fn run() {
             let client = PtyClient::new(pty::client::batched(Arc::new(move |ev| {
                 forward_pty_event(&handle, ev)
             })));
-            app.manage(Pty::new(Arc::new(client)));
+            let client = Arc::new(client);
+            // Starting the host overlaps with the webview loading.
+            let warm = client.clone();
+            std::thread::spawn(move || warm.warm());
+            app.manage(Pty::new(client));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

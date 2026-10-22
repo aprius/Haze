@@ -182,6 +182,12 @@ impl PtyClient {
         }
     }
 
+    /// Connects now, starting the host if none is running, so the first
+    /// terminal does not wait for it.
+    pub fn warm(&self) {
+        let _ = self.connection();
+    }
+
     /// Fire-and-forget request (input, resize, attach).
     pub fn notify(&self, body: Request) -> Result<()> {
         self.send(0, body).map(|_| ())
@@ -211,8 +217,9 @@ fn connect_or_spawn() -> Result<Stream> {
         return Ok(s);
     }
     spawn_host()?;
-    for _ in 0..50 {
-        thread::sleep(Duration::from_millis(100));
+    // The host binds its socket within a few milliseconds of starting.
+    for _ in 0..500 {
+        thread::sleep(Duration::from_millis(10));
         if let Ok(s) = Stream::connect(socket_name()?) {
             return Ok(s);
         }

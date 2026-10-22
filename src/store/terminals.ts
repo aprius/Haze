@@ -87,7 +87,8 @@ let markListening: () => void;
 /** Resolves once host events are being received; attaching earlier would lose the replay. */
 export const terminalsListening = new Promise<void>((r) => (markListening = r));
 
-export async function startTerminals(): Promise<void> {
+/** Starts listening at once; the session list waits for the workspace (`restored`) to sort into projects. */
+export async function startTerminals(restored: Promise<void>): Promise<void> {
   if (started) return;
   started = true;
   await onPtyEvent((e) => {
@@ -113,6 +114,7 @@ export async function startTerminals(): Promise<void> {
   useWorkspace.subscribe(() => {
     for (const id of Object.keys(useTerminals.getState().attention)) if (isWatching(id)) acknowledge(id);
   });
+  await restored;
   await syncSessions();
 }
 
