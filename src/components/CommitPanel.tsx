@@ -404,7 +404,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                             setChecked(next);
                           }}
                         />
-                        <FileIcon name={row.name} isDir open={!collapsed[row.key]} />
+                        <FileIcon name={row.name} isDir />
                         <span className="tree-name">{row.name}</span>
                         <span className="tree-hint">{row.files.length}</span>
                       </div>

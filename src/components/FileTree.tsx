@@ -1,5 +1,5 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, Eye, LocateFixed, Package } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, Eye, LocateFixed } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { disposeBuffer, renameBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type DirEntry, type GitFileStatus } from "../lib/ipc";
@@ -374,6 +374,7 @@ export function FileTree({ project }: { project: Project }) {
   const first = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
   const last = Math.min(rows.length, Math.ceil((scrollTop + height) / ROW_H) + OVERSCAN);
   const libraryDir = join(project.path, "Library");
+  const packagesDir = join(project.path, "Packages");
   const cutPaths = clipboard?.cut ? new Set(clipboard.paths) : null;
 
   return (
@@ -430,11 +431,21 @@ export function FileTree({ project }: { project: Project }) {
                 >
                   {row.expandable ? row.expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} /> : null}
                 </span>
-                {row.pkg ? (
-                  <Package size={14} className="ico ico-package" />
-                ) : view === "unity" && row.entry.isDir && !row.entry.isSymlink ? null : (
-                  <FileIcon name={row.entry.name} isDir={row.entry.isDir} isSymlink={row.entry.isSymlink} open={row.expanded} />
-                )}
+                <FileIcon
+                  name={row.entry.name}
+                  isDir={row.entry.isDir}
+                  isSymlink={row.entry.isSymlink}
+                  unity={view === "unity"}
+                  kind={
+                    row.pkg
+                      ? row.pkg.version === "local"
+                        ? "packageLocal"
+                        : "packageReferenced"
+                      : view === "unity" && row.entry.isDir && dirname(row.entry.path) === packagesDir
+                        ? "packageEmbedded"
+                        : undefined
+                  }
+                />
                 <span className="tree-name">
                   {row.entry.name}
                   {dirty && <span className="dirty-mark">*</span>}

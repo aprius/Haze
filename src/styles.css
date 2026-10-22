@@ -521,33 +521,12 @@ kbd {
   color: var(--muted);
 }
 
-.ico-folder {
-  color: var(--mk-grey);
-}
-
-.ico-code {
-  color: var(--mk-purple);
-}
-
-.ico.ext-cs {
-  color: var(--mk-green);
-}
-
-.ico.ext-ts,
-.ico.ext-tsx {
-  color: var(--mk-cyan);
-}
-
-.ico-package {
-  color: var(--mk-orange);
-}
-
-.ico-json {
-  color: var(--mk-yellow);
-}
-
-.ico-image {
-  color: var(--mk-orange);
+.jb-ico {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  pointer-events: none;
+  user-select: none;
 }
 
 .tree-name {

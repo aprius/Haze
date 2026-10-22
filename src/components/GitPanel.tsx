@@ -142,7 +142,7 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
                 onClick={() => setCollapsed((c) => ({ ...c, [row.key]: !c[row.key] }))}
               >
                 {collapsed[row.key] ? <ChevronRight size={14} className="ico" /> : <ChevronDown size={14} className="ico" />}
-                <FileIcon name={row.name} isDir open={!collapsed[row.key]} />
+                <FileIcon name={row.name} isDir />
                 <span className="tree-name">{row.name}</span>
                 <span className="tree-hint">{row.files.length}</span>
               </div>
