@@ -22,12 +22,13 @@ export const monacoTheme = (mode: ThemeMode = useTheme.getState().mode) => (mode
 
 export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
   // Monokai Pro (Filter: Pro), as its terminal themes ship it, but for the
-  // default text (and plain white): #fcfcfa glares, as in the editor.
+  // default text (and plain white): #fcfcfa glares, as in the editor. The
+  // background is the Project view's (--panel), not the editor's.
   dark: {
-    background: "#2d2a2e",
+    background: "#221f22",
     foreground: "#d3d1cf",
     cursor: "#d3d1cf",
-    cursorAccent: "#2d2a2e",
+    cursorAccent: "#221f22",
     selectionBackground: "#5b595c",
     black: "#403e41",
     red: "#ff6188",
@@ -46,12 +47,12 @@ export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
     brightCyan: "#78dce8",
     brightWhite: "#fcfcfa",
   },
-  // Monokai Pro (Filter: Light).
+  // Monokai Pro (Filter: Light), on the Project view's background too.
   light: {
-    background: "#faf4f2",
+    background: "#ede7e5",
     foreground: "#29242a",
     cursor: "#29242a",
-    cursorAccent: "#faf4f2",
+    cursorAccent: "#ede7e5",
     selectionBackground: "#d3cdcc",
     black: "#29242a",
     red: "#e14775",
