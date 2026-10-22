@@ -90,29 +90,30 @@ export function toggleThemeMode(): void {
   setThemeMode(useTheme.getState().mode === "dark" ? "light" : "dark");
 }
 
-// Tab style: "classic" underlines the active tab; "islands" draws tabs as
-// rounded chips like Rider's Islands UI. Only the shape changes, the colours
-// stay Monokai Pro's.
-export type TabStyle = "classic" | "islands";
+// Layout style: "classic" puts the panels edge to edge; "islands" draws each
+// one (Project, editor, terminal, Build/Git) as a rounded block with gaps
+// between them, and tabs as rounded chips, like Rider's Islands UI. Only the
+// shapes change, the colours stay Monokai Pro's.
+export type UiStyle = "classic" | "islands";
 
-const TABS_KEY = "haze.tabStyle";
+const UI_STYLE_KEY = "haze.uiStyle";
 
-function initialTabs(): TabStyle {
+function initialUiStyle(): UiStyle {
   try {
-    const saved = localStorage.getItem(TABS_KEY);
+    const saved = localStorage.getItem(UI_STYLE_KEY);
     if (saved === "classic" || saved === "islands") return saved;
   } catch {}
   return "classic";
 }
 
-export const useTabStyle = create<{ style: TabStyle }>(() => ({ style: initialTabs() }));
+export const useUiStyle = create<{ style: UiStyle }>(() => ({ style: initialUiStyle() }));
 
-document.documentElement.dataset.tabs = useTabStyle.getState().style;
+document.documentElement.dataset.ui = useUiStyle.getState().style;
 
-export function setTabStyle(style: TabStyle): void {
+export function setUiStyle(style: UiStyle): void {
   try {
-    localStorage.setItem(TABS_KEY, style);
+    localStorage.setItem(UI_STYLE_KEY, style);
   } catch {}
-  document.documentElement.dataset.tabs = style;
-  useTabStyle.setState({ style });
+  document.documentElement.dataset.ui = style;
+  useUiStyle.setState({ style });
 }

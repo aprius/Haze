@@ -242,6 +242,43 @@ kbd {
   inset: -3px 0;
 }
 
+/* Islands layout: the title bar, rail and status bar merge into one darker
+   frame, and each panel is a rounded block on it, the splitters the gaps between. */
+:root[data-ui="islands"] .workspace {
+  background: var(--rail);
+}
+
+:root[data-ui="islands"] .project-view {
+  padding: 2px 6px 6px 0;
+}
+
+:root[data-ui="islands"] .sidebar,
+:root[data-ui="islands"] .center,
+:root[data-ui="islands"] .side-dock,
+:root[data-ui="islands"] .bottom {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+:root[data-ui="islands"] .splitter {
+  background: transparent;
+}
+
+:root[data-ui="islands"] .splitter.vertical {
+  width: 6px;
+}
+
+:root[data-ui="islands"] .splitter.horizontal {
+  height: 6px;
+}
+
+:root[data-ui="islands"] .title-bar,
+:root[data-ui="islands"] .project-rail,
+:root[data-ui="islands"] .status-bar {
+  background: var(--rail);
+  border-color: transparent;
+}
+
 .panel-header {
   height: 36px;
   flex: none;
@@ -659,15 +696,21 @@ kbd {
   color: var(--fg);
 }
 
-/* Islands tab style (Settings > Appearance, set on <html data-tabs> by src/lib/theme.ts):
-   tabs are rounded chips on the bar, the active one filled and outlined instead of underlined. */
-:root[data-tabs="islands"] .editor-tabs {
+/* Islands layout (Settings > Appearance, set on <html data-ui> by src/lib/theme.ts):
+   tabs are rounded chips on the bar, the active one filled and outlined instead of underlined.
+   The panels themselves are in the layout section. */
+:root[data-ui="islands"] .editor-tabs,
+:root[data-ui="islands"] .term-header {
+  border-bottom: 0;
+}
+
+:root[data-ui="islands"] .editor-tabs {
   align-items: center;
   gap: 2px;
   padding: 0 4px;
 }
 
-:root[data-tabs="islands"] .editor-tab {
+:root[data-ui="islands"] .editor-tab {
   flex: none;
   height: 24px;
   padding: 0 3px 0 10px;
@@ -675,35 +718,38 @@ kbd {
   border-radius: 6px;
 }
 
-:root[data-tabs="islands"] .editor-tab.active {
-  background: var(--selected-inactive);
-  border-color: var(--selected);
+:root[data-ui="islands"] .editor-tab.active {
+  background: var(--selected);
+  border-color: color-mix(in srgb, var(--selected), var(--fg) 15%);
 }
 
-:root[data-tabs="islands"] .editor-tab .tab-close,
-:root[data-tabs="islands"] .term-tab .tab-close {
+:root[data-ui="islands"] .editor-tab .tab-close,
+:root[data-ui="islands"] .term-tab .tab-close {
   width: 18px;
   height: 18px;
 }
 
-:root[data-tabs="islands"] .editor-tab.active .tab-close:hover,
-:root[data-tabs="islands"] .term-tab.active .tab-close:hover {
+:root[data-ui="islands"] .editor-tab.active .tab-close:hover {
+  background: color-mix(in srgb, var(--selected), var(--fg) 12%);
+}
+
+:root[data-ui="islands"] .term-tab.active .tab-close:hover {
   background: var(--selected);
 }
 
-:root[data-tabs="islands"] .term-tab,
-:root[data-tabs="islands"] .tool-tab,
-:root[data-tabs="islands"] .se-tab {
+:root[data-ui="islands"] .term-tab,
+:root[data-ui="islands"] .tool-tab,
+:root[data-ui="islands"] .se-tab {
   border-radius: 6px;
 }
 
-:root[data-tabs="islands"] .term-tab.active,
-:root[data-tabs="islands"] .tool-tab.active,
-:root[data-tabs="islands"] .se-tab.active {
+:root[data-ui="islands"] .term-tab.active,
+:root[data-ui="islands"] .tool-tab.active,
+:root[data-ui="islands"] .se-tab.active {
   box-shadow: inset 0 0 0 1px var(--selected);
 }
 
-:root[data-tabs="islands"] .se-tab.active {
+:root[data-ui="islands"] .se-tab.active {
   background: var(--selected-inactive);
 }
 
