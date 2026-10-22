@@ -377,6 +377,10 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
       if (!w) return;
       if (closing) return void w.destroy().catch(() => {});
       unlisten = await w.once("tauri://destroyed", closed);
+      // The theme's background behind the page, not WebKit's white: a document
+      // with no styles yet (the swap above) otherwise flashes white.
+      const rgb = getComputedStyle(document.body).backgroundColor.match(/\d+(\.\d+)?/g)?.slice(0, 3).map(Number);
+      if (rgb?.length === 3) await w.setBackgroundColor(rgb as [number, number, number]).catch(() => {});
       // The window opens hidden: show it once our content and stylesheets are in.
       const pending = Array.from(doc.querySelectorAll<HTMLLinkElement>("link[rel=stylesheet]")).filter((l) => !l.sheet);
       await Promise.race([

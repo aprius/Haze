@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Capabilities for the main window",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-destroy", "core:window:allow-show", "core:window:allow-set-focus", "core:window:allow-start-dragging", "core:webview:allow-set-webview-zoom", "dialog:default", "opener:default", "opener:allow-reveal-item-in-dir", "notification:default"]
+  "permissions": ["core:default", "core:window:allow-destroy", "core:window:allow-show", "core:window:allow-set-focus", "core:window:allow-set-background-color", "core:webview:allow-set-webview-background-color", "core:window:allow-start-dragging", "core:webview:allow-set-webview-zoom", "dialog:default", "opener:default", "opener:allow-reveal-item-in-dir", "notification:default"]
 }
