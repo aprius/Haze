@@ -516,6 +516,17 @@ const UNITY_MESSAGES = new Set(
 );
 
 /** Whether a member with no usages is dead, as Rider greys it: private, no attribute, not called by name by Unity or an interface. */
+/**
+ * Line Code Vision sits above: the name's, or the attributes just over it.
+ * csharp-ls starts a symbol's range in the comments and blank lines before
+ * it, sometimes on the previous member's closing brace.
+ */
+function declarationLine(model: monaco.editor.ITextModel, range: monaco.IRange, name: monaco.IRange): number {
+  let line = name.startLineNumber;
+  while (line > range.startLineNumber && model.getLineContent(line - 1).trimStart().startsWith("[")) line--;
+  return line;
+}
+
 function deadWhenUnused(model: monaco.editor.ITextModel, kind: number, name: string, declStart: number, nameLine: number, nameColumn: number): boolean {
   if (!GREY_WHEN_UNUSED.has(kind) || name.includes(".") || UNITY_MESSAGES.has(name)) return false;
   const head = model.getValueInRange(new monaco.Range(declStart, 1, nameLine, nameColumn));
@@ -693,7 +704,8 @@ export function registerProviders(): void {
           if (CODE_VISION_KINDS.has(d.kind)) {
             const r = toMonacoRange(d.range);
             const sel = toMonacoRange(d.selectionRange);
-            const range = new monaco.Range(r.startLineNumber, 1, r.startLineNumber, 1);
+            const line = declarationLine(model, r, sel);
+            const range = new monaco.Range(line, 1, line, 1);
             const vision = { symbol: d.kind, name: d.name, key: `${d.kind}:${d.name}:${sel.startLineNumber}`, nameRange: sel, end: r.endLineNumber };
             lenses.push({ range, vision: { kind: "usages", ...vision } });
             if (codeVisionAuthor) lenses.push({ range, vision: { kind: "author", ...vision } });
