@@ -3,7 +3,7 @@
 // for a Unity script's asset usages (scenes, prefabs, assets).
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
-import { getModel } from "../lib/buffers";
+import { getModel, isVirtualPath } from "../lib/buffers";
 import { api, errorMessage, type AssetUsage } from "../lib/ipc";
 import type { FoundLocation } from "../lib/lsp/csharp";
 import { basename, dirname, relative } from "../lib/path";
@@ -93,7 +93,8 @@ function declKind(line: string, name: string): string | undefined {
 /** Adds each location's line text: from open buffers, else read from disk in one batch. */
 async function withText(found: FoundLocation[]): Promise<Usage[]> {
   const byFile = new Map<string, number[]>();
-  for (const f of found) if (!getModel(f.path)) byFile.set(f.path, [...(byFile.get(f.path) ?? []), f.line]);
+  // Decompiled code not open yet has no file to read: its lines show empty.
+  for (const f of found) if (!getModel(f.path) && !isVirtualPath(f.path)) byFile.set(f.path, [...(byFile.get(f.path) ?? []), f.line]);
   const files = [...byFile.keys()];
   const texts = files.length ? await api.readLines(files.map((path) => ({ path, lines: byFile.get(path)! }))) : [];
   const lookup = new Map<string, string>();

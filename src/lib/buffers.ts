@@ -62,8 +62,29 @@ export function getModel(path: string): monaco.editor.ITextModel | null {
   return models.get(path)?.model ?? null;
 }
 
+/** Code that is no file: decompiled DLLs and source-generated files from csharp-ls (`csharp:/…`), read-only. */
+export function isVirtualPath(path: string): boolean {
+  return path.startsWith("csharp:");
+}
+
+type VirtualSource = (path: string) => Promise<string>;
+let virtualSource: VirtualSource | null = null;
+
+/** Reads virtual documents (lsp/csharp.ts; set there to keep this module free of it). */
+export function setVirtualSource(f: VirtualSource): void {
+  virtualSource = f;
+}
+
 function uriFor(path: string): monaco.Uri {
-  return monaco.Uri.file(path);
+  return isVirtualPath(path) ? monaco.Uri.parse(path) : monaco.Uri.file(path);
+}
+
+async function loadVirtual(path: string): Promise<void> {
+  if (!virtualSource) throw new Error("Nothing can show this code");
+  const content = await virtualSource(path);
+  const model = monaco.editor.createModel(content, languageFor(path), uriFor(path));
+  models.set(path, { model, savedVersion: model.getAlternativeVersionId() });
+  setMeta(path, { status: "text", encoding: "utf8", eol: "lf", mtime: 0, dirty: false, diskChanged: false, saving: false });
 }
 
 function isDirty(path: string): boolean {
@@ -97,6 +118,7 @@ export function ensureBuffer(path: string, draft?: { content: string; baseMtime:
   setMeta(path, { status: "loading" });
   const p = (async () => {
     try {
+      if (isVirtualPath(path)) return await loadVirtual(path);
       const file = await api.readFile(path);
       if (file.kind === "binary") return setMeta(path, { status: "binary", size: file.size });
       if (file.kind === "tooLarge") return setMeta(path, { status: "tooLarge", size: file.size });
@@ -141,7 +163,7 @@ export function ensureBuffer(path: string, draft?: { content: string; baseMtime:
 export async function saveBuffer(path: string, opts: { force?: boolean } = {}): Promise<boolean> {
   const entry = models.get(path);
   const meta = useBuffers.getState().meta[path];
-  if (!entry || meta?.status !== "text") return false;
+  if (!entry || meta?.status !== "text" || isVirtualPath(path)) return false;
   const version = entry.model.getAlternativeVersionId();
   patchText(path, { saving: true });
   try {
@@ -196,7 +218,7 @@ export async function reloadBuffer(path: string, read?: FileContent): Promise<vo
 
 /** Reacts to files changed on disk (from the watcher). */
 export async function handleDiskChanges(paths: string[] | "all"): Promise<void> {
-  const targets = paths === "all" ? [...models.keys()] : paths.filter((p) => models.has(p));
+  const targets = paths === "all" ? [...models.keys()].filter((p) => !isVirtualPath(p)) : paths.filter((p) => models.has(p));
   for (const path of targets) {
     const meta = useBuffers.getState().meta[path];
     if (meta?.status !== "text" || meta.saving) continue;

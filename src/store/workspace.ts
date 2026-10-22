@@ -241,7 +241,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
           tabs = [...tabs.slice(0, at), tab, ...tabs.slice(at)];
         }
       }
-      const recentFiles = path.startsWith("haze-")
+      const recentFiles = path.startsWith("haze-") || path.startsWith("csharp:")
         ? ui.recentFiles
         : [path, ...ui.recentFiles.filter((p) => p !== path)].slice(0, 50);
       return { tabs, activeTab: path, recentFiles };

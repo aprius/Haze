@@ -25,6 +25,7 @@ import {
   type LspTextEdit,
 } from "./convert";
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
+import { isVirtualPath, setVirtualSource } from "../buffers";
 import { MIN_PREFIX, pickInline, type LspCompletionItem } from "./inline";
 import { SEMANTIC_LEGEND, semanticTranslator, type LspSemanticLegend } from "./semantic";
 import { useUnity, type TestResult } from "../../store/unity";
@@ -231,9 +232,9 @@ export class CsharpSession {
   }
 
   syncModel(model: monaco.editor.ITextModel): void {
-    if (!this.client?.alive || model.uri.scheme !== "file" || model.getLanguageId() !== "csharp") return;
-    const path = model.uri.fsPath;
-    const uri = model.uri.toString();
+    const path = modelPath(model);
+    if (!this.client?.alive || !path || model.getLanguageId() !== "csharp") return;
+    const uri = serverUri(model);
     if (this.synced.has(uri) || !this.owns(path)) return;
     void this.client.notify("textDocument/didOpen", {
       textDocument: { uri, languageId: "csharp", version: model.getVersionId(), text: model.getValue() },
@@ -387,10 +388,42 @@ export function notifyFileChanges(change: FsChange): void {
   }
 }
 
+// csharp-ls shows code from DLLs (decompiled) and from source generators under
+// csharp: URIs; they open as read-only tabs (lib/buffers.ts) read with csharp/metadata.
+const serverUris = new Map<string, string>();
+
+/** A location's path in Haze: the OS path, or the csharp: URI of decompiled and generated code. */
+function locationPath(uri: string): string {
+  if (!uri.startsWith("csharp:")) return uriToPath(uri);
+  const path = monaco.Uri.parse(uri).toString(true);
+  serverUris.set(path, uri);
+  return path;
+}
+
+function locationUri(uri: string): monaco.Uri {
+  const path = locationPath(uri);
+  return isVirtualPath(path) ? monaco.Uri.parse(path) : monaco.Uri.file(path);
+}
+
+/** A model's URI as the server wrote it. */
+function serverUri(model: monaco.editor.ITextModel): string {
+  if (model.uri.scheme === "file") return model.uri.toString();
+  const path = model.uri.toString(true);
+  return serverUris.get(path) ?? path;
+}
+
+/** The file a csharp: URI belongs to (`csharp:/…/Game.csproj/decompiled/…`), to find its session. */
+const virtualOwner = (uri: monaco.Uri) => monaco.Uri.file(uri.path).fsPath;
+
+function modelPath(model: monaco.editor.ITextModel): string | null {
+  if (model.uri.scheme === "file") return model.uri.fsPath;
+  return model.uri.scheme === "csharp" ? virtualOwner(model.uri) : null;
+}
+
 /** Session for a model if its server is ready for queries. */
 function ready(model: monaco.editor.ITextModel): CsharpSession | undefined {
-  if (model.uri.scheme !== "file") return undefined;
-  const s = sessionForPath(model.uri.fsPath);
+  const path = modelPath(model);
+  const s = path ? sessionForPath(path) : undefined;
   return s?.usable && s.client.alive ? s : undefined;
 }
 
@@ -401,11 +434,12 @@ export function csharpAnswers(model: monaco.editor.ITextModel): boolean {
 
 /** Session for a model's file, or an error saying why there is none. */
 function requireSession(model: monaco.editor.ITextModel): CsharpSession {
-  const s = sessionForPath(model.uri.fsPath);
+  const path = modelPath(model) ?? model.uri.fsPath;
+  const s = sessionForPath(path);
   if (s) return s;
   const project = useWorkspace
     .getState()
-    .projects.filter((p) => p.open && isWithin(model.uri.fsPath, p.path))
+    .projects.filter((p) => p.open && isWithin(path, p.path))
     .sort((a, b) => b.path.length - a.path.length)[0];
   const { info, csharp } = useDotnet.getState();
   const status = project && csharp[project.id];
@@ -418,7 +452,7 @@ function requireSession(model: monaco.editor.ITextModel): CsharpSession {
 }
 
 const docParams = (model: monaco.editor.ITextModel, position: monaco.IPosition) => ({
-  textDocument: { uri: model.uri.toString() },
+  textDocument: { uri: serverUri(model) },
   position: toLspPosition(position),
 });
 
@@ -434,7 +468,7 @@ export interface FoundLocation {
 
 function toFound(l: LspLocation): FoundLocation {
   const r = toMonacoRange(l.range);
-  return { path: uriToPath(l.uri), line: r.startLineNumber, column: r.startColumn, endLine: r.endLineNumber, endColumn: r.endColumn };
+  return { path: locationPath(l.uri), line: r.startLineNumber, column: r.startColumn, endLine: r.endLineNumber, endColumn: r.endColumn };
 }
 
 async function locationsQuery(method: string, model: monaco.editor.ITextModel, pos: monaco.IPosition, extra: object = {}): Promise<FoundLocation[]> {
@@ -502,7 +536,7 @@ export async function workspaceSymbols(projectId: string, query: string): Promis
         name: x.name,
         kind: x.kind,
         container: x.containerName ?? null,
-        path: uriToPath(l.uri),
+        path: locationPath(l.uri),
         line: l.range.start.line + 1,
         column: l.range.start.character + 1,
       };
@@ -632,7 +666,18 @@ export function registerProviders(): void {
   monaco.editor.onDidCreateModel((m) => {
     watchEdits(m);
     // Models get their language right after creation.
-    setTimeout(() => sessionForPath(m.uri.fsPath)?.syncModel(m), 0);
+    setTimeout(() => {
+      const path = modelPath(m);
+      if (path) sessionForPath(path)?.syncModel(m);
+    }, 0);
+  });
+
+  setVirtualSource(async (path) => {
+    const s = sessionForPath(virtualOwner(monaco.Uri.parse(path)));
+    if (!s?.usable || !s.client.alive) throw new Error("C# support is not running for this project");
+    const res = await s.request<{ source?: string } | null>("csharp/metadata", { textDocument: { uri: serverUris.get(path) ?? path } });
+    if (typeof res?.source !== "string") throw new Error("The C# server has no source for this code");
+    return res.source;
   });
 
   monaco.editor.registerCommand("haze.applyCodeAction", (_accessor, path: string, action: LspCodeAction) => {
@@ -645,7 +690,7 @@ export function registerProviders(): void {
       const s = ready(model);
       if (!s) return null;
       const res = await s.request<unknown>("textDocument/definition", docParams(model, position), token).catch(() => null);
-      const found = toLocations(res).map((l) => ({ uri: monaco.Uri.file(uriToPath(l.uri)), range: toMonacoRange(l.range) }));
+      const found = toLocations(res).map((l) => ({ uri: locationUri(l.uri), range: toMonacoRange(l.range) }));
       if (found.length || token.isCancellationRequested || !s.ready) return found;
       return (await definitionFallback?.(model, position, token)) ?? [];
     },
@@ -663,7 +708,7 @@ export function registerProviders(): void {
         { ...docParams(model, position), context: { includeDeclaration: context.includeDeclaration } },
         token,
       );
-      return toLocations(res).map((l) => ({ uri: monaco.Uri.file(uriToPath(l.uri)), range: toMonacoRange(l.range) }));
+      return toLocations(res).map((l) => ({ uri: locationUri(l.uri), range: toMonacoRange(l.range) }));
     },
   });
 
@@ -709,7 +754,7 @@ export function registerProviders(): void {
     async provideDocumentSymbols(model, token) {
       const s = ready(model);
       if (!s) return null;
-      const res = await s.request<LspDocSymbol[] | null>("textDocument/documentSymbol", { textDocument: { uri: model.uri.toString() } }, token);
+      const res = await s.request<LspDocSymbol[] | null>("textDocument/documentSymbol", { textDocument: { uri: serverUri(model) } }, token);
       return (res ?? []).filter((d) => "selectionRange" in d).map(toDocSymbol);
     },
   });
@@ -1090,10 +1135,10 @@ export function registerProviders(): void {
   L.registerCodeActionProvider("csharp", {
     async provideCodeActions(model, range, _context, token) {
       const s = ready(model);
-      if (!s) return { actions: [], dispose() {} };
+      if (!s || model.uri.scheme !== "file") return { actions: [], dispose() {} };
       const res = await s.request<LspCodeAction[] | null>(
         "textDocument/codeAction",
-        { textDocument: { uri: model.uri.toString() }, range: toLspRange(range), context: { diagnostics: [] } },
+        { textDocument: { uri: serverUri(model) }, range: toLspRange(range), context: { diagnostics: [] } },
         token,
       );
       const actions: monaco.languages.CodeAction[] = (res ?? []).map((a) => ({
@@ -1119,7 +1164,7 @@ export function registerProviders(): void {
     async provideDocumentSemanticTokens(model, _lastResultId, token) {
       const s = semanticSession(model);
       if (!s?.caps.semanticTokensProvider?.full) return null;
-      const res = await s.request<{ data: number[] } | null>("textDocument/semanticTokens/full", { textDocument: { uri: model.uri.toString() } }, token);
+      const res = await s.request<{ data: number[] } | null>("textDocument/semanticTokens/full", { textDocument: { uri: serverUri(model) } }, token);
       return res ? { data: s.semanticTokens!(res.data) } : null;
     },
     releaseDocumentSemanticTokens() {},
@@ -1132,7 +1177,7 @@ export function registerProviders(): void {
       if (!s?.caps.semanticTokensProvider?.range) return null;
       const res = await s.request<{ data: number[] } | null>(
         "textDocument/semanticTokens/range",
-        { textDocument: { uri: model.uri.toString() }, range: toLspRange(range) },
+        { textDocument: { uri: serverUri(model) }, range: toLspRange(range) },
         token,
       );
       return res ? { data: s.semanticTokens!(res.data) } : null;
@@ -1145,7 +1190,7 @@ export function registerProviders(): void {
       if (!s) return null;
       const res = await s.request<LspTextEdit[] | null>(
         "textDocument/formatting",
-        { textDocument: { uri: model.uri.toString() }, options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces } },
+        { textDocument: { uri: serverUri(model) }, options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces } },
         token,
       );
       return (res ?? []).map((e) => ({ range: toMonacoRange(e.range), text: e.newText }));

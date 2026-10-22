@@ -154,7 +154,9 @@ pub fn find_csharp_server() -> Option<ServerCommand> {
         return Some(ServerCommand {
             kind: "csharp-ls",
             program: p.to_string_lossy().into_owned(),
-            args: vec![],
+            // Go to Definition into DLLs (UnityEngine, the BCL): decompiled
+            // on demand under `csharp:` URIs, read with `csharp/metadata`.
+            args: vec!["--features".to_string(), "metadata-uris".to_string()],
         });
     }
     None

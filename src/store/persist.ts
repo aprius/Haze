@@ -1,7 +1,7 @@
 // Saves the workspace (and unsaved drafts) to disk, debounced, and restores
 // it at startup.
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { collectDrafts, ensureBuffer, getModel, onDraftsChanged } from "../lib/buffers";
+import { collectDrafts, ensureBuffer, getModel, isVirtualPath, onDraftsChanged } from "../lib/buffers";
 import { api } from "../lib/ipc";
 import { defaultUi, useWorkspace, type Project, type ProjectUi } from "./workspace";
 
@@ -80,6 +80,12 @@ async function doRestore(): Promise<void> {
     const ui: Record<string, ProjectUi> = {};
     for (const p of data.projects ?? []) {
       ui[p.id] = { ...defaultUi(), ...(data.ui?.[p.id] ?? {}) };
+      // Decompiled code is read from the C# server, which is not up yet: those tabs are not reopened.
+      const tabs = ui[p.id].tabs.filter((t) => !isVirtualPath(t.path));
+      if (tabs.length !== ui[p.id].tabs.length) {
+        const activeTab = tabs.some((t) => t.path === ui[p.id].activeTab) ? ui[p.id].activeTab : (tabs[0]?.path ?? null);
+        ui[p.id] = { ...ui[p.id], tabs, activeTab };
+      }
       // The terminal used to share the bottom panel.
       if ((ui[p.id].bottomTab as string) === "terminal") ui[p.id].bottomTab = "build";
     }

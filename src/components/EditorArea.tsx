@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { DefinitionAction, SymbolNavigationAction } from "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js";
-import { disposeBuffer, ensureBuffer, getModel, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
+import { disposeBuffer, ensureBuffer, getModel, isVirtualPath, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
@@ -164,11 +164,11 @@ function installRiderKeymap() {
   // Navigating to another file (Ctrl+click, F12…) opens it in Haze's tabs.
   monaco.editor.registerEditorOpener({
     openCodeEditor(_source, resource, selectionOrPosition) {
-      if (resource.scheme !== "file") return false;
-      const path = resource.fsPath;
+      const path = tabPath(resource);
+      if (!path) return false;
       // The editor asking is the visible project's; opening the file in another
       // project (one nested in this folder, say) would show nothing.
-      const project = activeProject() ?? projectForPath(path);
+      const project = activeProject() ?? (isVirtualPath(path) ? null : projectForPath(path));
       if (!project) return false;
       const pos =
         selectionOrPosition && "startLineNumber" in selectionOrPosition
@@ -180,6 +180,12 @@ function installRiderKeymap() {
       return true;
     },
   });
+}
+
+/** The tab showing a URI: a file, or decompiled and generated code (`csharp:`, lib/buffers.ts). */
+function tabPath(uri: monaco.Uri): string | null {
+  if (uri.scheme === "file") return uri.fsPath;
+  return uri.scheme === "csharp" ? uri.toString(true) : null;
 }
 
 // Monaco's Go to References and Peek References (the right-click menu, and
@@ -199,16 +205,17 @@ function installRiderResultLists() {
   proto._onResult = function (editorService, symbolNavService, editor, result, range) {
     const refs = result.references;
     const pos = editor.getPosition();
-    const path = editor.getModel()?.uri.fsPath;
-    const word = pos && editor.getModel()?.getWordAtPosition(pos);
+    const model = editor.getModel();
+    const path = model && tabPath(model.uri);
+    const word = pos && model?.getWordAtPosition(pos);
     const usages = REFERENCE_ACTIONS.has(this.desc.id);
     const declarations = this instanceof DefinitionAction && (refs.length > 1 || this.configuration.openInPeek);
-    if (!(usages || declarations) || this.configuration.openToSide || !pos || !path || !word || refs.some((r) => r.uri.scheme !== "file"))
+    if (!(usages || declarations) || this.configuration.openToSide || !pos || !path || !word || refs.some((r) => !tabPath(r.uri)))
       return onResult.call(this, editorService, symbolNavService, editor, result, range);
     // Peek Definition with one result goes there, like Go to Definition.
     if (declarations && refs.length === 1) return this._openReference(editor, editorService, refs[0], false, true).then(() => result.dispose());
     const found = refs.map((r) => ({
-      path: r.uri.fsPath,
+      path: tabPath(r.uri)!,
       line: r.range.startLineNumber,
       column: r.range.startColumn,
       endLine: r.range.endLineNumber,
@@ -216,7 +223,7 @@ function installRiderResultLists() {
     }));
     result.dispose();
     const anchor = anchorBelow(editor, { lineNumber: pos.lineNumber, column: word.startColumn });
-    const project = projectForPath(path) ?? activeProject();
+    const project = (isVirtualPath(path) ? null : projectForPath(path)) ?? activeProject();
     if (!usages) void showDeclarations(word.word, found, anchor);
     else if (project) void showLocations(project, `Usages of ${word.word}`, async () => found, false, anchor);
     return Promise.resolve();
@@ -965,6 +972,8 @@ export function EditorArea({ project }: { project: Project }) {
     const model = active && ready ? getModel(active) : null;
     if (editor.getModel() !== model) {
       editor.setModel(model);
+      // Decompiled and generated code is shown, never edited.
+      editor.updateOptions({ readOnly: !!active && isVirtualPath(active), readOnlyMessage: { value: "Decompiled or generated code: read-only" } });
       shownPath.current = model ? active : null;
       currentPath = shownPath.current;
       const vs = active ? viewStates.get(active) : null;
