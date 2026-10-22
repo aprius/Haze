@@ -27,7 +27,7 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 - **Never overwrite the agent's work silently**: files changed on disk reload automatically, and conflicting edits are always surfaced.
 - **No phantom errors**: C# errors come only from a real `dotnet build`, not from a language server that is out of sync.
 
-> Status: early development (v0.1.0).
+> Status: early development (v0.2.0).
 
 ## Features
 
@@ -35,7 +35,9 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 
 - Multiple projects in a sidebar with favorites, ordering and a Welcome screen of recent projects.
 - Full session restore: open projects, expanded folders, editor tabs, panel sizes and terminals.
-- Lazy-loaded, virtualized file tree that updates live when files change on disk.
+- Dark and light themes (switch from the project rail).
+- Lazy-loaded, virtualized file tree that updates live when files change on disk, with JetBrains' file and folder icons (light and dark).
+- Rider-style views: **File System**, and for Unity projects a **Unity** view that lists `Assets` and the packages the project references (registry, git and local), hiding `.meta` files and Unity-hidden assets until *Show All Files* is on. Renames, moves and deletes in a Unity project take the asset's `.meta` along. *Select Opened File* and *Collapse All* in the header.
 - Rider-like Git status colors (modified, added, untracked, ignored, conflicted), propagated to parent folders.
 - Rider-style file nesting: `appsettings.Development.json` under `appsettings.json`, `Index.razor.cs` under `Index.razor`, `Strings.Designer.cs` under `Strings.resx`, and so on.
 - New File/Directory (`Alt+Insert`), Rename (`Shift+F6`/`F2`), Delete to trash, Cut/Copy/Paste, drag and drop (hold `Ctrl` to copy), Copy Path, Open in Terminal, Reveal in File Manager.
@@ -43,6 +45,10 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 ### Editor (Monaco)
 
 - Preview tabs (single click opens a temporary tab; double-click or editing pins it).
+- **Change markers** beside the line numbers, like Rider: added lines (green), modified (blue) and deletions since `HEAD`, following unsaved edits.
+- **Inline blame** at the end of the caret line (`Author, 2 days ago • summary`, details on hover), like GitToolBox.
+- Path breadcrumb in the status bar: click a folder to browse it, the file to list its siblings.
+- Sticky scroll, and wheel scrolling without easing (one line per wheel notch, trackpads 1:1). Code Vision, inline blame and sticky scroll can be turned off in **Settings → Editor**.
 - Preserves encoding (UTF-8, UTF-8 BOM, UTF-16; legacy non-UTF-8 files are read and written as Windows-1252, and stray invalid bytes in UTF-8 files are kept, so no byte is ever lost) and line endings (LF/CRLF); writes atomically via a temp file.
 - **No silent overwrites**: clean buffers reload when the agent edits the file; dirty buffers show *Load disk version* / *Overwrite with mine*; saving is blocked if the file changed on disk.
 - Unsaved drafts survive app restarts.
@@ -54,12 +60,13 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 
 - **Search Everywhere** (double `Shift`) with All / Files / Symbols / Actions / Text tabs. Rider-like fuzzy matching (`ordcon` → `OrdersController.cs`), `Name.cs:12` jumps to a line. Also `Ctrl+Shift+N` Go to File, `Ctrl+Shift+A` Find Action, `Ctrl+E` Recent Files.
 - **Find in Files** (`Ctrl+Shift+F`) / **Replace in Files** (`Ctrl+Shift+R`):
+  - A movable, resizable popup with a splitter between results and preview (all remembered); pin it to keep it open while visiting matches; recent searches (`Alt+↓`) and file mask history.
   - Full regex (lookaround, backreferences), `$1` / `${name}` replacements, Match case, Words, Preserve case.
   - Scopes: Project / Solution / Directory / Open Files; file masks like `*.cs, !*.Designer.cs`; skips `bin/`, `obj/`, `node_modules/` and `.gitignore`d files by default.
   - C# context filter powered by tree-sitter: anywhere, only in comments, only in string literals, or everything except those.
   - Open files are searched and replaced in their unsaved buffers (undoable); other files are written on disk with encoding, BOM and CRLF preserved.
   - Every match is re-checked before writing: files that changed since the search (for example, edited by the agent) are skipped and reported.
-  - Per-match preview with checkboxes and a one-click **Undo** for the whole replace.
+  - Per-match preview with checkboxes, *Replace* for the selected occurrence only, and a one-click **Undo** for the whole replace.
 
 ![Replace in Files](docs/replace-in-files.png)
 
@@ -67,7 +74,9 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 
 - Uses Microsoft's **Roslyn Language Server** (`roslyn-language-server` .NET tool), with `csharp-ls` as a fallback. If it is missing, Haze offers a one-click **Install**.
 - Rider-style navigation: `Ctrl+B`/`Ctrl+Click` Go to Definition, `Alt+F7`/`Shift+F12` Find Usages, `Ctrl+Alt+B` Go to Implementation, `Ctrl+F12` File Structure, `Shift+F6` cross-file Rename (single undo), `Alt+Enter` Roslyn quick fixes and refactorings, `Ctrl+Alt+L` format, plus hover, completion, signature help and highlights.
-- `Ctrl+Click` on a declaration lists its usages, like Rider.
+- `Ctrl+Click` on a declaration lists its usages, like Rider. Usage lists open just under the symbol.
+- **Code Vision** above types and members (`3 usages | author +1`); the count opens Find Usages. Unused private members are greyed out (Unity messages, attributes, overrides and public API are left alone).
+- Rider-like highlighting: a C# grammar that tells methods, types, attributes, doc comments and directives apart, then Roslyn's semantic tokens once the projects load.
 - **Inline completions**: as you type a name, the rest of Roslyn's best completion shows as ghost text; `Tab` accepts it, with the `using` it needs.
 - **Other languages** (TypeScript/JavaScript, Python, C/C++, Go, Rust, Java, shaders…), and C# while Roslyn is still loading or not installed: `Ctrl+Click`/`Ctrl+B` and `Alt+F7` work from a fast text search of the project. The current file is checked first (so local variables resolve to the nearest declaration above), then the project; no types are resolved, so a name declared in several places shows them all.
 - **Real build errors only**: `Ctrl+Shift+B` runs `dotnet build`; the Build panel lists MSBuild errors and warnings and the editor shows squiggles, which clear for a file as soon as you edit it.
@@ -83,11 +92,11 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 
 A Rider/Rebased-style Git client built on top of the system `git` CLI.
 
-- **Commit** (`Alt+0`, `Ctrl+K`): a floating window with the changes and message beside the selected file's diff (`Ctrl+D` opens the diff in a floating window of its own); check the files to commit without staging; Changes / Unversioned Files / Merge Conflicts groups; Amend, Commit and Push, Rollback, Add to VCS, Add to `.gitignore`; Continue/Abort banner during merge or rebase.
-- **Git log** (`Alt+9`): branch graph, branch/tag/remote labels, filters by text, hash, author, branch, path and first parent; commit details; a **Console** tab with every git command Haze ran.
+- **Commit** (`Alt+0`, `Ctrl+K`): a separate OS window (it can leave Haze's window, like Rider's) with the changes and message beside the selected file's diff (`Ctrl+D` opens the diff in a floating window of its own); check the files to commit without staging; files edited but not saved count as changes; multi-select (`Ctrl`/`Shift`+click) to roll back or diff several files; Changes / Unversioned Files / Merge Conflicts groups; Amend, Commit and Push, Rollback, Add to VCS, Add to `.gitignore`; Continue/Abort banner during merge or rebase.
+- **Git log** (`Alt+9`): branch graph, branch/tag/remote labels, filters by text, hash, author, branch, path and first parent; resizable panes; commit details with the changed files as a directory tree (added green, modified orange, deleted red); a **Console** tab with every git command Haze ran.
 - Commit actions: Checkout, New Branch, New Tag, Cherry-Pick, Revert, Undo Commit, Reset to Here (Soft/Mixed/Hard), **Interactive Rebase from Here** (pick / reword / edit / squash / fixup / drop, no text editor needed).
 - **Branches** popup (status bar or ``Ctrl+Shift+` ``): checkout with **Smart Checkout** (auto-stash), new, merge, rebase, compare, push, rename, delete, delete remote; Fetch.
-- **Push** (`Ctrl+Shift+K`) with a preview of outgoing commits and `--force-with-lease`; **Update Project** (`Ctrl+T`) via merge or rebase with auto-stash.
+- **Push** (`Ctrl+Shift+K`) with a preview of outgoing commits and `--force-with-lease`; the target reads `branch → remote : target` as in Rider, editable in place and tagged *New* when the remote lacks it. **Pull** dialog to pick the remote and branch (`Alt+P` on macOS). **Update Project** (`Ctrl+T`) via merge or rebase with auto-stash. Commands that touch the working tree (stash, checkout, reset…) save all files first.
 - **Diff** tabs in Rider style: no filler lines, curved connectors between matching blocks, scrolling kept in step block by block, word-level highlights, `F7`/`Shift+F7` to jump between changes; editable on the working-copy side, where the `>>` gutter icon reverts a block to the left side (hold `Ctrl` on a modified block to append the left lines below it instead). Annotate with Git Blame, Show History for File, Compare with HEAD.
 - **Conflict resolution**: Accept Yours / Accept Theirs, or a **3-way merge view** (Yours | Result | Theirs) with non-conflicting changes pre-merged.
 - **Stashes**: view, apply, pop, drop, unstash as branch, stash including untracked files.
@@ -101,15 +110,15 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
 
 ### Terminal
 
-- Shells run in a separate **PTY host** process: closing or updating Haze does not kill shells or running agents. On reopen Haze reattaches and replays recent output (4 MB per session).
-- Multiple tabs, search in output (`Ctrl+F`), `Ctrl+C` copies when there is a selection. Closing a tab only asks for confirmation when a program is running in it.
+- Docked to the right of the editor (Build and Git sit below). Shells run in a separate **PTY host** process: closing or updating Haze does not kill shells or running agents. On reopen Haze reattaches and replays recent output (4 MB per session).
+- Multiple tabs, search in output (`Ctrl+F`), `Ctrl+C` copies when there is a selection. `Shift+Enter`/`Alt+Enter` insert a newline (for agent prompts). Files copied in Finder paste as their paths.
 - `Ctrl+Click` on paths opens the file at line/column, including MSBuild format (`Program.cs(12,5): error CS1002`) and `file:line:col`. Relative paths resolve against the shell's current directory (after `cd`; on Windows the shell must report it via OSC 7 / OSC 9;9, as Starship or oh-my-posh do).
-- `Alt+F12` toggles the terminal, `Alt+1` toggles the Project view.
+- `Alt+F12` (`Cmd+J` on macOS) toggles the terminal, `Alt+1` toggles the Project view.
 - `HAZE_TERMINAL_ID` is set in every terminal so agent hooks know which tab they run in.
 
 ### AI agents
 
-- **Settings** (`Ctrl+Alt+S`) installs status hooks, keeping your other settings and hooks (a `.haze-backup` copy is made on the first write; remove them anytime):
+- **Settings** (`Ctrl+Alt+S`; pages for Appearance, Editor, AI Agents, Version Control and Project View) installs status hooks, keeping your other settings and hooks (a `.haze-backup` copy is made on the first write; remove them anytime):
   - **Claude Code**: hooks in `~/.claude/settings.json`.
   - **Codex**: lifecycle hooks in `~/.codex/hooks.json` (Codex may ask you to trust them in `/hooks`), plus `notify` in `config.toml` for older versions unless you use it already.
   - **Gemini CLI** (0.26+): hooks in `~/.gemini/settings.json`.
@@ -216,9 +225,9 @@ macOS builds are ad-hoc signed by default; the cask removes the quarantine flag 
 | Quick fix | `Alt+Enter` |
 | Build / Run | `Ctrl+Shift+B` / `Shift+F10` |
 | Commit / Git log | `Alt+0` (`Ctrl+K`) / `Alt+9` |
-| Push / Update Project | `Ctrl+Shift+K` / `Ctrl+T` |
+| Push / Pull / Update Project | `Ctrl+Shift+K` / `Alt+P` (macOS) / `Ctrl+T` |
 | Branches | ``Ctrl+Shift+` `` |
-| Terminal / Project view | `Alt+F12` / `Alt+1` |
+| Terminal / Project view | `Alt+F12` (`Cmd+J` on macOS) / `Alt+1` |
 | Copy Context for AI | `Ctrl+Shift+C` |
 | Settings | `Ctrl+Alt+S` |
 
@@ -273,24 +282,31 @@ Haze is a [Tauri 2](https://tauri.app/) app: a Rust backend that owns the file s
 ```text
 src/                         frontend (React)
   components/                FileTree, EditorArea, TerminalPanel, SearchEverywhere, FindInFiles,
-                             CommitPanel, GitPanel, DiffView, MergeView, RebaseDialog, BuildPanel, ...
-  lib/                       ipc (Rust bindings), buffers (open files), monaco, merge, termLinks, worktrees
+                             CommitPanel, GitPanel, GitDialogs, DiffView, MergeView, RebaseDialog,
+                             BuildPanel, UsagesPopup, SettingsDialog, ...
+  assets/jb/                 JetBrains file and folder icons (Apache 2.0)
+  lib/                       ipc (Rust bindings), buffers (open files), monaco, merge, lineChanges,
+                             termLinks, worktrees, keymap, theme
   lib/lsp/                   JSON-RPC client, C# session and Monaco providers
   store/                     zustand stores: workspace, tree, terminals, git, dotnet, ui, persist
 src-tauri/src/               backend (Rust)
-  main.rs                    entry point: app, --pty-host or --agent-hook mode
+  main.rs, lib.rs            entry point: app, --pty-host, --agent-hook or CLI mode; Tauri commands
+  cli.rs, cli_open.rs        haze agent/run/list/send/wait/read, and haze <folder> [<file>]
+  state.rs                   workspace state (projects, tabs, drafts, layout)
   fs_ops.rs, text.rs         file operations, encoding-preserving read/write
   nesting.rs                 Rider-style file nesting rules
   watcher.rs                 disk change notifications
   git.rs                     git status for the file tree
   git_log.rs                 git log and branch graph lanes
   git_ops.rs                 changes, commit, rollback, branches, stash, blame, rebase, checkpoints
+  git_auth.rs                GitHub / GitLab accounts, keychain tokens, credential helper
   search.rs                  Find/Replace in Files with undo
   syntax.rs                  C# comment/string ranges (tree-sitter)
   file_index.rs              file list and fuzzy matching for Search Everywhere
   lsp.rs                     language server process and message relay
   dotnet.rs                  solutions, projects, launch profiles, dotnet build parsing
   agent_hooks.rs             Claude Code / Codex hook install and the --agent-hook mode
+  shell_env.rs               PATH from the login shell (macOS)
   procinfo.rs                shell working directory and child-process detection for terminals
   pty/                       PTY host (host.rs), client (client.rs), wire protocol (protocol.rs)
 scripts/                     bump-version.sh
