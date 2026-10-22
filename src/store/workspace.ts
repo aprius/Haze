@@ -20,8 +20,15 @@ export interface EditorTab {
   preview: boolean;
 }
 
+/** Project view modes, as in Rider: Unity (Assets and Packages, no .meta) and File System (everything, flat). */
+export type TreeView = "unity" | "files";
+
 export interface ProjectUi {
   expanded: string[];
+  /** null: Unity for Unity projects, File System otherwise. */
+  treeView: TreeView | null;
+  /** Unity view also lists the project root's other folders and Unity-hidden assets (`.x`, `x~`). */
+  treeShowAll: boolean;
   tabs: EditorTab[];
   activeTab: string | null;
   sidebarVisible: boolean;
@@ -62,6 +69,8 @@ export interface Reveal {
 
 export const defaultUi = (): ProjectUi => ({
   expanded: [],
+  treeView: null,
+  treeShowAll: false,
   tabs: [],
   activeTab: null,
   sidebarVisible: true,

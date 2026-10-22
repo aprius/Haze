@@ -1,12 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ChevronLeft } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { closeTabsWithPrompt, EditorArea, revealInTree, saveAll, selectedText, triggerEditorAction } from "./components/EditorArea";
-import { FileTree } from "./components/FileTree";
+import { FileTree, ProjectViewHeader } from "./components/FileTree";
 import { FindInFiles } from "./components/FindInFiles";
 import { SearchEverywhere } from "./components/SearchEverywhere";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
-import { ProjectRail, Splitter, StatusBar, toggleBottom, toggleSidebar, Welcome } from "./components/Shell";
+import { ProjectRail, Splitter, StatusBar, toggleBottom, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
 import { CommitWindow } from "./components/CommitPanel";
 import { DiffWindow } from "./components/DiffView";
@@ -42,14 +41,7 @@ function ProjectView({ project }: { project: Project }) {
         {ui.sidebarVisible && (
           <>
             <div className="sidebar" style={{ width: ui.sidebarWidth }}>
-              <div className="sidebar-tabs">
-                <button className="tool-tab active" onClick={() => toggleSidebar(project.id)} title="Project (Alt+1)">
-                  Project
-                </button>
-                <button className="icon-btn sidebar-hide" title="Hide" onClick={() => updateUi(project.id, { sidebarVisible: false })}>
-                  <ChevronLeft size={14} />
-                </button>
-              </div>
+              <ProjectViewHeader project={project} onHide={() => updateUi(project.id, { sidebarVisible: false })} />
               <FileTree project={project} />
             </div>
             <Splitter vertical value={ui.sidebarWidth} min={160} max={800} onChange={(v) => updateUi(project.id, { sidebarWidth: v })} />

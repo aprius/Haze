@@ -2,7 +2,8 @@
 // Not persisted; rebuilt from disk on startup.
 import { create } from "zustand";
 import { api, errorMessage, type DirEntry, type FsChange, type GitStatus } from "../lib/ipc";
-import { ancestors, isWithin } from "../lib/path";
+import { ancestors, isWithin, join } from "../lib/path";
+import { resolvePackages, type UnityPackage } from "../lib/treeRows";
 
 export type DirState = { entries: DirEntry[] } | { loading: true } | { error: string };
 
@@ -20,6 +21,8 @@ interface TreeState {
   selection: Record<string, string[]>;
   anchor: Record<string, string | null>;
   clipboard: { paths: string[]; cut: boolean } | null;
+  /** Packages each Unity project references, by project root. */
+  packages: Record<string, UnityPackage[]>;
 }
 
 export const useTree = create<TreeState>(() => ({
@@ -28,7 +31,26 @@ export const useTree = create<TreeState>(() => ({
   selection: {},
   anchor: {},
   clipboard: null,
+  packages: {},
 }));
+
+const packagesLoading = new Set<string>();
+
+export async function loadUnityPackages(root: string): Promise<void> {
+  if (packagesLoading.has(root)) return;
+  packagesLoading.add(root);
+  try {
+    const [lock, cache] = await Promise.all([
+      api.readFile(join(join(root, "Packages"), "packages-lock.json")).catch(() => null),
+      api.listDir(join(join(root, "Library"), "PackageCache"), false).catch(() => []),
+    ]);
+    const text = lock?.kind === "text" ? lock.content : null;
+    const packages = resolvePackages(root, text, cache.filter((e) => e.isDir).map((e) => e.name));
+    useTree.setState((s) => ({ packages: { ...s.packages, [root]: packages } }));
+  } finally {
+    packagesLoading.delete(root);
+  }
+}
 
 const inflight = new Map<string, Promise<void>>();
 /** Forced reloads asked for while a listing was in flight: it may predate the change. */
@@ -136,6 +158,8 @@ export function affectsGit(projectId: string, change: FsChange): boolean {
 }
 
 export function handleFsChange(projectId: string, change: FsChange, nest: boolean): void {
+  if (useTree.getState().packages[change.root] && (change.overflow || change.files.some((f) => /packages-lock\.json$|[\\/]PackageCache[\\/][^\\/]+$/.test(f))))
+    void loadUnityPackages(change.root);
   if (change.overflow || change.dirs.length) void refreshDirs(change.root, change.overflow ? "all" : change.dirs, nest);
   if (affectsGit(projectId, change)) refreshGit(projectId, change.root, 300);
 }

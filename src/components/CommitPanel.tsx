@@ -2,12 +2,13 @@
 // with the changes and message on the left and the selected file's diff on the
 // right. Tick files, write a message, Commit or Commit and Push — no staging
 // area to manage. Ctrl+D opens the diff in a floating window of its own.
-import { Camera, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Eye, Folder, FolderTree, RefreshCw, Undo2 } from "lucide-react";
+import { Camera, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Eye, FolderTree, RefreshCw, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { saveAll } from "./EditorArea";
 import { Splitter } from "./Shell";
 import { api, type GitChange } from "../lib/ipc";
 import { basename, dirname } from "../lib/path";
+import { FileIcon } from "./FileIcon";
 import { changeDiffSpec, changeRows, GROUPS, pickRows, shownFiles, toggleChecks } from "../lib/gitView";
 import { absPath, checkedPaths, createCheckpoint, patchRepo, refreshRepo, repo, runGit, toggleReviewed, useGit } from "../store/git";
 import { refreshGit as refreshTreeGit } from "../store/tree";
@@ -348,6 +349,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                     title="Show what changed since the checkpoint"
                   >
                     <ReviewToggle on={!!r.reviewed[f.rel]} onToggle={() => void toggleReviewed(project.id, f.rel)} />
+                    <FileIcon name={basename(f.rel)} />
                     <span className="tree-name">{basename(f.rel)}</span>
                     <span className="tree-hint">{dirname(f.rel)}</span>
                   </div>
@@ -402,7 +404,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                             setChecked(next);
                           }}
                         />
-                        <Folder size={14} className="ico" />
+                        <FileIcon name={row.name} isDir open={!collapsed[row.key]} />
                         <span className="tree-name">{row.name}</span>
                         <span className="tree-hint">{row.files.length}</span>
                       </div>
@@ -426,6 +428,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                       title={c.oldRel ? `${c.oldRel} → ${c.rel}` : c.rel}
                     >
                       <input type="checkbox" checked={checked.has(c.rel)} onChange={() => toggle(c.rel)} onClick={(e) => e.stopPropagation()} />
+                      <FileIcon name={basename(c.rel)} />
                       <span className={"tree-name" + (r.reviewed[c.rel] ? " reviewed-name" : "")}>{basename(c.rel)}</span>
                       <span className="tree-hint">{byDir ? "" : dirname(c.rel)}</span>
                       <ReviewToggle on={!!r.reviewed[c.rel]} onToggle={() => void toggleReviewed(project.id, c.rel)} />

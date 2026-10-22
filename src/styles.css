@@ -482,7 +482,7 @@ kbd {
   right: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   white-space: nowrap;
   cursor: default;
   padding-right: 8px;
@@ -536,6 +536,10 @@ kbd {
 .ico.ext-ts,
 .ico.ext-tsx {
   color: var(--mk-cyan);
+}
+
+.ico-package {
+  color: var(--mk-orange);
 }
 
 .ico-json {
@@ -953,6 +957,16 @@ kbd {
 
 .menu-item.danger {
   color: var(--danger);
+}
+
+.menu-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.menu-check {
+  width: 18px;
+  display: inline-flex;
 }
 
 .menu-shortcut {
@@ -1741,8 +1755,40 @@ kbd {
   padding: 0 8px;
 }
 
-.sidebar-hide {
-  margin-left: auto;
+.tool-title {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.view-switch.static {
+  cursor: default;
+}
+
+.view-switch:not(.static):hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.toolbar-gap {
+  flex: 1;
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: transparent;
 }
 
 .panel-header.slim {

@@ -1,6 +1,6 @@
 // Context menu and modal dialogs, driven by small global stores so any
 // module can open them imperatively.
-import { X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
 import { matches } from "../lib/keymap";
@@ -11,6 +11,8 @@ export interface MenuItem {
   disabled?: boolean;
   danger?: boolean;
   separator?: boolean;
+  /** Set on choices: a check mark when true, the same space when false. */
+  checked?: boolean;
   action?: () => void;
 }
 
@@ -70,7 +72,10 @@ export function ContextMenu() {
               it.action?.();
             }}
           >
-            <span>{it.label}</span>
+            <span className="menu-label">
+              {it.checked !== undefined && <span className="menu-check">{it.checked && <Check size={13} />}</span>}
+              {it.label}
+            </span>
             {it.shortcut && <span className="menu-shortcut">{it.shortcut}</span>}
           </button>
         ),

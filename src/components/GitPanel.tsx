@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, type Branch, type Commit, type CommitDetails, type GraphRow, type LogPage, type LogQuery } from "../lib/ipc";
 import { branchTree, changeRows, type BranchFolder } from "../lib/gitView";
 import { basename, dirname } from "../lib/path";
+import { FileIcon } from "./FileIcon";
 import { repo, runGit, useGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openDiff } from "./DiffView";
@@ -141,7 +142,7 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
                 onClick={() => setCollapsed((c) => ({ ...c, [row.key]: !c[row.key] }))}
               >
                 {collapsed[row.key] ? <ChevronRight size={14} className="ico" /> : <ChevronDown size={14} className="ico" />}
-                <Folder size={14} className="ico" />
+                <FileIcon name={row.name} isDir open={!collapsed[row.key]} />
                 <span className="tree-name">{row.name}</span>
                 <span className="tree-hint">{row.files.length}</span>
               </div>
@@ -163,6 +164,7 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
                 })
               }
             >
+              <FileIcon name={basename(f.rel)} />
               <span className="tree-name">{basename(f.rel)}</span>
               {!byDir && <span className="tree-hint">{dirname(f.rel)}</span>}
             </div>

@@ -1,78 +1,22 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { ChevronDown, ChevronRight, File, FileCode, FileJson, FileText, Folder, FolderOpen, Image, Link } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, Eye, LocateFixed, Package } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { disposeBuffer, renameBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type DirEntry, type GitFileStatus } from "../lib/ipc";
-import { basename, dirname, extname, isWithin, join, relative } from "../lib/path";
+import { basename, dirname, isWithin, join, relative } from "../lib/path";
 import { repo } from "../store/git";
 import { newTerminal } from "../store/terminals";
 import { openDiff } from "./DiffView";
+import { FileIcon } from "./FileIcon";
+import { revealInTree } from "./EditorArea";
 import { showHistory } from "./GitPanel";
-import { isIgnored, loadDir, refreshDirs, refreshGit, setSelection, useTree, type DirState, type GitView } from "../store/tree";
-import { useWorkspace, type Project } from "../store/workspace";
+import { isIgnored, loadDir, loadUnityPackages, refreshDirs, refreshGit, setSelection, useTree, type GitView } from "../store/tree";
+import { useWorkspace, type Project, type TreeView } from "../store/workspace";
+import { buildRows, isUnityProject, resolveView, type Row } from "../lib/treeRows";
 import { confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
 
-const ROW_H = 22;
+const ROW_H = 24;
 const OVERSCAN = 12;
-
-interface Row {
-  entry: DirEntry;
-  depth: number;
-  expandable: boolean;
-  expanded: boolean;
-}
-
-function rootEntry(project: Project): DirEntry {
-  return { name: project.name, path: project.path, isDir: true, isSymlink: false, nestedUnder: null };
-}
-
-export function buildRows(project: Project, dirs: Record<string, DirState>, expanded: Set<string>): Row[] {
-  const rows: Row[] = [];
-  const walk = (dir: string, depth: number) => {
-    const st = dirs[dir];
-    if (!st || !("entries" in st)) return;
-    const names = new Set(st.entries.map((e) => e.name));
-    const kids = new Map<string, DirEntry[]>();
-    for (const e of st.entries) {
-      if (e.nestedUnder && names.has(e.nestedUnder)) {
-        kids.set(e.nestedUnder, [...(kids.get(e.nestedUnder) ?? []), e]);
-      }
-    }
-    const emit = (e: DirEntry, d: number) => {
-      if (e.isDir) {
-        const open = expanded.has(e.path) && !e.isSymlink;
-        rows.push({ entry: e, depth: d, expandable: !e.isSymlink, expanded: open });
-        if (open) walk(e.path, d + 1);
-        return;
-      }
-      const nested = kids.get(e.name) ?? [];
-      const open = nested.length > 0 && expanded.has(e.path);
-      rows.push({ entry: e, depth: d, expandable: nested.length > 0, expanded: open });
-      if (open) nested.forEach((k) => emit(k, d + 1));
-    };
-    for (const e of st.entries) {
-      if (!(e.nestedUnder && names.has(e.nestedUnder))) emit(e, depth);
-    }
-  };
-  const root = rootEntry(project);
-  const open = expanded.has(root.path);
-  rows.push({ entry: root, depth: 0, expandable: true, expanded: open });
-  if (open) walk(root.path, 1);
-  return rows;
-}
-
-function FileIcon({ entry, open }: { entry: DirEntry; open: boolean }) {
-  if (entry.isSymlink) return <Link size={14} className="ico ico-link" />;
-  if (entry.isDir) return open ? <FolderOpen size={14} className="ico ico-folder" /> : <Folder size={14} className="ico ico-folder" />;
-  const ext = extname(entry.name);
-  if (["cs", "fs", "vb", "ts", "tsx", "js", "jsx", "rs", "go", "py", "java", "kt", "cpp", "c", "h", "razor", "cshtml", "xaml", "axaml", "sql", "sh", "ps1"].includes(ext))
-    return <FileCode size={14} className={"ico ico-code ext-" + ext} />;
-  if (["json", "jsonc"].includes(ext)) return <FileJson size={14} className="ico ico-json" />;
-  if (["png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp"].includes(ext)) return <Image size={14} className="ico ico-image" />;
-  if (["md", "txt", "log", "csproj", "sln", "slnx", "props", "targets", "xml", "yml", "yaml", "toml", "config"].includes(ext))
-    return <FileText size={14} className="ico ico-text" />;
-  return <File size={14} className="ico" />;
-}
 
 function statusOf(view: GitView | undefined, entry: DirEntry): GitFileStatus | "changed-dir" | null {
   if (!view) return null;
@@ -101,20 +45,36 @@ export function FileTree({ project }: { project: Project }) {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const expanded = useMemo(() => new Set(ui?.expanded ?? []), [ui?.expanded]);
-  const rows = useMemo(() => buildRows(project, dirs, expanded), [project, dirs, expanded]);
+  const unity = isUnityProject(dirs, project.path);
+  const view = resolveView(ui?.treeView, unity);
+  const showAll = !!ui?.treeShowAll;
+  const packages = useTree((s) => s.packages[project.path]);
+  const rows = useMemo(
+    () => buildRows(project, dirs, expanded, { view, showAll, packages }),
+    [project, dirs, expanded, view, showAll, packages],
+  );
   const selected = useMemo(() => new Set(selection), [selection]);
+  // Scrolls a newly selected row into view once it is listed (Select Opened File expands its folders first).
+  const pendingScroll = useRef<string | null>(null);
 
   // First open: expand the root.
   useEffect(() => {
     if (ui && ui.expanded.length === 0) updateUi(project.id, { expanded: [project.path] });
   }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load every expanded directory that is not cached yet.
+  // Load every expanded directory that is not cached yet; the root always,
+  // since it tells a Unity project apart and the Unity view lists it.
   useEffect(() => {
+    if (!dirs[project.path]) void loadDir(project.path, nest);
     for (const p of expanded) {
-      if (!dirs[p] && isWithin(p, project.path)) void loadDir(p, nest);
+      const inPackage = packages?.some((k) => isWithin(p, k.path));
+      if (!dirs[p] && (isWithin(p, project.path) || inPackage)) void loadDir(p, nest);
     }
-  }, [expanded, dirs, nest, project.path]);
+  }, [expanded, dirs, nest, project.path, packages]);
+
+  useEffect(() => {
+    if (unity && !packages) void loadUnityPackages(project.path);
+  }, [unity, packages, project.path]);
 
   useEffect(() => {
     const el = scroller.current;
@@ -123,6 +83,31 @@ export function FileTree({ project }: { project: Project }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => {
+    pendingScroll.current = selection[selection.length - 1] ?? null;
+  }, [selection]);
+
+  useEffect(() => {
+    const path = pendingScroll.current;
+    const el = scroller.current;
+    if (!path || !el) return;
+    const i = rows.findIndex((r) => r.entry.path === path);
+    if (i < 0) return;
+    pendingScroll.current = null;
+    const top = i * ROW_H;
+    if (top < el.scrollTop || top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = Math.max(0, top - el.clientHeight / 2);
+  }, [rows, selection]);
+
+  // Unity tracks assets by the GUID in their `.meta`: it moves, renames and is
+  // deleted with its asset, even when the view hides it. Copies get a new one.
+  const metaOf = (path: string): string | null => {
+    if (!unity) return null;
+    const st = dirs[dirname(path)];
+    const m = path + ".meta";
+    return st && "entries" in st && st.entries.some((e) => e.path === m) ? m : null;
+  };
+  const withMeta = (paths: string[]): string[] => [...new Set(paths.flatMap((p) => [p, metaOf(p) ?? p]))];
 
   const setExpanded = (path: string, open: boolean) =>
     updateUi(project.id, (u) => ({
@@ -181,10 +166,18 @@ export function FileTree({ project }: { project: Project }) {
       okLabel: "Rename",
     });
     if (!name || name === entry.name) return;
+    const meta = metaOf(entry.path);
     const target = await run("Rename", () => api.renamePath(entry.path, name.trim()));
     if (!target) return;
     renameBuffer(entry.path, target);
     useWorkspace.getState().renamePaths(entry.path, target);
+    if (meta) {
+      const to = await run("Rename .meta", () => api.renamePath(meta, name.trim() + ".meta"));
+      if (to) {
+        renameBuffer(meta, to);
+        useWorkspace.getState().renamePaths(meta, to);
+      }
+    }
     setSelection(project.id, [target], target);
     afterChange(dirname(entry.path));
   };
@@ -194,10 +187,11 @@ export function FileTree({ project }: { project: Project }) {
     if (!list.length) return;
     const what = list.length === 1 ? `"${list[0].name}"` : `${list.length} items`;
     if (!(await confirmAction("Delete", `Move ${what} to the trash?`, "Delete", true))) return;
-    const ok = await run("Delete", () => api.trashPaths(list.map((e) => e.path)));
+    const paths = withMeta(list.map((e) => e.path));
+    const ok = await run("Delete", () => api.trashPaths(paths));
     if (ok === null) return;
     const ws = useWorkspace.getState();
-    const gone = (p: string) => list.some((e) => isWithin(p, e.path));
+    const gone = (p: string) => paths.some((x) => isWithin(p, x));
     const closing = (ws.ui[project.id]?.tabs ?? []).filter((t) => gone(t.path)).map((t) => t.path);
     // Unsaved buffers stay open so their text is not lost.
     const clean = closing.filter((p) => !(meta[p]?.status === "text" && (meta[p] as { dirty: boolean }).dirty));
@@ -209,25 +203,28 @@ export function FileTree({ project }: { project: Project }) {
 
   const paste = async (dir: string) => {
     if (!clipboard) return;
+    const sources = clipboard.cut ? withMeta(clipboard.paths) : clipboard.paths;
     const fn = clipboard.cut ? api.movePaths : api.copyPaths;
-    const result = await run(clipboard.cut ? "Move" : "Copy", () => fn(clipboard.paths, dir));
+    const result = await run(clipboard.cut ? "Move" : "Copy", () => fn(sources, dir));
     if (!result) return;
     if (clipboard.cut) {
       // Paths already in `dir` were not moved.
-      clipboard.paths.filter((p) => dirname(p) !== dir).forEach((p) => {
+      sources.filter((p) => dirname(p) !== dir).forEach((p) => {
         const to = join(dir, basename(p));
         renameBuffer(p, to);
         useWorkspace.getState().renamePaths(p, to);
       });
       useTree.setState({ clipboard: null });
     }
+    const shown = clipboard.paths.map(basename);
+    const picked = result.filter((p) => shown.includes(basename(p)) || !p.endsWith(".meta"));
     setExpanded(dir, true);
-    setSelection(project.id, result, result[0]);
+    setSelection(project.id, picked, picked[0]);
     afterChange();
   };
 
   const moveInto = async (paths: string[], dir: string, copy: boolean) => {
-    const sources = paths.filter((p) => dirname(p) !== dir || copy);
+    const sources = (copy ? paths : withMeta(paths)).filter((p) => dirname(p) !== dir || copy);
     if (!sources.length) return;
     const result = await run(copy ? "Copy" : "Move", () => (copy ? api.copyPaths(sources, dir) : api.movePaths(sources, dir)));
     if (!result) return;
@@ -376,6 +373,7 @@ export function FileTree({ project }: { project: Project }) {
 
   const first = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
   const last = Math.min(rows.length, Math.ceil((scrollTop + height) / ROW_H) + OVERSCAN);
+  const libraryDir = join(project.path, "Library");
   const cutPaths = clipboard?.cut ? new Set(clipboard.paths) : null;
 
   return (
@@ -393,7 +391,8 @@ export function FileTree({ project }: { project: Project }) {
         <div style={{ height: rows.length * ROW_H, position: "relative" }}>
           {rows.slice(first, last).map((row, i) => {
             const index = first + i;
-            const st = statusOf(git, row.entry);
+            // Package caches are ignored by git, yet they are the packages: no grey.
+            const st = view === "unity" && isWithin(row.entry.path, libraryDir) ? null : statusOf(git, row.entry);
             const loadingDir = row.expanded && row.entry.isDir && dirs[row.entry.path] && "loading" in dirs[row.entry.path];
             const dirError = row.expanded && row.entry.isDir && dirs[row.entry.path] && "error" in dirs[row.entry.path];
             const dirty = meta[row.entry.path]?.status === "text" && (meta[row.entry.path] as { dirty: boolean }).dirty;
@@ -431,12 +430,17 @@ export function FileTree({ project }: { project: Project }) {
                 >
                   {row.expandable ? row.expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} /> : null}
                 </span>
-                <FileIcon entry={row.entry} open={row.expanded} />
+                {row.pkg ? (
+                  <Package size={14} className="ico ico-package" />
+                ) : view === "unity" && row.entry.isDir && !row.entry.isSymlink ? null : (
+                  <FileIcon name={row.entry.name} isDir={row.entry.isDir} isSymlink={row.entry.isSymlink} open={row.expanded} />
+                )}
                 <span className="tree-name">
                   {row.entry.name}
                   {dirty && <span className="dirty-mark">*</span>}
                 </span>
-                {row.depth === 0 && <span className="tree-hint">{project.path}</span>}
+                {row.entry.path === project.path && <span className="tree-hint">{project.path}</span>}
+                {row.pkg && <span className="tree-hint">{row.pkg.version}</span>}
                 {loadingDir && <span className="tree-hint">loading…</span>}
                 {dirError && <span className="tree-hint error">{(dirs[row.entry.path] as { error: string }).error}</span>}
               </div>
@@ -444,6 +448,68 @@ export function FileTree({ project }: { project: Project }) {
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+const VIEW_LABEL: Record<TreeView, string> = { unity: "Unity", files: "File System" };
+
+/** Header of the Project tool window: view mode switcher and tree actions, as in Rider. */
+export function ProjectViewHeader({ project, onHide }: { project: Project; onHide: () => void }) {
+  const ui = useWorkspace((s) => s.ui[project.id]);
+  const updateUi = useWorkspace((s) => s.updateUi);
+  const unity = useTree((s) => isUnityProject(s.dirs, project.path));
+  const view = resolveView(ui?.treeView, unity);
+
+  const locate = () => {
+    const tab = ui?.activeTab;
+    if (tab && isWithin(tab, project.path)) revealInTree(project, tab);
+  };
+
+  return (
+    <div className="sidebar-tabs">
+      <span className="tool-title">Project</span>
+      {unity ? (
+        <button
+          className="view-switch"
+          title="Change view"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            openMenu(
+              { clientX: r.left, clientY: r.bottom + 2 },
+              (["unity", "files"] as const).map((v) => ({
+                label: VIEW_LABEL[v],
+                checked: v === view,
+                action: () => updateUi(project.id, { treeView: v }),
+              })),
+            );
+          }}
+        >
+          {VIEW_LABEL[view]}
+          <ChevronDown size={12} />
+        </button>
+      ) : (
+        <span className="view-switch static">{VIEW_LABEL[view]}</span>
+      )}
+      <span className="toolbar-gap" />
+      {view === "unity" && (
+        <button
+          className={"icon-btn" + (ui?.treeShowAll ? " on" : "")}
+          title="Show All Files"
+          onClick={() => updateUi(project.id, (u) => ({ treeShowAll: !u.treeShowAll }))}
+        >
+          <Eye size={14} />
+        </button>
+      )}
+      <button className="icon-btn" title="Select Opened File" disabled={!ui?.activeTab} onClick={locate}>
+        <LocateFixed size={14} />
+      </button>
+      <button className="icon-btn" title="Collapse All" onClick={() => updateUi(project.id, { expanded: [project.path] })}>
+        <ChevronsDownUp size={14} />
+      </button>
+      <button className="icon-btn" title="Hide" onClick={onHide}>
+        <ChevronLeft size={14} />
+      </button>
     </div>
   );
 }
