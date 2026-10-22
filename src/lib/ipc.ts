@@ -237,6 +237,63 @@ export type BuildEvent =
 
 export type BuildVerb = "build" | "rebuild" | "clean" | "test" | "restore";
 
+export type UnityLogType = "log" | "warning" | "error" | "exception" | "assert";
+
+/** Diagnostics from Unity's compiler; no end positions. */
+export type UnityDiagnostic = Omit<BuildDiagnostic, "endLine" | "endColumn">;
+
+/** A message from the Unity Editor's `com.aprius.ide.haze` link (HazeLink.cs), or the link's own state. */
+export type UnityMessage =
+  | { t: "link"; connected: boolean }
+  | { t: "state"; unity: string; playing: boolean; paused: boolean; compiling: boolean }
+  | { t: "compileStarted" }
+  | { t: "compileFinished"; messages: UnityDiagnostic[] }
+  | { t: "log"; type: UnityLogType; message: string; stack: string | null }
+  | { t: "testRunStarted"; pattern: string }
+  | { t: "testStarted"; fullName: string }
+  | {
+      t: "testFinished";
+      fullName: string;
+      name: string;
+      status: TestStatus;
+      duration: number;
+      message: string | null;
+      stack: string | null;
+      output: string | null;
+    }
+  | { t: "testRunFinished"; passed: number; failed: number; skipped: number; error: string | null };
+
+export type UnityCommand = "refresh" | "compile" | "play" | "pause" | "step";
+
+/** What Haze sends Unity: a command, or one with arguments. */
+export type UnityRequest =
+  | { t: UnityCommand }
+  /** Selects an asset (and the component `fileId` in it, when its scene is open) in Unity. */
+  | { t: "show"; path: string; fileId: string | null }
+  /** Runs the tests whose full names match the regex, in Edit and/or Play Mode as they are. */
+  | { t: "runTests"; pattern: string };
+
+export type TestStatus = "passed" | "failed" | "skipped" | "inconclusive";
+
+/** A place in a scene, prefab or asset (unity_index.rs). */
+export interface AssetUsage {
+  path: string;
+  line: number;
+  object: string | null;
+  /** Text: local file ids pass 2^53. */
+  fileId: string | null;
+}
+
+export interface AssetUsages {
+  scripts: AssetUsage[];
+  methods: Record<string, AssetUsage[]>;
+}
+
+export interface UnityEvent {
+  root: string;
+  event: UnityMessage;
+}
+
 export interface ServerCommand {
   kind: "roslyn" | "csharp-ls";
   program: string;
@@ -450,6 +507,11 @@ export const api = {
   dotnetInfo: (root: string) => invoke<DotnetInfo>("dotnet_info", { root }),
   buildStart: (verb: BuildVerb, target: string | null, cwd: string) => invoke<number>("build_start", { verb, target, cwd }),
   buildCancel: (id: number) => invoke<void>("build_cancel", { id }),
+  unityConnect: (root: string) => invoke<boolean>("unity_connect", { root }),
+  unityDisconnect: (root: string) => invoke<void>("unity_disconnect", { root }),
+  unitySend: (root: string, message: UnityRequest) => invoke<boolean>("unity_send", { root, message }),
+  unityClasses: (root: string) => invoke<Record<string, string[]>>("unity_classes", { root }),
+  unityAssetUsages: (root: string, script: string, classes: string[]) => invoke<AssetUsages>("unity_asset_usages", { root, script, classes }),
   lspFindServer: () => invoke<ServerCommand | null>("lsp_find_server"),
   lspStart: (cwd: string) => invoke<{ id: number; kind: ServerCommand["kind"] }>("lsp_start", { cwd }),
   lspSend: (id: number, message: unknown) => invoke<void>("lsp_send", { id, message }),
@@ -478,6 +540,10 @@ export function onFsChange(cb: (c: FsChange) => void): Promise<UnlistenFn> {
 
 export function onBuildEvent(cb: (e: BuildEvent) => void): Promise<UnlistenFn> {
   return listen<BuildEvent>("build://event", (e) => cb(e.payload));
+}
+
+export function onUnityEvent(cb: (e: UnityEvent) => void): Promise<UnlistenFn> {
+  return listen<UnityEvent>("unity://event", (e) => cb(e.payload));
 }
 
 export function onLspEvent(cb: (e: LspEvent) => void): Promise<UnlistenFn> {

@@ -2,7 +2,7 @@
 // server status, and the last build with its diagnostics (shown as editor
 // markers — the only errors Haze shows, so they are always real).
 import { create } from "zustand";
-import { api, errorMessage, onBuildEvent, type BuildDiagnostic, type BuildEvent, type BuildVerb, type DotnetInfo } from "../lib/ipc";
+import { api, errorMessage, onBuildEvent, type BuildDiagnostic, type BuildEvent, type BuildVerb, type DotnetInfo, type UnityDiagnostic } from "../lib/ipc";
 import { monaco } from "../lib/monaco";
 import { basename } from "../lib/path";
 import { setTask, withTask } from "./tasks";
@@ -17,6 +17,8 @@ export interface CsharpStatus {
 }
 
 export interface BuildState {
+  /** `dotnet build`, or a script compilation in the Unity Editor (see store/unity.ts). */
+  tool: "dotnet" | "unity";
   id: number | null;
   verb: BuildVerb;
   target: string | null;
@@ -175,7 +177,7 @@ export async function startBuild(projectId: string, root: string, verb: BuildVer
   useDotnet.setState((s) => ({
     builds: {
       ...s.builds,
-      [projectId]: { id: null, verb, target, running: true, lines: [`> dotnet ${verb} ${target ?? ""}`.trim()], diagnostics: [], result: null },
+      [projectId]: { tool: "dotnet", id: null, verb, target, running: true, lines: [`> dotnet ${verb} ${target ?? ""}`.trim()], diagnostics: [], result: null },
     },
   }));
   editedSinceBuild.clear();
@@ -197,14 +199,91 @@ export async function startBuild(projectId: string, root: string, verb: BuildVer
 useDotnet.subscribe((s, prev) => {
   if (s.builds === prev.builds) return;
   for (const [projectId, b] of Object.entries(s.builds)) {
-    const label = `dotnet ${b.verb}${b.target ? " " + basename(b.target) : ""}`;
+    const label = b.tool === "unity" ? "Unity: compiling scripts" : `dotnet ${b.verb}${b.target ? " " + basename(b.target) : ""}`;
     setTask(`build:${projectId}`, b.running ? { projectId, label, cancel: () => cancelBuild(projectId) } : null);
   }
 });
 
 export function cancelBuild(projectId: string): void {
   const b = useDotnet.getState().builds[projectId];
-  if (b?.id != null) void api.buildCancel(b.id);
+  // Unity's compilation cannot be stopped from here; only stop waiting for it.
+  if (b?.tool === "unity" && b.running) patchBuild(projectId, () => ({ running: false, result: { code: null, cancelled: true, millis: 0 } }));
+  else if (b?.id != null) void api.buildCancel(b.id);
+}
+
+// ------------------------------------------------------------------ Unity
+
+const UNITY_HEADER = "> Unity: compile scripts";
+const unityStarted = new Map<string, number>();
+
+/** Whether a `dotnet build` is running for the project: Unity's results wait until it ends. */
+function dotnetRunning(projectId: string): boolean {
+  const b = useDotnet.getState().builds[projectId];
+  return !!b?.running && b.tool === "dotnet";
+}
+
+/** Haze asked Unity to compile (or Unity started on its own): the Build panel shows it running. */
+export function unityCompileStarted(projectId: string, line = UNITY_HEADER): void {
+  listen();
+  if (dotnetRunning(projectId)) return;
+  unityStarted.set(projectId, Date.now());
+  useDotnet.setState((s) => ({
+    builds: {
+      ...s.builds,
+      [projectId]: { tool: "unity", id: null, verb: "build", target: null, running: true, lines: [line], diagnostics: [], result: null },
+    },
+  }));
+  editedSinceBuild.clear();
+  applyMarkers();
+}
+
+/** The compiler's messages from Unity's last compilation, as the result of a build. */
+export function unityCompileFinished(projectId: string, messages: UnityDiagnostic[]): void {
+  listen();
+  if (dotnetRunning(projectId)) return;
+  const started = unityStarted.get(projectId);
+  unityStarted.delete(projectId);
+  const seen = new Set<string>();
+  const diagnostics: BuildDiagnostic[] = [];
+  for (const m of messages) {
+    const d = { ...m, endLine: null, endColumn: null };
+    if (seen.has(diagKey(d))) continue;
+    seen.add(diagKey(d));
+    diagnostics.push(d);
+  }
+  const lines = [
+    UNITY_HEADER,
+    ...diagnostics.map((d) => `${d.file ?? d.project ?? "Unity"}${d.line ? `(${d.line},${d.column ?? 1})` : ""}: ${d.severity}${d.code ? " " + d.code : ""}: ${d.message}`),
+  ];
+  const code = diagnostics.some((d) => d.severity === "error") ? 1 : 0;
+  useDotnet.setState((s) => ({
+    builds: {
+      ...s.builds,
+      [projectId]: {
+        tool: "unity",
+        id: null,
+        verb: "build",
+        target: null,
+        running: false,
+        lines,
+        diagnostics,
+        result: { code, cancelled: false, millis: started ? Date.now() - started : 0 },
+      },
+    },
+  }));
+  applyMarkers();
+}
+
+/** Unity did not answer a compile request (busy, or its window throttled in the background). */
+export function unityCompileUnanswered(projectId: string): void {
+  const b = useDotnet.getState().builds[projectId];
+  if (!b?.running || b.tool !== "unity") return;
+  unityStarted.delete(projectId);
+  patchBuild(projectId, (cur) => ({
+    running: false,
+    lines: [...cur.lines, "Unity did not answer. It may be busy; its result appears here when it compiles."],
+    result: { code: null, cancelled: true, millis: 0 },
+  }));
 }
 
 /** The solution if there is one, else the first project, else the folder itself. */

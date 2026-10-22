@@ -1,5 +1,5 @@
 // Settings: fonts, layout style, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting.
-import { Bot, Code, FolderTree, GitBranch, type LucideIcon, Type, X } from "lucide-react";
+import { Bot, Box, Code, FolderTree, GitBranch, type LucideIcon, Type, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { create } from "zustand";
 import {
@@ -22,7 +22,7 @@ import { useWorkspace } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
 import { toast } from "./Overlays";
 
-type Page = "appearance" | "editor" | "agents" | "vcs" | "project";
+type Page = "appearance" | "editor" | "agents" | "vcs" | "project" | "unity";
 
 // The page stays selected between openings.
 const useSettings = create<{ open: boolean; page: Page }>(() => ({ open: false, page: "appearance" }));
@@ -361,12 +361,33 @@ function ProjectViewSection() {
   );
 }
 
+function UnitySection() {
+  const autoRefresh = useWorkspace((s) => s.unityAutoRefresh);
+  return (
+    <>
+      <PageHeader
+        title="Unity"
+        desc="Add the com.aprius.ide.haze package to a Unity project and pick Haze as External Script Editor. Haze then links to the open Unity Editor: Build compiles in Unity, and its Console, Play, Pause and Step are in Haze."
+      />
+      <div className="settings-card">
+        <SwitchRow
+          label="Refresh assets in Unity when files change"
+          desc="Saving in Haze or an agent's edits make Unity import and compile right away, without switching to it. Skipped in Play Mode."
+          checked={autoRefresh}
+          onChange={(on) => useWorkspace.setState({ unityAutoRefresh: on })}
+        />
+      </div>
+    </>
+  );
+}
+
 const PAGES: { id: Page; name: string; icon: LucideIcon; body: () => ReactNode }[] = [
   { id: "appearance", name: "Appearance", icon: Type, body: () => <FontSettingsSection /> },
   { id: "editor", name: "Editor", icon: Code, body: () => <EditorSection /> },
   { id: "agents", name: "AI Agents", icon: Bot, body: () => <AgentsSection /> },
   { id: "vcs", name: "Version Control", icon: GitBranch, body: () => <GitAccountsSection /> },
   { id: "project", name: "Project View", icon: FolderTree, body: () => <ProjectViewSection /> },
+  { id: "unity", name: "Unity", icon: Box, body: () => <UnitySection /> },
 ];
 
 export function SettingsDialog() {

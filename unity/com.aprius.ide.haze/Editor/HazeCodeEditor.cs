@@ -23,7 +23,10 @@ namespace Haze.Ide.Editor
             // or compiler option recompiles the scripts without touching any
             // file Unity reports to SyncIfNeeded. Unchanged files are not rewritten.
             if (Discovery.IsHaze(CodeEditor.CurrentEditorInstallation) && !Application.isBatchMode && !AssetDatabase.IsAssetImportWorkerProcess())
+            {
                 EditorApplication.delayCall += ProjectGeneration.Sync;
+                HazeLink.Start();
+            }
         }
 
         public CodeEditor.Installation[] Installations =>
@@ -97,7 +100,11 @@ namespace Haze.Ide.Editor
 
         public void SyncAll() => ProjectGeneration.Sync();
 
-        public void Initialize(string editorInstallationPath) { }
+        /// <summary>Haze picked as External Script Editor: listen for it right away, not after the next reload.</summary>
+        public void Initialize(string editorInstallationPath)
+        {
+            if (Discovery.IsHaze(editorInstallationPath)) HazeLink.Start();
+        }
 
         public bool OpenProject(string filePath = "", int line = -1, int column = -1)
         {

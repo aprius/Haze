@@ -8,6 +8,9 @@ Makes Haze a Unity **External Script Editor**:
   completion, Find Usages and Rename work in Haze.
 - Double-clicking a script or a console error opens it in Haze at the right
   line. A running Haze is reused.
+- A live link to Haze, as Rider's: Build in Haze compiles in Unity, the
+  Console, Play, Pause and Step are in Haze, and Unity imports files changed
+  in Haze (or by an agent) without waiting for its window to be focused.
 
 ## Install
 
@@ -21,6 +24,31 @@ Then pick **Haze** in *Preferences → External Tools → External Script Editor
 If Haze is not listed, choose *Browse…* and select `Haze.app` (macOS) or
 `haze.exe` (Windows). Project files are generated right away; *Regenerate
 project files* in the same panel forces it.
+
+## Live link
+
+While Haze is the External Script Editor, the package listens on
+`127.0.0.1` (a port kept across script reloads) and writes the port and a
+random token to `Library/Haze/EditorInstance.json`. Haze reads it and
+connects for each open Unity project; the connection drops on every script
+reload and Haze reconnects within a second. One JSON object per line:
+
+- Unity → Haze: `state` (Unity version, Play Mode, paused), `compileStarted`,
+  `compileFinished` (the compiler's errors and warnings, kept across the
+  reload), `log` (Console messages with their stack traces; package paths
+  resolved to files on disk).
+- Haze → Unity: `hello` (the token), `refresh` (`AssetDatabase.Refresh`,
+  not in Play Mode), `compile` (refresh, then the compiler's result; the
+  last one again when nothing changed), `play`, `pause`, `step`, `show`
+  (select an asset, or the GameObject of a component in it when its scene is
+  open or it is a prefab), `runTests` (a regex of test full names).
+- Unity → Haze during a test run: `testRunStarted`, `testStarted`,
+  `testFinished` (status, duration, message, stack trace, output),
+  `testRunFinished`.
+
+Running tests needs the Test Framework package (`com.unity.test-framework`,
+in Unity's default templates): the `Haze.Ide.Editor.Tests` assembly that
+drives it compiles only when the package is installed.
 
 ## Project generation
 

@@ -27,6 +27,10 @@ import {
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
 import { MIN_PREFIX, pickInline, type LspCompletionItem } from "./inline";
 import { SEMANTIC_LEGEND, semanticTranslator, type LspSemanticLegend } from "./semantic";
+import { useUnity, type TestResult } from "../../store/unity";
+import { unityMessage } from "../unity/messages";
+import { assetUsagesFor, onUnityCodeChanged, unityBaseFor, unityGenerateActive, unityRootFor } from "../unity/scripts";
+import { fixtureName, isTestHead, namespaceAt, testPattern, typeName } from "../unity/tests";
 
 // What Roslyn reloads on: sources, project files and restore output. Other
 // JSON (Unity's Library writes plenty) would only be parsed and dropped.
@@ -679,8 +683,9 @@ export function registerProviders(): void {
 
   // Code Vision, like Rider: "3 usages | aprius +1" above types and members. Lenses are
   // resolved only when scrolled into view, so a long file asks only for what is shown.
+  // In Unity projects also "Event function", "2 asset usages" and "Run" for tests (see unityLenses).
   interface Vision {
-    kind: "usages" | "author";
+    kind: "usages" | "author" | "unity";
     symbol: number;
     name: string;
     key: string;
@@ -688,6 +693,12 @@ export function registerProviders(): void {
     end: number;
   }
   type VisionLens = monaco.languages.CodeLens & { vision: Vision };
+  // Unity's answers (base classes, asset usages, test results) arrive later than Roslyn's.
+  const refreshVision = () => codeVisionProvider && codeVisionChanged.fire(codeVisionProvider);
+  onUnityCodeChanged(refreshVision);
+  useUnity.subscribe((s, prev) => {
+    if (Object.keys(s.projects).some((id) => s.projects[id]?.tests.results !== prev.projects[id]?.tests.results)) refreshVision();
+  });
   codeVisionProvider = {
     onDidChange: codeVisionChanged.event,
     async provideCodeLenses(model, token) {
@@ -698,7 +709,8 @@ export function registerProviders(): void {
         .catch(() => null);
       if (token.isCancellationRequested) return null;
       const lenses: VisionLens[] = [];
-      const walk = (ds: LspDocSymbol[]) => {
+      const unity = unityContext(model, res ?? []);
+      const walk = (ds: LspDocSymbol[], parents: LspDocSymbol[]) => {
         for (const d of ds) {
           if (!("selectionRange" in d)) continue;
           if (CODE_VISION_KINDS.has(d.kind)) {
@@ -707,18 +719,23 @@ export function registerProviders(): void {
             const line = declarationLine(model, r, sel);
             const range = new monaco.Range(line, 1, line, 1);
             const vision = { symbol: d.kind, name: d.name, key: `${d.kind}:${d.name}:${sel.startLineNumber}`, nameRange: sel, end: r.endLineNumber };
-            lenses.push({ range, vision: { kind: "usages", ...vision } });
+            const extra = unity ? unityLenses(model, unity, d, parents, range, sel) : null;
+            // An event function is called by Unity, not by code: no "no usages", never greyed.
+            if (extra?.eventFunction) lenses.push({ range, vision: { ...vision, kind: "unity" }, command: extra.eventFunction });
+            else lenses.push({ range, vision: { kind: "usages", ...vision } });
+            for (const command of extra?.more ?? []) lenses.push({ range, vision: { ...vision, kind: "unity" }, command });
             if (codeVisionAuthor) lenses.push({ range, vision: { kind: "author", ...vision } });
           }
-          if (d.children) walk(d.children);
+          if (d.children) walk(d.children, [...parents, d]);
         }
       };
-      walk(res ?? []);
+      walk(res ?? [], []);
       pruneUnused(model, new Set(lenses.map((l) => l.vision.key)));
       return { lenses, dispose() {} };
     },
     async resolveCodeLens(model, lens, token) {
       const { vision: v } = lens as VisionLens;
+      if (v.kind === "unity") return lens;
       if (v.kind === "author") {
         const a = await codeVisionAuthor?.(model, lens.range.startLineNumber, v.end).catch(() => null);
         return { ...lens, command: { id: "", title: a?.title ?? "", tooltip: a?.tooltip } };
@@ -746,12 +763,99 @@ export function registerProviders(): void {
   };
   L.registerCodeLensProvider("csharp", codeVisionProvider);
 
+  interface UnityContext {
+    root: string;
+    projectId: string | null;
+    path: string;
+    text: string;
+    /** Asset usages of this script and its classes' methods; null while the index loads. */
+    assets: ReturnType<typeof assetUsagesFor>;
+  }
+
+  function unityContext(model: monaco.editor.ITextModel, symbols: LspDocSymbol[]): UnityContext | null {
+    const path = model.uri.fsPath;
+    const root = unityRootFor(path);
+    if (!root) return null;
+    const classes: string[] = [];
+    const collect = (ds: LspDocSymbol[]) => ds.forEach((d) => (d.kind === 5 && classes.push(typeName(d.name)), d.children && collect(d.children)));
+    collect(symbols);
+    const projectId = Object.entries(useUnity.getState().projects).find(([, u]) => u.root === root)?.[0] ?? null;
+    return { root, projectId, path, text: model.getValue(), assets: classes.length ? assetUsagesFor(root, path, classes) : null };
+  }
+
+  const plural = (n: number, one: string) => (n === 1 ? `1 ${one}` : `${n} ${one}s`);
+
+  /** The aggregate result of the tests matching a pattern: failed wins, then running, then passed. */
+  function testsStatus(projectId: string | null, pattern: string): { title: string; tooltip: string } | null {
+    const results = projectId ? useUnity.getState().projects[projectId]?.tests.results : undefined;
+    if (!results) return null;
+    const re = new RegExp(pattern);
+    const hits: TestResult[] = Object.values(results).filter((r) => re.test(r.fullName));
+    if (!hits.length) return null;
+    const failed = hits.filter((r) => r.status === "failed");
+    if (failed.length) return { title: hits.length > 1 ? `✗ ${failed.length}/${hits.length} failed` : "✗ failed", tooltip: failed[0].message ?? "Failed" };
+    if (hits.some((r) => r.status === "running")) return { title: "… running", tooltip: "Running in Unity" };
+    if (hits.every((r) => r.status === "passed")) {
+      const ms = hits.reduce((n, r) => n + r.duration, 0);
+      return { title: hits.length > 1 ? `✓ ${hits.length} passed` : "✓ passed", tooltip: `${Math.round(ms)} ms` };
+    }
+    return { title: hits.some((r) => r.status === "skipped") ? "skipped" : "inconclusive", tooltip: hits[0].message ?? "" };
+  }
+
+  /** Rider's Unity Code Vision for a type or member of a Unity script. */
+  function unityLenses(
+    model: monaco.editor.ITextModel,
+    u: UnityContext,
+    d: LspDocSymbol,
+    parents: LspDocSymbol[],
+    range: monaco.IRange,
+    sel: monaco.IRange,
+  ): { eventFunction?: monaco.languages.Command; more: monaco.languages.Command[] } {
+    const more: monaco.languages.Command[] = [];
+    const name = d.name.replace(/\(.*$/, "");
+    const classes = [...parents.filter((p) => p.kind === 5).map((p) => p.name), ...(d.kind === 5 ? [d.name] : [])];
+    const fixture = classes.length ? fixtureName(namespaceAt(u.text, model.getOffsetAt({ lineNumber: sel.startLineNumber, column: 1 })), classes) : "";
+    const runTests = (pattern: string, label: string) => {
+      more.push({ id: "haze.unityRunTests", title: "▶ Run", tooltip: `Run ${label} in Unity`, arguments: [u.path, pattern, label] });
+      const status = testsStatus(u.projectId, pattern);
+      if (status) more.push({ id: "haze.unityShowTests", title: status.title, tooltip: status.tooltip, arguments: [u.path] });
+    };
+
+    if (d.kind === 5) {
+      const base = unityBaseFor(u.root, typeName(d.name));
+      if ((base === "MonoBehaviour" || base === "ScriptableObject") && u.assets) {
+        const n = u.assets.scripts.length;
+        more.push(
+          n
+            ? { id: "haze.unityAssetUsages", title: plural(n, "asset usage"), tooltip: "Scenes, prefabs and assets using this script", arguments: [u.path, `Asset usages of ${name}`, u.assets.scripts] }
+            : { id: "", title: "no asset usages" },
+        );
+      }
+      // A fixture: a class with a test method among its own members.
+      const hasTests = (d.children ?? []).some((c) => c.kind === 6 && isTestHead(model.getValueInRange({ ...toMonacoRange(c.range), endLineNumber: toMonacoRange(c.selectionRange).startLineNumber, endColumn: toMonacoRange(c.selectionRange).startColumn })));
+      if (hasTests) runTests(testPattern(fixture), name);
+      return { more };
+    }
+    if (d.kind !== 6) return { more };
+    const owner = parents.filter((p) => p.kind === 5).pop();
+    const base = owner ? unityBaseFor(u.root, typeName(owner.name)) : null;
+    const msg = base ? unityMessage(base, name) : undefined;
+    const eventFunction = msg ? { id: "", title: "Event function", tooltip: `Unity ${base} message: ${msg.description}` } : undefined;
+    const calls = u.assets?.methods[name];
+    if (calls?.length)
+      more.push({ id: "haze.unityAssetUsages", title: plural(calls.length, "asset usage"), tooltip: "UnityEvents calling this method", arguments: [u.path, `Asset usages of ${name}`, calls] });
+    const head = model.getValueInRange({ startLineNumber: range.startLineNumber, startColumn: 1, endLineNumber: sel.startLineNumber, endColumn: sel.startColumn });
+    if (fixture && isTestHead(head)) runTests(testPattern(fixture, name), `${name}`);
+    return { eventFunction, more };
+  }
+
   type HazeCompletion = monaco.languages.CompletionItem & { lsp: LspCompletionItem; path: string };
   L.registerCompletionItemProvider("csharp", {
     triggerCharacters: [".", "<", " ", "(", "[", ":", "\"", "#"],
     async provideCompletionItems(model, position, context, token) {
       const s = ready(model);
-      if (!s) return { suggestions: [] };
+      // Generate lists Unity's event functions alone (lib/unity/generate.ts).
+      if (!s || unityGenerateActive()) return { suggestions: [] };
       const res = await s.request<{ items: LspCompletionItem[]; isIncomplete?: boolean } | LspCompletionItem[] | null>(
         "textDocument/completion",
         {

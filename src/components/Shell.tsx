@@ -1,7 +1,7 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
+import { Box, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type TextEncoding } from "../lib/ipc";
@@ -10,11 +10,12 @@ import { useGit } from "../store/git";
 import { useTasks } from "../store/tasks";
 import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
 import { useTree } from "../store/tree";
+import { useUnity } from "../store/unity";
 import { toggleCommitWindow, useUi } from "../store/ui";
 import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
-import { useWorkspace, type Project } from "../store/workspace";
+import { useWorkspace, type BottomTab, type Project } from "../store/workspace";
 import { closeTabsWithPrompt, PathCrumbs, useCursor } from "./EditorArea";
 import { confirmAction, openMenu } from "./Overlays";
 import { disposeView, toggleTerminal } from "./TerminalPanel";
@@ -252,7 +253,7 @@ export function toggleSidebar(projectId: string): void {
 }
 
 /** Shows the bottom dock on `tab`, or hides it when that tab is already showing. */
-export function toggleBottom(projectId: string, tab: "build" | "git"): void {
+export function toggleBottom(projectId: string, tab: BottomTab): void {
   const ws = useWorkspace.getState();
   const ui = ws.ui[projectId];
   const showing = !!ui?.bottomVisible && ui.bottomTab === tab;
@@ -290,6 +291,7 @@ export function StatusBar({ project }: { project: Project | null }) {
   const cursor = useCursor();
   const commitOpen = useUi((s) => !!project && s.commitWindow === project.id);
   const zoom = useZoom((s) => s.zoom);
+  const unity = useUnity((s) => (project ? !!s.projects[project.id] : false));
   return (
     <div className="status-bar">
       {project && (
@@ -360,6 +362,15 @@ export function StatusBar({ project }: { project: Project | null }) {
           >
             <GitGraph size={12} /> Git
           </button>
+          {unity && (
+            <button
+              className={"status-item status-btn" + (ui?.bottomVisible && ui.bottomTab === "unity" ? " on" : "")}
+              onClick={() => toggleBottom(project.id, "unity")}
+              title="Unity's Console"
+            >
+              <Box size={12} /> Unity
+            </button>
+          )}
         </>
       )}
       {project && (

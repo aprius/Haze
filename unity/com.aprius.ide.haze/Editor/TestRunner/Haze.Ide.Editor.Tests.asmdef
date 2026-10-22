@@ -1,0 +1,30 @@
+{
+    "name": "Haze.Ide.Editor.Tests",
+    "rootNamespace": "Haze.Ide.Editor",
+    "references": [
+        "Haze.Ide.Editor",
+        "GUID:0acc523941302664db1f4e527237feb3",
+        "GUID:27619889b8ba8c24980f49ee34dbb44a"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "HAZE_TEST_FRAMEWORK"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.test-framework",
+            "expression": "1.1.0",
+            "define": "HAZE_TEST_FRAMEWORK"
+        }
+    ],
+    "noEngineReferences": false
+}

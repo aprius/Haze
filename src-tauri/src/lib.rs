@@ -17,6 +17,8 @@ mod shell_env;
 mod state;
 mod syntax;
 mod text;
+mod unity;
+mod unity_index;
 mod watcher;
 
 use std::path::PathBuf;
@@ -170,13 +172,16 @@ fn watch_project(
     app: AppHandle,
     watchers: State<'_, watcher::Watchers>,
     index: State<'_, Arc<file_index::FileIndex>>,
+    unity: State<'_, Arc<unity_index::UnityIndexes>>,
     root: String,
 ) -> CmdResult<()> {
     let index = index.inner().clone();
+    let unity = unity.inner().clone();
     let sink: watcher::ChangeSink = Arc::new(move |change: watcher::FsChange| {
         if change.overflow || !change.dirs.is_empty() {
             index.invalidate(&change.root);
         }
+        unity.changed(&change);
         let _ = app.emit("fs://changed", change);
     });
     // Ordered with unwatch_project (both run on the main thread); the slow part runs on its own thread.
@@ -185,8 +190,14 @@ fn watch_project(
 }
 
 #[tauri::command]
-fn unwatch_project(watchers: State<'_, watcher::Watchers>, root: String) {
+fn unwatch_project(
+    watchers: State<'_, watcher::Watchers>,
+    unity: State<'_, Arc<unity_index::UnityIndexes>>,
+    root: String,
+) {
     watchers.unwatch(&root);
+    // Its changes are no longer reported.
+    unity.forget(root.as_ref());
 }
 
 // ---------------------------------------------------------------- search
@@ -525,6 +536,44 @@ fn build_cancel(builds: State<'_, dotnet::Builds>, id: u64) {
 }
 
 #[tauri::command]
+fn unity_connect(app: AppHandle, links: State<'_, unity::UnityLinks>, root: String) -> bool {
+    let sink: unity::UnitySink = Arc::new(move |e| {
+        let _ = app.emit("unity://event", e);
+    });
+    links.connect(&root, sink)
+}
+
+#[tauri::command]
+fn unity_disconnect(links: State<'_, unity::UnityLinks>, root: String) {
+    links.disconnect(&root);
+}
+
+#[tauri::command]
+fn unity_send(links: State<'_, unity::UnityLinks>, root: String, message: serde_json::Value) -> bool {
+    links.send(&root, &message)
+}
+
+#[tauri::command]
+async fn unity_classes(
+    indexes: State<'_, Arc<unity_index::UnityIndexes>>,
+    root: String,
+) -> CmdResult<std::collections::HashMap<String, Vec<String>>> {
+    let indexes = indexes.inner().clone();
+    blocking(move || Ok(indexes.classes(root.as_ref()))).await
+}
+
+#[tauri::command]
+async fn unity_asset_usages(
+    indexes: State<'_, Arc<unity_index::UnityIndexes>>,
+    root: String,
+    script: String,
+    classes: Vec<String>,
+) -> CmdResult<unity_index::AssetUsages> {
+    let indexes = indexes.inner().clone();
+    blocking(move || Ok(indexes.asset_usages(root.as_ref(), script.as_ref(), &classes))).await
+}
+
+#[tauri::command]
 async fn lsp_find_server() -> CmdResult<Option<lsp::ServerCommand>> {
     blocking(|| Ok(lsp::find_csharp_server())).await
 }
@@ -780,6 +829,8 @@ pub fn run() {
         .manage(NavSearchGeneration::default())
         .manage(Arc::new(lsp::LspServers::default()))
         .manage(dotnet::Builds::default())
+        .manage(unity::UnityLinks::default())
+        .manage(Arc::new(unity_index::UnityIndexes::default()))
         .setup(|app| {
             create_main_window(app)?;
             if let Ok(dir) = app.path().app_config_dir() {
@@ -850,6 +901,11 @@ pub fn run() {
             dotnet_info,
             build_start,
             build_cancel,
+            unity_connect,
+            unity_disconnect,
+            unity_send,
+            unity_classes,
+            unity_asset_usages,
             lsp_find_server,
             lsp_start,
             lsp_send,

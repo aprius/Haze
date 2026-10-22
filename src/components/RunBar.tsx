@@ -1,11 +1,13 @@
 // Title bar: the window's drag area with the project name, and for a .NET project
-// the C# server status, run configuration and Build / Run / Test.
-import { FlaskConical, Hammer, Play, RefreshCw, Square } from "lucide-react";
+// the C# server status, run configuration and Build / Run / Test; for a Unity
+// project, Play / Pause / Step and Refresh in its Unity Editor.
+import { FlaskConical, Hammer, Pause, Play, RefreshCw, Square, StepForward } from "lucide-react";
 import { useMemo } from "react";
 import type { DotnetInfo } from "../lib/ipc";
 import { restartCsharp } from "../lib/lsp/csharp";
 import { basename, dirname } from "../lib/path";
-import { cancelBuild, defaultBuildTarget, startBuild, useDotnet, type CsharpStatus } from "../store/dotnet";
+import { cancelBuild, defaultBuildTarget, useDotnet, type CsharpStatus } from "../store/dotnet";
+import { buildProject, unityCommand, useUnity } from "../store/unity";
 import { closeTerminal, newTerminal, useTerminals } from "../store/terminals";
 import { useWorkspace, type Project } from "../store/workspace";
 import { confirmAction } from "./Overlays";
@@ -83,7 +85,14 @@ function RunControls({ project }: { project: Project }) {
   const csharp = useDotnet((s) => s.csharp[project.id]);
   const selected = useWorkspace((s) => s.ui[project.id]?.runConfig ?? null);
   const configs = useMemo(() => runConfigs(info), [info]);
-  if (!info || info.projects.length === 0) return null;
+  const unity = useUnity((s) => !!s.projects[project.id]);
+  if (!info || info.projects.length === 0)
+    return unity ? (
+      <>
+        <span className="run-spacer" data-tauri-drag-region />
+        <UnityControls project={project} />
+      </>
+    ) : null;
   const current = configs.find((c) => c.id === selected) ?? configs[0];
   const target = defaultBuildTarget(project.id);
   const label = csharpLabel(csharp);
@@ -114,12 +123,13 @@ function RunControls({ project }: { project: Project }) {
         </span>
       )}
       <span className="run-spacer" data-tauri-drag-region />
+      <UnityControls project={project} />
       {build?.running ? (
         <button className="icon-btn" title="Cancel build" onClick={() => cancelBuild(project.id)}>
           <Square size={14} />
         </button>
       ) : (
-        <button className="icon-btn" title={`Build ${target ? basename(target) : project.name} (${shortcutLabel("build")})`} onClick={() => void startBuild(project.id, project.path, "build", target)}>
+        <button className="icon-btn" title={`Build ${target ? basename(target) : project.name} (${shortcutLabel("build")})`} onClick={() => void buildProject(project.id, project.path)}>
           <Hammer size={14} />
         </button>
       )}
@@ -142,6 +152,35 @@ function RunControls({ project }: { project: Project }) {
         </>
       )}
     </>
+  );
+}
+
+/** Rider's Unity toolbar: the link to the Unity Editor, and its Play / Pause / Step. */
+function UnityControls({ project }: { project: Project }) {
+  const unity = useUnity((s) => s.projects[project.id]);
+  if (!unity) return null;
+  const off = !unity.connected;
+  const hint = off ? "Unity is not connected: open the project in Unity with Haze as External Script Editor (package com.aprius.ide.haze)" : null;
+  const send = (command: "play" | "pause" | "step" | "refresh") => void unityCommand(project.id, command);
+  return (
+    <span className="unity-controls">
+      <span className={"unity-link" + (off ? "" : " on")} title={hint ?? `Connected to Unity ${unity.version ?? ""}`.trim()}>
+        Unity
+      </span>
+      <button className={"icon-btn" + (unity.playing ? " on" : "")} disabled={off} title={hint ?? (unity.playing ? "Stop" : "Play")} onClick={() => send("play")}>
+        {unity.playing ? <Square size={14} /> : <Play size={14} />}
+      </button>
+      <button className={"icon-btn" + (unity.paused ? " on" : "")} disabled={off} title={hint ?? "Pause"} onClick={() => send("pause")}>
+        <Pause size={14} />
+      </button>
+      <button className="icon-btn" disabled={off || !unity.playing} title={hint ?? "Step"} onClick={() => send("step")}>
+        <StepForward size={14} />
+      </button>
+      <button className="icon-btn" disabled={off || unity.playing} title={hint ?? "Refresh assets in Unity"} onClick={() => send("refresh")}>
+        <RefreshCw size={14} />
+      </button>
+      <span className="unity-sep" />
+    </span>
   );
 }
 

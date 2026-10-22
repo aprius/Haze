@@ -1,9 +1,10 @@
-// Build tool window: Problems from the last `dotnet build` plus its output.
+// Build tool window: Problems from the last `dotnet build` (or Unity compilation) plus its output.
 import { AlertCircle, AlertTriangle, ChevronDown, Hammer, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { basename, relative } from "../lib/path";
-import { cancelBuild, defaultBuildTarget, startBuild, useDotnet } from "../store/dotnet";
-import { useWorkspace, type Project } from "../store/workspace";
+import { cancelBuild, useDotnet, type BuildState } from "../store/dotnet";
+import { buildProject, useUnity } from "../store/unity";
+import { useWorkspace, type BottomTab, type Project } from "../store/workspace";
 import { shortcutLabel } from "../lib/keymap";
 
 export function BuildPanel({ project }: { project: Project }) {
@@ -19,15 +20,7 @@ export function BuildPanel({ project }: { project: Project }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [build?.lines.length]);
 
-  const status = !build
-    ? "No build yet"
-    : build.running
-      ? `Running dotnet ${build.verb}…`
-      : build.result?.cancelled
-        ? "Cancelled"
-        : build.result?.code === 0
-          ? `Succeeded in ${((build.result?.millis ?? 0) / 1000).toFixed(1)} s`
-          : `Failed${build.result ? ` in ${(build.result.millis / 1000).toFixed(1)} s` : ""}`;
+  const status = buildStatus(build);
 
   return (
     <div className="terminal-panel build-panel">
@@ -55,7 +48,7 @@ export function BuildPanel({ project }: { project: Project }) {
             <button
               className="icon-btn"
               title={`Build (${shortcutLabel("build")})`}
-              onClick={() => void startBuild(project.id, project.path, "build", build?.target ?? defaultBuildTarget(project.id))}
+              onClick={() => void buildProject(project.id, project.path)}
             >
               <Hammer size={14} />
             </button>
@@ -95,10 +88,24 @@ export function BuildPanel({ project }: { project: Project }) {
   );
 }
 
-/** Switches the bottom panel between tool windows (Build, Git). */
+function buildStatus(build: BuildState | undefined): string {
+  if (!build) return "No build yet";
+  const took = build.result?.millis ? ` in ${(build.result.millis / 1000).toFixed(1)} s` : "";
+  if (build.tool === "unity") {
+    if (build.running) return "Compiling in Unity…";
+    if (build.result?.cancelled) return "Not compiled";
+    return build.result?.code === 0 ? `Unity: compiled${took}` : `Unity: compilation failed${took}`;
+  }
+  if (build.running) return `Running dotnet ${build.verb}…`;
+  if (build.result?.cancelled) return "Cancelled";
+  return build.result?.code === 0 ? `Succeeded${took}` : `Failed${took}`;
+}
+
+/** Switches the bottom panel between tool windows (Build, Git, and Unity's Console in Unity projects). */
 export function ToolTabs({ project }: { project: Project }) {
   const tab = useWorkspace((s) => s.ui[project.id]?.bottomTab ?? "build");
-  const set = (bottomTab: "build" | "git") => useWorkspace.getState().updateUi(project.id, { bottomTab });
+  const unity = useUnity((s) => !!s.projects[project.id]);
+  const set = (bottomTab: BottomTab) => useWorkspace.getState().updateUi(project.id, { bottomTab });
   return (
     <div className="tool-tabs">
       <button className={"tool-tab" + (tab === "build" ? " active" : "")} onClick={() => set("build")}>
@@ -107,6 +114,16 @@ export function ToolTabs({ project }: { project: Project }) {
       <button className={"tool-tab" + (tab === "git" ? " active" : "")} onClick={() => set("git")} title="Git (Alt+9)">
         Git
       </button>
+      {unity && (
+        <>
+          <button className={"tool-tab" + (tab === "unity" ? " active" : "")} onClick={() => set("unity")} title="Unity's Console">
+            Unity
+          </button>
+          <button className={"tool-tab" + (tab === "tests" ? " active" : "")} onClick={() => set("tests")} title="Unity tests">
+            Tests
+          </button>
+        </>
+      )}
     </div>
   );
 }

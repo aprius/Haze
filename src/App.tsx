@@ -7,6 +7,7 @@ import { SearchEverywhere } from "./components/SearchEverywhere";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, toggleBottom, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
+import { TestsPanel, UnityPanel } from "./components/UnityPanel";
 import { CommitWindow } from "./components/CommitPanel";
 import { DiffWindow } from "./components/DiffView";
 import { BranchesPopup, openBranchesPopup, openPullDialog, openPushDialog, PullDialog, PushDialog, updateProject } from "./components/GitDialogs";
@@ -19,7 +20,9 @@ import { TerminalPanel, toggleTerminal } from "./components/TerminalPanel";
 import { UsagesPopup } from "./components/UsagesPopup";
 import { notifyFileChanges, startCsharp, stopCsharp } from "./lib/lsp/csharp";
 import { invalidateTextNav } from "./lib/textNav";
-import { defaultBuildTarget, loadDotnetInfo, startBuild, useDotnet } from "./store/dotnet";
+import { loadDotnetInfo, useDotnet } from "./store/dotnet";
+import { buildProject, startUnityLink, stopUnityLink, unityFilesChanged, useUnity } from "./store/unity";
+import { unityFilesChangedForCode } from "./lib/unity/scripts";
 import { handleDiskChanges } from "./lib/buffers";
 import { matches, type Command } from "./lib/keymap";
 import { api, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
@@ -29,7 +32,7 @@ import { restore } from "./store/persist";
 import { startTerminals, syncSessions } from "./store/terminals";
 import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
 import { openCommitWindow, openFindInFiles, openSearchEverywhere, toggleCommitWindow, useUi } from "./store/ui";
-import { projectForPath, useWorkspace, type Project } from "./store/workspace";
+import { projectForPath, useWorkspace, type BottomTab, type Project } from "./store/workspace";
 
 function ProjectView({ project }: { project: Project }) {
   const ui = useWorkspace((s) => s.ui[project.id]);
@@ -77,12 +80,20 @@ function ProjectView({ project }: { project: Project }) {
             onChange={(v) => updateUi(project.id, { bottomHeight: v })}
           />
           <div className="bottom" style={{ height: ui.bottomHeight }}>
-            {ui.bottomTab === "git" ? <GitPanel project={project} /> : <BuildPanel project={project} />}
+            <BottomPanel project={project} tab={ui.bottomTab} />
           </div>
         </>
       )}
     </div>
   );
+}
+
+function BottomPanel({ project, tab }: { project: Project; tab: BottomTab }) {
+  const unity = useUnity((s) => !!s.projects[project.id]);
+  if (tab === "git") return <GitPanel project={project} />;
+  if (tab === "unity" && unity) return <UnityPanel project={project} />;
+  if (tab === "tests" && unity) return <TestsPanel project={project} />;
+  return <BuildPanel project={project} />;
 }
 
 /** Directory of the item selected in the Project view, for "Find in Directory". */
@@ -125,7 +136,7 @@ function useGlobalShortcuts(project: Project | null) {
       else if (is("branches") && project) openBranchesPopup(project);
       else if (is("commitView") && project) toggleCommitWindow(project.id);
       else if (is("gitView") && project) toggleBottom(project.id, "git");
-      else if (is("build") && project) void startBuild(project.id, project.path, "build", defaultBuildTarget(project.id));
+      else if (is("build") && project) void buildProject(project.id, project.path);
       else if (is("run") && project) {
         const configs = runConfigs(useDotnet.getState().info[project.id]);
         const id = useWorkspace.getState().ui[project.id]?.runConfig;
@@ -277,6 +288,16 @@ export default function App() {
     }
   }, [loaded, openRoots]);
 
+  // Unity projects: the live link to their Unity Editor (play mode, compilation, Console).
+  useEffect(() => {
+    if (!loaded) return;
+    const open = useWorkspace.getState().projects.filter((p) => p.open);
+    for (const p of open) void startUnityLink(p.id, p.path);
+    for (const id of Object.keys(useUnity.getState().projects)) {
+      if (!open.some((p) => p.id === id)) stopUnityLink(id);
+    }
+  }, [loaded, openRoots]);
+
   useEffect(() => {
     const un = onFsChange((change) => {
       const ws = useWorkspace.getState();
@@ -286,6 +307,8 @@ export default function App() {
       if (affectsGit(project.id, change)) refreshRepo(project.id, project.path, 400, true);
       void handleDiskChanges(change.overflow ? "all" : change.files);
       notifyFileChanges(change);
+      unityFilesChanged(project.id, change);
+      unityFilesChangedForCode(change);
       invalidateTextNav(change.root);
       if (change.overflow || change.files.some((f) => /\.(csproj|fsproj|sln|slnx)$|launchSettings\.json$/i.test(f))) {
         void loadDotnetInfo(project.id, project.path).then((info) => {

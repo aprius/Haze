@@ -18,6 +18,7 @@ interface Persisted {
   lineBlame?: boolean;
   codeVision?: boolean;
   notifyAgents?: boolean;
+  unityAutoRefresh?: boolean;
 }
 
 /** Drafts restored from the last run, consumed when their tab first opens. */
@@ -40,6 +41,7 @@ function snapshot(): Persisted {
     lineBlame: s.lineBlame,
     codeVision: s.codeVision,
     notifyAgents: s.notifyAgents,
+    unityAutoRefresh: s.unityAutoRefresh,
   };
 }
 
@@ -99,6 +101,7 @@ async function doRestore(): Promise<void> {
       lineBlame: data.lineBlame ?? true,
       codeVision: data.codeVision ?? true,
       notifyAgents: data.notifyAgents ?? true,
+      unityAutoRefresh: data.unityAutoRefresh ?? true,
     });
   }
   useWorkspace.setState({ loaded: true });

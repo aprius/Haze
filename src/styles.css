@@ -723,12 +723,6 @@ kbd {
   border-color: color-mix(in srgb, var(--selected), var(--fg) 15%);
 }
 
-:root[data-ui="islands"] .editor-tab .tab-close,
-:root[data-ui="islands"] .term-tab .tab-close {
-  width: 18px;
-  height: 18px;
-}
-
 :root[data-ui="islands"] .editor-tab.active .tab-close:hover {
   background: color-mix(in srgb, var(--selected), var(--fg) 12%);
 }
@@ -3380,4 +3374,92 @@ html:has(.float-external) body {
 }
 .settings-row.static {
   cursor: default;
+}
+
+/* Unity: title bar controls and the Console tool window */
+
+.unity-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.unity-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.unity-link::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.6;
+}
+
+.unity-link.on::before {
+  background: var(--git-added);
+  opacity: 1;
+}
+
+.unity-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 6px;
+  background: var(--border);
+}
+
+.sev-info {
+  color: var(--muted);
+  flex: none;
+}
+
+.unity-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.unity-panel .problem.selected {
+  background: var(--selected-inactive);
+}
+
+.unity-collapsed {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--selected-inactive);
+  color: var(--muted);
+  font-size: calc(var(--ui-font-size) * 11 / 13);
+}
+
+.unity-details {
+  white-space: pre-wrap;
+  color: var(--fg);
+}
+
+.unity-frame {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.unity-frame:hover {
+  text-decoration: underline;
+}
+
+.test-passed {
+  color: var(--git-added);
+  flex: none;
+}
+
+.unity-panel .test-fixture {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
 }

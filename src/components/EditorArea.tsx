@@ -21,7 +21,10 @@ import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
 import { choose, openMenu, prompt, toast } from "./Overlays";
-import { showDeclarations, showLocations } from "./UsagesPopup";
+import { showAssetUsages, showDeclarations, showLocations } from "./UsagesPopup";
+import type { AssetUsage } from "../lib/ipc";
+import { runUnityTests } from "../store/unity";
+import { generateUnityMember, registerUnityCompletion } from "../lib/unity/generate";
 import { isMac, shortcutLabel } from "../lib/keymap";
 
 export const useCursor = create<{ line: number; column: number; selected: number }>(() => ({
@@ -157,6 +160,7 @@ function installRiderKeymap() {
   installDeclarationsList();
   // Ctrl+Click / Ctrl+B in languages Roslyn does not cover, and in C# until it is up.
   registerTextNavigation();
+  registerUnityCompletion();
   // Navigating to another file (Ctrl+click, F12…) opens it in Haze's tabs.
   monaco.editor.registerEditorOpener({
     openCodeEditor(_source, resource, selectionOrPosition) {
@@ -372,6 +376,24 @@ monaco.editor.registerCommand("haze.codeVisionUsages", (_accessor, path: string,
   const shown = monaco.editor.getEditors().filter((e) => e.getModel() === model);
   const editor = shown.find((e) => e.hasWidgetFocus()) ?? shown[0];
   void showLocations(project, `Usages of ${name}`, () => findUsages(model, pos), false, editor ? anchorBelow(editor, pos) : null);
+});
+
+// Unity Code Vision: asset usages of a script or method, and running tests in Unity.
+monaco.editor.registerCommand("haze.unityAssetUsages", (_accessor, _path: string, title: string, usages: AssetUsage[]) => {
+  showAssetUsages(title, usages, null);
+});
+
+monaco.editor.registerCommand("haze.unityRunTests", (_accessor, path: string, pattern: string, label: string) => {
+  const project = projectForPath(path);
+  if (!project) return;
+  void runUnityTests(project.id, pattern, label).then((ok) => {
+    if (!ok) toast("Unity is not connected: open the project in Unity with Haze as External Script Editor.", "error");
+  });
+});
+
+monaco.editor.registerCommand("haze.unityShowTests", (_accessor, path: string) => {
+  const project = projectForPath(path);
+  if (project) useWorkspace.getState().updateUi(project.id, { bottomVisible: true, bottomTab: "tests" });
 });
 
 function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): monaco.IDisposable {
@@ -878,6 +900,11 @@ export function EditorArea({ project }: { project: Project }) {
     }, "9_git");
     codeAction("haze.rename", "Rename Symbol…", [M.Shift | K.F6, K.F2], () => {
       if (isCs()) void renameAt(editor);
+    }, "1_modification");
+    // Rider's Generate; Haze generates Unity event functions. On macOS Ctrl+Enter, IntelliJ's
+    // other Generate key: Cmd+N is Search Everywhere in Haze.
+    codeAction("haze.generate", "Generate Unity Event Function…", isMac ? [M.WinCtrl | K.Enter] : [M.Alt | K.Insert], () => {
+      if (!generateUnityMember(editor)) toast("Generate works in the classes of Unity scripts (MonoBehaviour, ScriptableObject, Editor…).");
     }, "1_modification");
     const lineBlame = installLineBlame(project, editor);
     const changes = installLineChanges(project, editor);

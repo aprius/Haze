@@ -1,23 +1,29 @@
 // Results popup for Find Usages (Alt+F7), Go to Implementation (Ctrl+Alt+B)
-// and Go to Declaration (Ctrl+B, Ctrl+Click) when there is more than one.
+// and Go to Declaration (Ctrl+B, Ctrl+Click) when there is more than one, and
+// for a Unity script's asset usages (scenes, prefabs, assets).
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { getModel } from "../lib/buffers";
-import { api, errorMessage } from "../lib/ipc";
+import { api, errorMessage, type AssetUsage } from "../lib/ipc";
 import type { FoundLocation } from "../lib/lsp/csharp";
 import { basename, dirname, relative } from "../lib/path";
 import { popupClosed } from "../store/ui";
+import { unityCommand, useUnity } from "../store/unity";
 import { useWorkspace, type Project } from "../store/workspace";
 import { FileIcon } from "./FileIcon";
+import { toast } from "./Overlays";
 
 interface Usage extends FoundLocation {
   text: string;
+  /** Asset usages: the GameObject, and the component's id to select it in Unity. */
+  object?: string | null;
+  fileId?: string | null;
 }
 
 interface UsagesState {
   open: boolean;
   /** Declarations are listed one row per place, like Rider's "Declarations of …" list. */
-  kind: "usages" | "declarations";
+  kind: "usages" | "declarations" | "assets";
   title: string;
   loading: boolean;
   error: string | null;
@@ -70,6 +76,12 @@ export async function showDeclarations(name: string, found: FoundLocation[], anc
   }
 }
 
+/** Lists scenes, prefabs and assets using a script or method; picking one selects it in Unity when it is linked. */
+export function showAssetUsages(title: string, usages: AssetUsage[], anchor: { x: number; y: number } | null): void {
+  const items = usages.map((u) => ({ path: u.path, line: u.line, column: 1, endLine: u.line, endColumn: 1, text: "", object: u.object, fileId: u.fileId }));
+  useUsages.setState({ open: true, kind: "assets", title, loading: false, error: null, items, anchor });
+}
+
 /** Adds each location's line text: from open buffers, else read from disk in one batch. */
 async function withText(found: FoundLocation[]): Promise<Usage[]> {
   const byFile = new Map<string, number[]>();
@@ -108,9 +120,17 @@ export function UsagesPopup({ project }: { project: Project | null }) {
   }, [selected]);
 
   if (!open || !project) return null;
-  const go = (u: Usage | undefined) => {
+  const unityLinked = !!useUnity.getState().projects[project.id]?.connected;
+  const go = (u: Usage | undefined, openFile = false) => {
     if (!u) return;
     close();
+    if (kind === "assets" && unityLinked && !openFile) {
+      const name = u.object ? `${u.object} in ${basename(u.path)}` : basename(u.path);
+      void unityCommand(project.id, { t: "show", path: relative(project.path, u.path).replace(/\\/g, "/"), fileId: u.fileId ?? null }).then((ok) =>
+        toast(ok ? `Selected ${name} in Unity` : "Unity is not connected", ok ? "info" : "error"),
+      );
+      return;
+    }
     useWorkspace.getState().openFile(project.id, u.path, { line: u.line, column: u.column });
   };
   const files = new Set(items.map((i) => i.path)).size;
@@ -126,7 +146,7 @@ export function UsagesPopup({ project }: { project: Project | null }) {
           if (e.key === "Escape") close();
           else if (e.key === "ArrowDown") setSelected((s) => Math.min(items.length - 1, s + 1));
           else if (e.key === "ArrowUp") setSelected((s) => Math.max(0, s - 1));
-          else if (e.key === "Enter") go(items[selected]);
+          else if (e.key === "Enter") go(items[selected], e.ctrlKey || e.metaKey);
           else return;
           e.preventDefault();
           e.stopPropagation();
@@ -134,7 +154,8 @@ export function UsagesPopup({ project }: { project: Project | null }) {
       >
         <div className="usages-title">
           <b>{title}</b>
-          {(kind === "usages" || loading) && <span className="muted small">{loading ? "Searching…" : `${items.length} in ${files} file(s)`}</span>}
+          {(kind !== "declarations" || loading) && <span className="muted small">{loading ? "Searching…" : `${items.length} in ${files} file(s)`}</span>}
+          {kind === "assets" && <span className="muted small">{unityLinked ? "Click selects it in Unity; Ctrl+click opens the file" : "Unity is not linked: opens the file"}</span>}
         </div>
         <div className="se-list" ref={listRef} tabIndex={-1}>
           {error && <div className="se-empty error">{error}</div>}
@@ -154,6 +175,24 @@ export function UsagesPopup({ project }: { project: Project | null }) {
                 <span className="decl-where">in {relative(project.path, dirname(u.path)) || basename(project.path)}</span>
               </div>
             ))}
+          {kind === "assets" &&
+            items.map((u, i) => {
+              const header = u.path !== lastFile;
+              lastFile = u.path;
+              return (
+                <div key={`${u.path}:${u.line}:${i}`}>
+                  {header && (
+                    <div className="se-group">
+                      <FileIcon name={basename(u.path)} /> {basename(u.path)} <span className="muted">{relative(project.path, dirname(u.path))}</span>
+                    </div>
+                  )}
+                  <div className={"se-item usage" + (i === selected ? " selected" : "")} onMouseMove={() => setSelected(i)} onClick={(e) => go(u, e.ctrlKey || e.metaKey)}>
+                    <span className="find-lineno">{u.line}</span>
+                    <span className="se-line">{u.object ? <>GameObject <b>{u.object}</b></> : <span className="muted">component</span>}</span>
+                  </div>
+                </div>
+              );
+            })}
           {kind === "usages" && items.map((u, i) => {
             const header = u.path !== lastFile;
             lastFile = u.path;

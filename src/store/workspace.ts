@@ -23,6 +23,9 @@ export interface EditorTab {
 /** Project view modes, as in Rider: Unity (Assets and Packages, no .meta) and File System (everything, flat). */
 export type TreeView = "unity" | "files";
 
+/** Tool windows of the bottom dock; Unity and Tests only in Unity projects. */
+export type BottomTab = "build" | "git" | "unity" | "tests";
+
 export interface ProjectUi {
   expanded: string[];
   /** null: Unity for Unity projects, File System otherwise. */
@@ -44,7 +47,7 @@ export interface ProjectUi {
   /** Most recently opened files, newest first (Ctrl+E). */
   recentFiles: string[];
   /** Tool window shown in the bottom panel. */
-  bottomTab: "build" | "git";
+  bottomTab: BottomTab;
   /** Commit view lists changes in a directory tree rather than flat. */
   commitGroupByDir: boolean;
   /** Commit details in the Git log list changed files in a directory tree rather than flat. */
@@ -108,6 +111,8 @@ interface WorkspaceState {
   codeVision: boolean;
   /** Desktop notifications when an agent needs you or finishes. */
   notifyAgents: boolean;
+  /** Unity refreshes its assets (and compiles) when files change on disk, without waiting for focus. */
+  unityAutoRefresh: boolean;
 
   addProject(path: string): string;
   activateProject(id: string | null): void;
@@ -137,6 +142,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   lineBlame: true,
   codeVision: true,
   notifyAgents: true,
+  unityAutoRefresh: true,
 
   addProject(path) {
     const existing = get().projects.find((p) => p.path === path);
