@@ -209,6 +209,14 @@ function createView(id: string, project: Project): View {
       window.dispatchEvent(new CustomEvent("haze:terminal-find"));
       return false;
     }
+    // Shift+Enter and Alt+Enter insert a newline: send ESC CR (Meta+Enter), which
+    // Claude Code and other agents' prompts take as a line break, like VS Code's
+    // terminal after /terminal-setup. preventDefault stops the keypress's CR.
+    if (e.key === "Enter" && (e.shiftKey || e.altKey) && !mod && !e.isComposing) {
+      e.preventDefault();
+      term.input("\x1b\r");
+      return false;
+    }
     // Leave app shortcuts (Alt+1, Ctrl+Tab...) to the window handler.
     if ((["projectView", "closeTab", "nextTab", "previousTab"] as const).some((c) => matches(e, c))) return false;
     typing = isTextKey(e);
