@@ -632,14 +632,51 @@ kbd {
   flex: none;
   display: flex;
   height: 30px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: hidden;
   border-bottom: 1px solid var(--border);
   background: var(--editor-bg);
-  scrollbar-width: thin;
+}
+
+.editor-tabs-strip {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Hidden behind the ▾ list, but still laid out so its width can be measured. */
+.editor-tab.overflowed {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.editor-tabs-more {
+  flex: none;
+  align-self: center;
+  width: 36px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.editor-tabs-more:hover {
+  background: var(--hover);
+  color: var(--fg);
 }
 
 .editor-tab {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -708,6 +745,11 @@ kbd {
   align-items: center;
   gap: 2px;
   padding: 0 4px;
+}
+
+:root[data-ui="islands"] .editor-tabs-strip {
+  align-items: center;
+  gap: 2px;
 }
 
 :root[data-ui="islands"] .editor-tab {

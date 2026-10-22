@@ -1,6 +1,6 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChevronDown, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { create } from "zustand";
 import { DefinitionAction, SymbolNavigationAction } from "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js";
 import { disposeBuffer, ensureBuffer, getModel, isVirtualPath, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
@@ -685,47 +685,120 @@ function TabBar({ project }: { project: Project }) {
     { label: "Reveal in File Manager", action: () => void revealItemInDir(path) },
   ];
 
+  // Rider's single row: tabs that don't fit are hidden behind a ▾ list instead of scrolled,
+  // and the row shifts just enough to keep the active tab in it.
+  const barRef = useRef<HTMLDivElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [range, setRange] = useState({ first: 0, last: Infinity });
+  const [, relayout] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    const ro = new ResizeObserver(relayout);
+    ro.observe(barRef.current!);
+    return () => ro.disconnect();
+  }, []);
+  useLayoutEffect(() => {
+    const bar = barRef.current!;
+    const els = [...stripRef.current!.children] as HTMLElement[];
+    const widths = els.map((el) => el.offsetWidth);
+    const style = getComputedStyle(bar);
+    const gap = parseFloat(getComputedStyle(stripRef.current!).columnGap) || 0;
+    let avail = bar.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    const span = (a: number, b: number) => widths.slice(a, b + 1).reduce((x, w) => x + w + gap, -gap);
+    let next = { first: 0, last: widths.length - 1 };
+    if (widths.length && span(0, widths.length - 1) > avail) {
+      avail -= OVERFLOW_BUTTON + gap;
+      const active = tabs.findIndex((t) => t.path === ui?.activeTab);
+      let first = Math.min(range.first, widths.length - 1);
+      if (active >= 0 && active < first) first = active;
+      const fill = (a: number) => {
+        let b = a;
+        while (b + 1 < widths.length && span(a, b + 1) <= avail) b++;
+        return b;
+      };
+      let last = fill(first);
+      if (active > last) {
+        first = active;
+        while (first > 0 && span(first - 1, active) <= avail) first--;
+        last = fill(first);
+      }
+      // Room left at the end (tabs closed there): bring earlier tabs back.
+      while (first > 0 && span(first - 1, last) <= avail) first--;
+      next = { first, last };
+    }
+    if (next.first !== range.first || next.last !== range.last) setRange(next);
+  });
+  const hidden = tabs.filter((_, i) => i < range.first || i > range.last);
+
   return (
-    <div className="editor-tabs">
-      {tabs.map((t) => {
-        const m = meta[t.path];
-        return (
-          <div
-            key={t.path}
-            className={"editor-tab" + (t.path === ui?.activeTab ? " active" : "") + (t.preview ? " preview" : "")}
-            title={t.path}
-            onClick={() => useWorkspace.getState().updateUi(project.id, { activeTab: t.path })}
-            onDoubleClick={() => useWorkspace.getState().pinTab(project.id, t.path)}
-            onMouseDown={(e) => {
-              if (e.button === 1) {
-                e.preventDefault();
-                void closeTabsWithPrompt(project.id, [t.path]);
+    <div className="editor-tabs" ref={barRef}>
+      <div className="editor-tabs-strip" ref={stripRef}>
+        {tabs.map((t, i) => {
+          const m = meta[t.path];
+          return (
+            <div
+              key={t.path}
+              className={
+                "editor-tab" +
+                (t.path === ui?.activeTab ? " active" : "") +
+                (t.preview ? " preview" : "") +
+                (i < range.first || i > range.last ? " overflowed" : "")
               }
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              openMenu(e, tabMenu(t.path));
-            }}
-          >
-            <span className="editor-tab-name">{tabTitle(t.path)}</span>
-            {metaDirty(m) || metaDirty(meta[editedFile(t.path) ?? ""]) ? (
-              <span className="dirty-dot" title="Unsaved changes" />
-            ) : null}
-            <button
-              className="tab-close"
-              onClick={(e) => {
-                e.stopPropagation();
-                void closeTabsWithPrompt(project.id, [t.path]);
+              title={t.path}
+              onClick={() => useWorkspace.getState().updateUi(project.id, { activeTab: t.path })}
+              onDoubleClick={() => useWorkspace.getState().pinTab(project.id, t.path)}
+              onMouseDown={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault();
+                  void closeTabsWithPrompt(project.id, [t.path]);
+                }
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                openMenu(e, tabMenu(t.path));
               }}
             >
-              <X size={15} />
-            </button>
-          </div>
-        );
-      })}
+              <span className="editor-tab-name">{tabTitle(t.path)}</span>
+              {metaDirty(m) || metaDirty(meta[editedFile(t.path) ?? ""]) ? (
+                <span className="dirty-dot" title="Unsaved changes" />
+              ) : null}
+              <button
+                className="tab-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void closeTabsWithPrompt(project.id, [t.path]);
+                }}
+              >
+                <X size={15} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {hidden.length > 0 && (
+        <button
+          className="editor-tabs-more"
+          title="Show Hidden Tabs"
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            openMenu(
+              { clientX: r.left, clientY: r.bottom, target: e.currentTarget },
+              hidden.map((t) => ({
+                label: tabTitle(t.path),
+                action: () => useWorkspace.getState().updateUi(project.id, { activeTab: t.path }),
+              })),
+            );
+          }}
+        >
+          <ChevronDown size={14} />
+          {hidden.length}
+        </button>
+      )}
     </div>
   );
 }
+
+/** Width of `.editor-tabs-more`, reserved once the tabs overflow. */
+const OVERFLOW_BUTTON = 36;
 
 function tabTitle(path: string): string {
   const diff = parseDiffPath(path);
