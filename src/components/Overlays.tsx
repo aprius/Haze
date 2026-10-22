@@ -243,6 +243,17 @@ function inDoc(doc: Document, node: ReactNode): ReactNode {
 let floatSeq = 0;
 const isTauri = "__TAURI_INTERNALS__" in window;
 
+// Monaco keys its render frames by `vscodeWindowId` (Haze's window is 1). Windows
+// without one share the key `undefined`: one frame lost there (a window closed
+// or its document swapped before it ran) and editors in every later Commit or
+// Diff window never paint their text again. So each window, and each document
+// WebKit swaps into it (a new global), gets its own.
+let monacoWindowSeq = 1000;
+function tagMonacoWindow(win: Window) {
+  if (typeof (win as { vscodeWindowId?: unknown }).vscodeWindowId === "number") return;
+  Object.defineProperty(win, "vscodeWindowId", { value: ++monacoWindowSeq, configurable: true });
+}
+
 /**
  * Keeps `win`'s head in step with ours: stylesheets (Vite and Monaco add and
  * change them as they go) and the theme and zoom set on `<html>`.
@@ -337,6 +348,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
       doc.body.appendChild(el);
       return el;
     };
+    tagMonacoWindow(win);
     let root = mount();
     let unmirror = mirrorStyles(win);
     // WebKit may still load the window's URL into it, replacing the document:
@@ -345,6 +357,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
     const reattach = () => {
       if (win.closed || win.document === doc || !win.document.body) return;
       doc = win.document;
+      tagMonacoWindow(win);
       unmirror();
       root.remove();
       root = mount();
