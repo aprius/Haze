@@ -103,6 +103,8 @@ interface WorkspaceState {
   ui: Record<string, ProjectUi>;
   reveal: Reveal | null;
   nestFiles: boolean;
+  /** Rider's "Always Select Opened File": the Project view follows the active editor tab. */
+  selectOpenedFile: boolean;
   /** Pins the enclosing class/method lines at the top of the editor while scrolling. */
   stickyScroll: boolean;
   /** Shows the caret line's author, date and commit at the end of the line. */
@@ -138,6 +140,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   ui: {},
   reveal: null,
   nestFiles: true,
+  selectOpenedFile: true,
   stickyScroll: true,
   lineBlame: true,
   codeVision: true,

@@ -1,5 +1,5 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, Eye, LocateFixed } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, EllipsisVertical, Eye, LocateFixed } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { disposeBuffer, metaDirty, renameBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type DirEntry, type GitFileStatus } from "../lib/ipc";
@@ -84,6 +84,16 @@ export function FileTree({ project }: { project: Project }) {
       if (!dirs[p] && (isWithin(p, project.path) || inPackage)) void loadDir(p, nest);
     }
   }, [expanded, dirs, nest, project.path, packages]);
+
+  // Always Select Opened File: follow the active tab, as Rider does. A click in
+  // the tree already selected what it opens.
+  const activeTab = ui?.activeTab;
+  const followTab = useWorkspace((s) => s.selectOpenedFile);
+  useEffect(() => {
+    if (!followTab || !activeTab || !isWithin(activeTab, project.path)) return;
+    if (useTree.getState().selection[project.id]?.includes(activeTab)) return;
+    revealInTree(project, activeTab, { show: false });
+  }, [followTab, activeTab, project.id, project.path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (unity && !packages) void loadUnityPackages(project.path);
@@ -485,6 +495,7 @@ const VIEW_LABEL: Record<TreeView, string> = { unity: "Unity", files: "File Syst
 export function ProjectViewHeader({ project, onHide }: { project: Project; onHide: () => void }) {
   const ui = useWorkspace((s) => s.ui[project.id]);
   const updateUi = useWorkspace((s) => s.updateUi);
+  const selectOpenedFile = useWorkspace((s) => s.selectOpenedFile);
   const unity = useTree((s) => isUnityProject(s.dirs, project.path));
   const view = resolveView(ui?.treeView, unity);
 
@@ -533,6 +544,22 @@ export function ProjectViewHeader({ project, onHide }: { project: Project; onHid
       </button>
       <button className="icon-btn" title="Collapse All" onClick={() => updateUi(project.id, { expanded: [project.path] })}>
         <ChevronsDownUp size={16} />
+      </button>
+      <button
+        className="icon-btn"
+        title="Options"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          openMenu({ clientX: r.left, clientY: r.bottom + 2 }, [
+            {
+              label: "Always Select Opened File",
+              checked: selectOpenedFile,
+              action: () => useWorkspace.setState({ selectOpenedFile: !selectOpenedFile }),
+            },
+          ]);
+        }}
+      >
+        <EllipsisVertical size={16} />
       </button>
       <button className="icon-btn" title="Hide" onClick={onHide}>
         <ChevronLeft size={16} />

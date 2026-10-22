@@ -806,7 +806,8 @@ function tabTitle(path: string): string {
   return diff ? diffTitle(diff) : merge ? mergeTitle(merge) : basename(path);
 }
 
-export function revealInTree(project: Project, path: string): void {
+/** `show: false` leaves a hidden Project view hidden (Always Select Opened File). */
+export function revealInTree(project: Project, path: string, { show = true } = {}): void {
   const ws = useWorkspace.getState();
   const dirs: string[] = [];
   let cur = dirname(path);
@@ -816,7 +817,7 @@ export function revealInTree(project: Project, path: string): void {
     if (next === cur) break;
     cur = next;
   }
-  ws.updateUi(project.id, (u) => ({ expanded: [...new Set([...u.expanded, ...dirs])], sidebarVisible: true }));
+  ws.updateUi(project.id, (u) => ({ expanded: [...new Set([...u.expanded, ...dirs])], ...(show && { sidebarVisible: true }) }));
   setSelection(project.id, [path], path);
 }
 

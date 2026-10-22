@@ -346,6 +346,7 @@ function EditorSection() {
 
 function ProjectViewSection() {
   const nestFiles = useWorkspace((s) => s.nestFiles);
+  const selectOpenedFile = useWorkspace((s) => s.selectOpenedFile);
   return (
     <>
       <PageHeader title="Project View" />
@@ -355,6 +356,12 @@ function ProjectViewSection() {
           desc="appsettings.*.json, *.razor.cs, *.Designer.cs… appear under the file they belong to."
           checked={nestFiles}
           onChange={(on) => useWorkspace.setState({ nestFiles: on })}
+        />
+        <SwitchRow
+          label="Always select opened file"
+          desc="The Project view selects the file of the active editor tab, expanding its folders."
+          checked={selectOpenedFile}
+          onChange={(on) => useWorkspace.setState({ selectOpenedFile: on })}
         />
       </div>
     </>

@@ -100,6 +100,11 @@ export const actions: Action[] = [
     },
   },
   {
+    id: "toggleSelectOpenedFile",
+    label: "Always Select Opened File (toggle)",
+    run: () => useWorkspace.setState((s) => ({ selectOpenedFile: !s.selectOpenedFile })),
+  },
+  {
     id: "toggleStickyScroll",
     label: "Sticky Scroll (toggle)",
     run: () => useWorkspace.setState((s) => ({ stickyScroll: !s.stickyScroll })),

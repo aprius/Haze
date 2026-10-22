@@ -14,6 +14,7 @@ interface Persisted {
   ui: Record<string, ProjectUi>;
   drafts: Record<string, { content: string; baseMtime: number }>;
   nestFiles: boolean;
+  selectOpenedFile?: boolean;
   stickyScroll?: boolean;
   lineBlame?: boolean;
   codeVision?: boolean;
@@ -37,6 +38,7 @@ function snapshot(): Persisted {
     ui: s.ui,
     drafts,
     nestFiles: s.nestFiles,
+    selectOpenedFile: s.selectOpenedFile,
     stickyScroll: s.stickyScroll,
     lineBlame: s.lineBlame,
     codeVision: s.codeVision,
@@ -103,6 +105,7 @@ async function doRestore(): Promise<void> {
       activeProjectId: data.activeProjectId ?? null,
       ui,
       nestFiles: data.nestFiles ?? true,
+      selectOpenedFile: data.selectOpenedFile ?? true,
       stickyScroll: data.stickyScroll ?? true,
       lineBlame: data.lineBlame ?? true,
       codeVision: data.codeVision ?? true,
