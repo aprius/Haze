@@ -2227,6 +2227,12 @@ kbd {
   white-space: nowrap;
 }
 
+.filter-chip .icon-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+}
+
 .log-body {
   flex: 1;
   display: flex;
@@ -2970,8 +2976,8 @@ html:has(.float-external) body {
   border: 0;
   background: transparent;
   color: var(--muted);
-  width: 20px;
-  height: 18px;
+  width: 22px;
+  height: 20px;
   border-radius: 3px;
   display: inline-flex;
   align-items: center;

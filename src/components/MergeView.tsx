@@ -196,10 +196,10 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     <div className="merge-view">
       <div className="diff-toolbar">
         <button className="icon-btn" title="Previous conflict" onClick={() => conflicts.length && reveal(conflicts[(current - 1 + conflicts.length) % conflicts.length], (current - 1 + conflicts.length) % conflicts.length)}>
-          <ChevronUp size={14} />
+          <ChevronUp size={16} />
         </button>
         <button className="icon-btn" title="Next conflict" onClick={() => conflicts.length && reveal(conflicts[(current + 1) % conflicts.length], (current + 1) % conflicts.length)}>
-          <ChevronDown size={14} />
+          <ChevronDown size={16} />
         </button>
         <span className={"small " + (unresolved ? "error" : "muted")}>
           {error ? error : conflicts.length === 0 ? "No conflicts left — changes merged automatically." : `${unresolved} of ${conflicts.length} conflict(s) unresolved`}

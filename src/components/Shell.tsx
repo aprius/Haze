@@ -276,7 +276,7 @@ function BackgroundTasks({ projectId }: { projectId: string | null }) {
     );
   return (
     <button className="status-item status-btn status-task" onClick={open} title={tasks.map((t) => t.label).join("\n")}>
-      <LoaderCircle size={12} className="spin" />
+      <LoaderCircle size={14} className="spin" />
       <span className="status-task-label">{latest.label}</span>
       {tasks.length > 1 && <span>+{tasks.length - 1}</span>}
     </button>
@@ -301,19 +301,19 @@ export function StatusBar({ project }: { project: Project | null }) {
             onClick={() => toggleSidebar(project.id)}
             title="Project (Alt+1)"
           >
-            <FolderTree size={12} />
+            <FolderTree size={14} />
           </button>
           <button
             className={"status-item status-btn" + (commitOpen ? " on" : "")}
             onClick={() => toggleCommitWindow(project.id)}
             title="Commit (Alt+0)"
           >
-            <GitCommitHorizontal size={12} />
+            <GitCommitHorizontal size={14} />
           </button>
           {!ui?.activeTab && <span className="status-item">{project.name}</span>}
           {git?.status.isRepo && (
             <button className="status-item status-btn" title={`Branches (${shortcutLabel("branches")})`} onClick={() => openBranchesPopup(project)}>
-              <GitBranch size={12} /> {git.status.branch ?? "detached"}
+              <GitBranch size={14} /> {git.status.branch ?? "detached"}
               {operation && <span className="status-op">({operation} in progress)</span>}
             </button>
           )}
@@ -343,7 +343,7 @@ export function StatusBar({ project }: { project: Project | null }) {
       )}
       {zoom !== DEFAULT_ZOOM && (
         <button className="status-item status-btn" onClick={resetZoom} title={`Zoom ${Math.round(zoom * 100)}% — click to reset to 100% (${shortcutLabel("resetZoom")})`}>
-          {Math.round(zoom * 100)}% <RotateCcw size={11} />
+          {Math.round(zoom * 100)}% <RotateCcw size={13} />
         </button>
       )}
       {project && (
@@ -353,14 +353,14 @@ export function StatusBar({ project }: { project: Project | null }) {
             onClick={() => toggleBottom(project.id, "build")}
             title="Build"
           >
-            <Hammer size={12} /> Build
+            <Hammer size={14} /> Build
           </button>
           <button
             className={"status-item status-btn" + (ui?.bottomVisible && ui.bottomTab === "git" ? " on" : "")}
             onClick={() => toggleBottom(project.id, "git")}
             title="Git (Alt+9)"
           >
-            <GitGraph size={12} /> Git
+            <GitGraph size={14} /> Git
           </button>
           {unity && (
             <button
@@ -368,7 +368,7 @@ export function StatusBar({ project }: { project: Project | null }) {
               onClick={() => toggleBottom(project.id, "unity")}
               title="Unity's Console"
             >
-              <Box size={12} /> Unity
+              <Box size={14} /> Unity
             </button>
           )}
         </>
@@ -379,7 +379,7 @@ export function StatusBar({ project }: { project: Project | null }) {
           onClick={() => toggleTerminal(project.id, false)}
           title={`Terminal (${shortcutLabel("terminal")})`}
         >
-          <TerminalSquare size={12} /> Terminal
+          <TerminalSquare size={14} /> Terminal
         </button>
       )}
     </div>

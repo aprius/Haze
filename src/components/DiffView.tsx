@@ -416,10 +416,10 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
       {/* Clicks keep focus in the editors, so the caret side stays the one stepped from. */}
       <div className="diff-toolbar" onMouseDown={(e) => (e.target as HTMLElement).closest("button") && e.preventDefault()}>
         <button className="icon-btn" title="Previous difference (Shift+F7)" onClick={() => step(-1)}>
-          <ChevronUp size={14} />
+          <ChevronUp size={16} />
         </button>
         <button className="icon-btn" title="Next difference (F7)" onClick={() => step(1)}>
-          <ChevronDown size={14} />
+          <ChevronDown size={16} />
         </button>
         <span className="muted small">
           {error ? <span className="error">{error}</span> : stats === null ? "Comparing…" : stats === 0 ? "Contents are identical" : `${stats} difference(s)`}
@@ -543,10 +543,10 @@ export function UnifiedDiffView({ spec }: { spec: DiffSpec }) {
     <div className="diff-view">
       <div className="diff-toolbar" onMouseDown={(e) => (e.target as HTMLElement).closest("button") && e.preventDefault()}>
         <button className="icon-btn" title="Previous difference (Shift+F7)" onClick={() => step(-1)}>
-          <ChevronUp size={14} />
+          <ChevronUp size={16} />
         </button>
         <button className="icon-btn" title="Next difference (F7)" onClick={() => step(1)}>
-          <ChevronDown size={14} />
+          <ChevronDown size={16} />
         </button>
         <span className="muted small">
           {error ? <span className="error">{error}</span> : stats === null ? "Comparing…" : stats === 0 ? "Contents are identical" : `${stats} difference(s)`}

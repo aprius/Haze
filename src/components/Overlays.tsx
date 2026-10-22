@@ -523,7 +523,7 @@ export function FloatWindow({
           {title}
         </span>
         <button className="icon-btn" title="Close (Esc)" onClick={onClose}>
-          <X size={14} />
+          <X size={16} />
         </button>
       </div>
       <div className="float-body">{children}</div>

@@ -73,7 +73,7 @@ function ReviewToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
         onToggle();
       }}
     >
-      {on ? <Check size={12} /> : <Eye size={12} />}
+      {on ? <Check size={14} /> : <Eye size={14} />}
     </button>
   );
 }

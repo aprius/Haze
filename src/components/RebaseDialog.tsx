@@ -107,10 +107,10 @@ export function RebaseDialog({ project }: { project: Project | null }) {
                 <span className="rebase-subject">{r.subject}</span>
               )}
               <button className="icon-btn" title="Move up" onClick={() => move(i, -1)}>
-                <ArrowUp size={13} />
+                <ArrowUp size={16} />
               </button>
               <button className="icon-btn" title="Move down" onClick={() => move(i, 1)}>
-                <ArrowDown size={13} />
+                <ArrowDown size={16} />
               </button>
             </div>
           ))}

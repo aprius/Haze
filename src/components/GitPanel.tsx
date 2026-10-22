@@ -181,7 +181,7 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
         <div className="small">
           <span className="hash">{d.hash.slice(0, 12)}</span>
           <button className="icon-btn" title="Copy revision number" onClick={() => void navigator.clipboard.writeText(d.hash).then(() => toast("Copied"))}>
-            <Copy size={12} />
+            <Copy size={14} />
           </button>
         </div>
       </div>
@@ -598,7 +598,7 @@ export function GitPanel({ project }: { project: Project }) {
               <span className="filter-chip" title={query.path}>
                 Path: {basename(query.path)}
                 <button className="icon-btn" onClick={() => setQuery((q) => ({ ...q, path: null }))}>
-                  <X size={11} />
+                  <X size={12} />
                 </button>
               </span>
             )}
@@ -606,7 +606,7 @@ export function GitPanel({ project }: { project: Project }) {
               <span className="filter-chip">
                 {query.refs[0]}
                 <button className="icon-btn" onClick={() => setQuery((q) => ({ ...q, refs: [] }))}>
-                  <X size={11} />
+                  <X size={12} />
                 </button>
               </span>
             )}

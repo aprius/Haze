@@ -117,7 +117,7 @@ function RunControls({ project }: { project: Project }) {
           )}
           {(csharp?.state === "missing" || csharp?.state === "stopped" || csharp?.state === "error") && (
             <button className="icon-btn" title="Start the C# server again" onClick={() => void restartCsharp(project.id, project.path)}>
-              <RefreshCw size={12} />
+              <RefreshCw size={16} />
             </button>
           )}
         </span>
@@ -126,11 +126,11 @@ function RunControls({ project }: { project: Project }) {
       <UnityControls project={project} />
       {build?.running ? (
         <button className="icon-btn" title="Cancel build" onClick={() => cancelBuild(project.id)}>
-          <Square size={14} />
+          <Square size={16} />
         </button>
       ) : (
         <button className="icon-btn" title={`Build ${target ? basename(target) : project.name} (${shortcutLabel("build")})`} onClick={() => void buildProject(project.id, project.path)}>
-          <Hammer size={14} />
+          <Hammer size={16} />
         </button>
       )}
       {configs.length > 0 && (
@@ -147,7 +147,7 @@ function RunControls({ project }: { project: Project }) {
             ))}
           </select>
           <button className="icon-btn run" title={`Run (${shortcutLabel("run")})`} onClick={() => current && void runConfig(project, current)}>
-            {current?.id.startsWith("test:") ? <FlaskConical size={14} /> : <Play size={14} />}
+            {current?.id.startsWith("test:") ? <FlaskConical size={16} /> : <Play size={16} />}
           </button>
         </>
       )}
@@ -168,16 +168,16 @@ function UnityControls({ project }: { project: Project }) {
         Unity
       </span>
       <button className={"icon-btn" + (unity.playing ? " on" : "")} disabled={off} title={hint ?? (unity.playing ? "Stop" : "Play")} onClick={() => send("play")}>
-        {unity.playing ? <Square size={14} /> : <Play size={14} />}
+        {unity.playing ? <Square size={16} /> : <Play size={16} />}
       </button>
       <button className={"icon-btn" + (unity.paused ? " on" : "")} disabled={off} title={hint ?? "Pause"} onClick={() => send("pause")}>
-        <Pause size={14} />
+        <Pause size={16} />
       </button>
       <button className="icon-btn" disabled={off || !unity.playing} title={hint ?? "Step"} onClick={() => send("step")}>
-        <StepForward size={14} />
+        <StepForward size={16} />
       </button>
       <button className="icon-btn" disabled={off || unity.playing} title={hint ?? "Refresh assets in Unity"} onClick={() => send("refresh")}>
-        <RefreshCw size={14} />
+        <RefreshCw size={16} />
       </button>
       <span className="unity-sep" />
     </span>
