@@ -72,7 +72,7 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 
 ### C# and .NET
 
-- Uses Microsoft's **Roslyn Language Server** (`roslyn-language-server` .NET tool), with `csharp-ls` as a fallback. If it is missing, Haze offers a one-click **Install** (**Use Roslyn** when C# runs on `csharp-ls`), then starts C# again with it.
+- Uses Microsoft's **Roslyn Language Server** (`roslyn-language-server` .NET tool), with `csharp-ls` as a fallback. If it is missing, Haze offers a one-click **Install** (**Use Roslyn** when C# runs on `csharp-ls`), then starts C# again with it. A project's C# server (and Unity index) starts when the project is first shown, not for every project open in the sidebar.
 - Rider-style navigation: `Ctrl+B`/`Ctrl+Click` Go to Definition, `Alt+F7`/`Shift+F12` Find Usages, `Ctrl+Alt+B` Go to Implementation, `Ctrl+F12` File Structure, `Shift+F6` cross-file Rename (single undo), `Alt+Enter` Roslyn quick fixes and refactorings, `Ctrl+Alt+L` format, plus hover, completion, signature help and highlights.
 - `Ctrl+Click` on a declaration lists its usages, like Rider. Usage lists open just under the symbol.
 - **Code Vision** above types and members (`3 usages | author +1`); the count opens Find Usages. Unused private members are greyed out (Unity messages, attributes, overrides and public API are left alone). Lenses show as soon as a file opens (Haze parses it itself), with the last counts until the server has counted again; Roslyn counts through its own CodeLens, fast even in a large Unity solution (an interface implementation also counts the calls made through the interface, as in Visual Studio).

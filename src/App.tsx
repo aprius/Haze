@@ -232,6 +232,9 @@ function openRequested(req: OpenRequest) {
   if (req.file) ws.openFile(id, req.file, req.line ? { line: req.line, column: req.column ?? 1 } : {});
 }
 
+/** Projects whose C# support and Unity index were started (shown since Haze started). */
+const started = new Set<string>();
+
 export default function App() {
   const loaded = useWorkspace((s) => s.loaded);
   const projects = useWorkspace((s) => s.projects);
@@ -274,29 +277,38 @@ export default function App() {
     }
   }, [loaded, openRoots]);
 
-  // C# support for open .NET projects: discover projects, then start Roslyn.
+  // Unity projects: the live link to their Unity Editor (play mode, compilation, Console),
+  // for every open project, so that one in the background still imports what agents write.
+  const unityLinks = useRef(new Map<string, Promise<boolean>>());
   useEffect(() => {
     if (!loaded) return;
     const open = useWorkspace.getState().projects.filter((p) => p.open);
-    for (const p of open) {
-      void loadDotnetInfo(p.id, p.path).then((info) => {
-        if (info && info.projects.length) void startCsharp(p.id, p.path);
-      });
-    }
-    for (const id of Object.keys(useDotnet.getState().csharp)) {
-      if (!open.some((p) => p.id === id)) void stopCsharp(id);
+    for (const p of open) if (!unityLinks.current.has(p.id)) unityLinks.current.set(p.id, startUnityLink(p.id, p.path));
+    for (const id of [...unityLinks.current.keys()]) {
+      if (open.some((p) => p.id === id)) continue;
+      unityLinks.current.delete(id);
+      stopUnityLink(id);
     }
   }, [loaded, openRoots]);
 
-  // Unity projects: the live link to their Unity Editor (play mode, compilation, Console).
+  // C# support and the Unity index cost a language server's memory and a parse of every
+  // script: started for the project shown, and for the others once they are opened.
   useEffect(() => {
     if (!loaded) return;
     const open = useWorkspace.getState().projects.filter((p) => p.open);
-    for (const p of open) void startUnityLink(p.id, p.path).then((linked) => linked && warmUnityIndex(p.path));
-    for (const id of Object.keys(useUnity.getState().projects)) {
-      if (!open.some((p) => p.id === id)) stopUnityLink(id);
+    for (const id of [...started]) {
+      if (open.some((p) => p.id === id)) continue;
+      started.delete(id);
+      void stopCsharp(id);
     }
-  }, [loaded, openRoots]);
+    if (!active || started.has(active.id)) return;
+    const p = active;
+    started.add(p.id);
+    void loadDotnetInfo(p.id, p.path).then((info) => {
+      if (info && info.projects.length) void startCsharp(p.id, p.path);
+    });
+    void unityLinks.current.get(p.id)?.then((linked) => linked && warmUnityIndex(p.path));
+  }, [loaded, openRoots, active]);
 
   useEffect(() => {
     const un = onFsChange((change) => {
@@ -310,7 +322,7 @@ export default function App() {
       unityFilesChanged(project.id, change);
       unityFilesChangedForCode(change);
       invalidateTextNav(change.root);
-      if (change.overflow || change.files.some((f) => /\.(csproj|fsproj|sln|slnx)$|launchSettings\.json$/i.test(f))) {
+      if (started.has(project.id) && (change.overflow || change.files.some((f) => /\.(csproj|fsproj|sln|slnx)$|launchSettings\.json$/i.test(f)))) {
         void loadDotnetInfo(project.id, project.path).then((info) => {
           if (info && info.projects.length) void startCsharp(project.id, project.path);
         });
