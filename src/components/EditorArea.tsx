@@ -9,6 +9,7 @@ import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, isWithin, relative } from "../lib/path";
 import { clearUnusedMarks, findImplementations, findUsages, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
+import { zedWheel } from "../lib/wheel";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
 import { setSelection } from "../store/tree";
@@ -772,10 +773,12 @@ export function EditorArea({ project }: { project: Project }) {
       if (isCs()) void renameAt(editor);
     }, "1_modification");
     const lineBlame = installLineBlame(project, editor);
+    const wheel = zedWheel(editor);
     editorRef.current = editor;
     currentEditor = editor;
     return () => {
       lineBlame.dispose();
+      wheel.dispose();
       if (shownPath.current) viewStates.set(shownPath.current, editor.saveViewState());
       editor.dispose();
       editorRef.current = null;
