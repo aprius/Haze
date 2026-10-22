@@ -1,13 +1,15 @@
 // Search Everywhere (Double Shift), Go to File (Ctrl+Shift+N), Find Action
 // (Ctrl+Shift+A) and recent files (Ctrl+E) — one popup, like Rider.
+import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { actions, scoreLabel, type Action } from "../lib/actions";
 import { api, type FileHit, type SearchMatch } from "../lib/ipc";
 import { symbolKindName } from "../lib/lsp/convert";
 import { workspaceSymbols, type WorkspaceSymbolHit } from "../lib/lsp/csharp";
-import { basename, relative } from "../lib/path";
+import { basename, dirname, relative } from "../lib/path";
 import { closeSearchEverywhere, useUi, type SeTab } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
+import { FileIcon } from "./FileIcon";
 
 type Item =
   | { kind: "file"; path: string; rel: string; indices: number[]; recent?: boolean }
@@ -42,14 +44,61 @@ function Highlighted({ text, indices }: { text: string; indices: number[] }) {
   chars.forEach((c, i) => {
     const hit = set.has(i);
     if (hit !== runHit && run) {
-      out.push(runHit ? <b key={i}>{run}</b> : run);
+      out.push(runHit ? <mark key={i}>{run}</mark> : run);
       run = "";
     }
     runHit = hit;
     run += c;
   });
-  if (run) out.push(runHit ? <b key="end">{run}</b> : run);
+  if (run) out.push(runHit ? <mark key="end">{run}</mark> : run);
   return <>{out}</>;
+}
+
+/** Indices of `query`'s characters in `name`, in order and ignoring case, for symbols the server doesn't mark. */
+function matchIndices(name: string, query: string): number[] {
+  const lower = name.toLowerCase();
+  const q = query.toLowerCase();
+  const at = lower.indexOf(q);
+  if (at >= 0) return [...q].map((_, i) => at + i);
+  const out: number[] = [];
+  let from = 0;
+  for (const c of q) {
+    const i = lower.indexOf(c, from);
+    if (i < 0) return [];
+    out.push(i);
+    from = i + 1;
+  }
+  return out;
+}
+
+// LSP SymbolKind → the letter and colour of Rider's symbol icons.
+const SYMBOL_ICONS: Record<number, [string, string]> = {
+  2: ["M", "module"],
+  3: ["N", "namespace"],
+  4: ["P", "namespace"],
+  5: ["C", "class"],
+  6: ["m", "method"],
+  7: ["p", "property"],
+  8: ["f", "field"],
+  9: ["m", "method"],
+  10: ["E", "enum"],
+  11: ["I", "interface"],
+  12: ["ƒ", "method"],
+  13: ["v", "field"],
+  14: ["c", "field"],
+  22: ["e", "enum"],
+  23: ["S", "struct"],
+  24: ["e", "event"],
+  26: ["T", "interface"],
+};
+
+function SymbolIcon({ kind }: { kind: number }) {
+  const [letter, tone] = SYMBOL_ICONS[kind] ?? ["s", "other"];
+  return (
+    <span className={"se-sym-ico " + tone} title={symbolKindName(kind)}>
+      {letter}
+    </span>
+  );
 }
 
 export function SearchEverywhere({ project }: { project: Project | null }) {
@@ -204,23 +253,25 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
   let lastGroup = "";
   return (
     <div className="modal-backdrop se-backdrop" onMouseDown={(e) => e.target === e.currentTarget && closeSearchEverywhere()}>
-      <div className="se-popup" tabIndex={-1} onKeyDown={onKeyDown}>
+      <div className="se-popup se-main" tabIndex={-1} onKeyDown={onKeyDown}>
         <div className="se-tabs">
           {TABS.map((t) => (
-            <button key={t.id} className={"se-tab" + (t.id === tab ? " active" : "")} onClick={() => setTab(t.id)}>
+            <button key={t.id} className={"se-tab" + (t.id === tab ? " active" : "")} onMouseDown={(e) => e.preventDefault()} onClick={() => setTab(t.id)}>
               {t.label}
             </button>
           ))}
-          <span className="se-hint">Tab to switch · Enter to open · name:line to jump</span>
         </div>
-        <input
-          ref={inputRef}
-          className="se-input"
-          value={input}
-          spellCheck={false}
-          placeholder={tab === "actions" ? "Type action name" : tab === "text" ? "Search text in project" : "Type file name or action"}
-          onChange={(e) => setInput(e.target.value)}
-        />
+        <label className="se-field">
+          <Search size={16} className="ico" />
+          <input
+            ref={inputRef}
+            className="se-input"
+            value={input}
+            spellCheck={false}
+            placeholder={tab === "actions" ? "Type action name" : tab === "text" ? "Search text in project" : tab === "symbols" ? "Type symbol name" : "Type / to see commands"}
+            onChange={(e) => setInput(e.target.value)}
+          />
+        </label>
         <div className="se-list" ref={listRef}>
           {items.map((item, i) => {
             const group =
@@ -245,25 +296,31 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
                 >
                   {item.kind === "file" && (
                     <>
+                      <FileIcon name={basename(item.path)} />
                       <span className="se-name">
                         <Highlighted text={basename(item.path)} indices={item.indices} />
                       </span>
-                      <span className="se-detail">{item.rel}</span>
+                      <span className="se-detail">{dirname(item.rel)}</span>
                     </>
                   )}
                   {item.kind === "symbol" && (
                     <>
-                      <span className="sym-kind">{symbolKindName(item.symbol.kind)}</span>
-                      <span className="se-name">{item.symbol.name}</span>
-                      {item.symbol.container && <span className="se-detail">{item.symbol.container}</span>}
-                      <span className="se-detail se-right">
-                        {item.rel}:{item.symbol.line}
+                      <SymbolIcon kind={item.symbol.kind} />
+                      <span className="se-name">
+                        <Highlighted text={item.symbol.name} indices={matchIndices(item.symbol.name, query)} />
+                      </span>
+                      {item.symbol.container && <span className="se-detail">in {item.symbol.container}</span>}
+                      <span className="se-where">
+                        <FileIcon name={basename(item.symbol.path)} />
+                        {basename(item.symbol.path)}:{item.symbol.line}
                       </span>
                     </>
                   )}
                   {item.kind === "action" && (
                     <>
-                      <span className="se-name">{item.action.label}</span>
+                      <span className="se-name">
+                        <Highlighted text={item.action.label} indices={matchIndices(item.action.label, query)} />
+                      </span>
                       {item.action.shortcut && <span className="se-shortcut">{item.action.shortcut}</span>}
                     </>
                   )}
@@ -271,11 +328,12 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
                     <>
                       <span className="se-line">
                         {item.match.lineText.slice(0, item.match.previewStart).trimStart()}
-                        <b>{item.match.lineText.slice(item.match.previewStart, item.match.previewEnd)}</b>
+                        <mark>{item.match.lineText.slice(item.match.previewStart, item.match.previewEnd)}</mark>
                         {item.match.lineText.slice(item.match.previewEnd)}
                       </span>
-                      <span className="se-detail">
-                        {item.rel}:{item.match.line}
+                      <span className="se-where">
+                        <FileIcon name={basename(item.path)} />
+                        {basename(item.path)} {item.match.line}
                       </span>
                     </>
                   )}
@@ -286,6 +344,13 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
           {items.length === 0 && (
             <div className="se-empty">{query ? "Nothing found" : tab === "text" ? "Type at least 2 characters" : "No recent files"}</div>
           )}
+        </div>
+        <div className="se-footer">
+          <span>
+            <kbd>↑</kbd>
+            <kbd>↓</kbd> to select · <kbd>Enter</kbd> to open · <kbd>Tab</kbd> next tab
+          </span>
+          <span>name:line to jump to a line</span>
         </div>
       </div>
     </div>

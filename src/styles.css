@@ -1281,12 +1281,6 @@ kbd {
   color: var(--fg);
 }
 
-.se-hint {
-  margin-left: auto;
-  font-size: calc(var(--ui-font-size) * 11 / 13);
-  color: var(--muted);
-}
-
 .se-input {
   margin: 8px;
   padding: 7px 10px;
@@ -1359,6 +1353,174 @@ kbd {
   padding: 16px;
   color: var(--muted);
   text-align: center;
+}
+
+/* Search Everywhere itself, laid out like Rider's: tabs, a borderless field
+   with a magnifier, icon rows with the path dimmed, a hint line at the bottom.
+   A fixed height, so the popup doesn't jump while results arrive. */
+.se-main {
+  width: min(680px, calc(100% - 32px));
+  height: min(500px, 70vh);
+}
+
+.se-main .se-tabs {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.se-main .se-tab {
+  padding: 3px 10px;
+}
+
+.se-field {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: text;
+}
+
+.se-main .se-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.se-main .se-list {
+  flex: 1 1 auto;
+  padding: 4px 6px;
+}
+
+.se-main .se-group {
+  padding: 8px 8px 3px;
+  font-weight: 600;
+}
+
+.se-main .se-group:not(:first-child) {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.se-main .se-item {
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 5px;
+}
+
+.se-main .se-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.se-main .se-detail {
+  flex: 0 1 auto;
+  margin-left: 2px;
+}
+
+.se-main .se-line {
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+}
+
+/* Matched characters, Rider-style: a soft rounded marker behind the letters. */
+.se-main mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--find-match) 35%, transparent);
+  border-radius: 2px;
+}
+
+.se-where {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+}
+
+.se-main .se-shortcut {
+  flex: none;
+  padding-left: 16px;
+}
+
+.se-sym-ico {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  background: var(--mk-grey);
+}
+.se-sym-ico.class {
+  background: #3574f0;
+}
+.se-sym-ico.interface {
+  background: #5fb865;
+}
+.se-sym-ico.struct {
+  background: var(--mk-cyan);
+}
+.se-sym-ico.enum {
+  background: var(--mk-purple);
+}
+.se-sym-ico.method {
+  background: #db5c5c;
+}
+.se-sym-ico.property {
+  background: #a571e6;
+}
+.se-sym-ico.field {
+  background: #e5a33c;
+}
+.se-sym-ico.event {
+  background: #d6ae58;
+}
+.se-sym-ico.namespace,
+.se-sym-ico.module {
+  background: #8c8c8c;
+}
+
+.se-main .se-empty {
+  padding-top: 48px;
+}
+
+.se-footer {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  font-size: calc(var(--ui-font-size) * 11 / 13);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.se-footer kbd {
+  font: inherit;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
 }
 
 /* ------------------------------------------------------------ find in files */
