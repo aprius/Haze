@@ -56,9 +56,14 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
 
   useEffect(() => {
     if (!leftHost.current || !rightHost.current || !differHost.current || !gutter.current || !gap.current) return;
+    // The window this diff is in: Haze's or a floating one.
+    const win = gap.current.ownerDocument.defaultView ?? window;
     const opts = (readOnly: boolean): monaco.editor.IStandaloneEditorConstructionOptions => ({
       readOnly,
       automaticLayout: true,
+      // WebKit does not paint Monaco's composited layers (text, line numbers)
+      // in a window of its own (the Commit and Diff windows): keep them flat there.
+      disableLayerHinting: win !== window,
       ...codeFontOptions(),
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
@@ -84,8 +89,6 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
     const rightDecos = right.createDecorationsCollection();
     const gutterEl = gutter.current;
     const gapEl = gap.current;
-    // The window this diff is in: Haze's or a floating one.
-    const win = gapEl?.ownerDocument.defaultView ?? window;
 
     // Pixel position of a (fractional) line boundary, relative to the viewport.
     const boundaryY = (ed: monaco.editor.ICodeEditor, b: number) => {
