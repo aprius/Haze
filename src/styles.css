@@ -2031,6 +2031,38 @@ kbd {
   outline: none;
 }
 
+/* Go to Declaration with several results: Rider's "Declarations of class 'Foo'" list. */
+.se-backdrop.anchored .decls-popup {
+  width: min(600px, calc(100% - 16px));
+}
+.decls-popup .usages-title b {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+}
+.se-item.decl {
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+}
+.se-item.decl .jb-ico {
+  flex: none;
+}
+.decl-name {
+  flex: none;
+}
+.decl-line {
+  color: var(--accent);
+}
+.decl-where {
+  margin-left: auto;
+  padding-left: 24px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
 .sym-kind {
   font-size: calc(var(--ui-font-size) * 10 / 13);
   color: var(--muted);

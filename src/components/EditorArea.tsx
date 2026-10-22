@@ -2,6 +2,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
+import { DefinitionAction } from "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js";
 import { disposeBuffer, ensureBuffer, getModel, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
@@ -20,7 +21,7 @@ import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
 import { choose, openMenu, prompt, toast } from "./Overlays";
-import { showLocations } from "./UsagesPopup";
+import { showDeclarations, showLocations } from "./UsagesPopup";
 import { isMac, shortcutLabel } from "../lib/keymap";
 
 export const useCursor = create<{ line: number; column: number; selected: number }>(() => ({
@@ -153,6 +154,7 @@ function installRiderKeymap() {
     { keybinding: M.Shift | K.F12, command: "editor.action.marker.prevInFiles", when: "editorFocus" },
   ];
   monaco.editor.addKeybindingRules([...common, ...(isMac ? mac : other)]);
+  installDeclarationsList();
   // Ctrl+Click / Ctrl+B in languages Roslyn does not cover, and in C# until it is up.
   registerTextNavigation();
   // Navigating to another file (Ctrl+click, F12…) opens it in Haze's tabs.
@@ -174,6 +176,34 @@ function installRiderKeymap() {
       return true;
     },
   });
+}
+
+/**
+ * Ctrl+B / Ctrl+Click with several declarations (a partial class, say) lists
+ * them under the name like Rider, instead of Monaco's peek view. Monaco has no
+ * public hook for this, so its Go to Definition result handling is wrapped;
+ * Peek Definition and Open to the Side keep Monaco's own.
+ */
+function installDeclarationsList() {
+  const proto = DefinitionAction.prototype;
+  const onResult = proto._onResult;
+  proto._onResult = function (editorService, symbolNavService, editor, model, range) {
+    const refs = model.references;
+    const pos = editor.getPosition();
+    const word = pos && editor.getModel()?.getWordAtPosition(pos);
+    if (refs.length < 2 || this.configuration.openInPeek || this.configuration.openToSide || !pos || !word || refs.some((r) => r.uri.scheme !== "file"))
+      return onResult.call(this, editorService, symbolNavService, editor, model, range);
+    const found = refs.map((r) => ({
+      path: r.uri.fsPath,
+      line: r.range.startLineNumber,
+      column: r.range.startColumn,
+      endLine: r.range.endLineNumber,
+      endColumn: r.range.endColumn,
+    }));
+    model.dispose();
+    void showDeclarations(word.word, found, anchorBelow(editor, { lineNumber: pos.lineNumber, column: word.startColumn }));
+    return Promise.resolve();
+  };
 }
 
 /** Rider's Rename (Shift+F6) for C# symbols, applied across files with one Undo. */
