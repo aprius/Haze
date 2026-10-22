@@ -2501,6 +2501,32 @@ kbd {
   color: var(--accent);
 }
 
+/* Rider's change markers beside the line numbers (EditorArea installLineChanges). */
+.monaco-editor .line-change {
+  margin-left: 3px;
+  width: 3px !important;
+}
+.monaco-editor .line-change.added {
+  background: var(--git-added);
+}
+.monaco-editor .line-change.modified {
+  background: var(--git-modified);
+}
+.monaco-editor .line-change.deleted::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -4px;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--git-deleted);
+  z-index: 1;
+}
+.monaco-editor .line-change.deleted.top::after {
+  top: -4px;
+  bottom: auto;
+}
+
 .line-blame-text {
   color: var(--muted) !important;
   font-style: italic;

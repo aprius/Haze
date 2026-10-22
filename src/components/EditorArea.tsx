@@ -8,13 +8,14 @@ import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/mon
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, isWithin, relative } from "../lib/path";
 import { clearUnusedMarks, findImplementations, findUsages, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
+import { lineChanges } from "../lib/lineChanges";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
 import { zedWheel } from "../lib/wheel";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
 import { setSelection } from "../store/tree";
 import { activeProject, projectForPath, useWorkspace, type Project } from "../store/workspace";
-import { absPath, repo } from "../store/git";
+import { absPath, repo, useGit } from "../store/git";
 import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
@@ -379,6 +380,66 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
     editor.onDidFocusEditorText(() => update(200)),
   ];
   const unsub = useWorkspace.subscribe((s, prev) => s.lineBlame !== prev.lineBlame && update(0));
+  return {
+    dispose() {
+      clearTimeout(timer);
+      subs.forEach((d) => d.dispose());
+      unsub();
+    },
+  };
+}
+
+/** HEAD's text of a file, per HEAD commit; `null` = not in HEAD. */
+const headTexts = new Map<string, Promise<string | null>>();
+
+/**
+ * Rider's change markers: a bar beside the line numbers for lines added
+ * (green) or modified (blue) since HEAD, a notch where lines were deleted.
+ */
+function installLineChanges(project: Project, editor: monaco.editor.ICodeEditor): monaco.IDisposable {
+  const shown = editor.createDecorationsCollection();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const update = (delay: number) => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const model = editor.getModel();
+      const r = repo(project.id);
+      if (!model || model.uri.scheme !== "file" || !r.root || !isWithin(model.uri.fsPath, r.root)) return shown.clear();
+      const rel = relative(r.root, model.uri.fsPath);
+      const key = `${r.branches?.head ?? ""}:${r.root}:${rel}`;
+      let base = headTexts.get(key);
+      if (!base) {
+        base = api.gitFileAt(r.root, "HEAD", rel).catch(() => null);
+        headTexts.set(key, base);
+      }
+      const version = model.getVersionId();
+      let text = await base;
+      // Not in HEAD: a new file added to git is all new; an unversioned one gets no markers, as in Rider.
+      if (text === null && r.changes.some((c) => c.rel === rel && c.status === "added")) text = "";
+      if (editor.getModel() !== model || model.getVersionId() !== version) return;
+      if (text === null) return shown.clear();
+      const last = model.getLineCount();
+      shown.set(
+        lineChanges(text, model.getValue()).map((c) => {
+          const top = c.kind === "deleted" && c.start === 0;
+          const line = Math.min(Math.max(c.start, 1), last);
+          return {
+            range: new monaco.Range(line, 1, c.kind === "deleted" ? line : Math.min(c.end, last), 1),
+            options: { isWholeLine: true, linesDecorationsClassName: `line-change ${c.kind}${top ? " top" : ""}` },
+          };
+        }),
+      );
+    }, delay);
+  };
+  const subs = [editor.onDidChangeModel(() => update(0)), editor.onDidChangeModelContent(() => update(300))];
+  // A commit, checkout or reset moves HEAD; new or staged files change what a missing HEAD file means.
+  const unsub = useGit.subscribe((s, prev) => {
+    const a = s.repos[project.id];
+    const b = prev.repos[project.id];
+    if (a?.branches?.head !== b?.branches?.head) headTexts.clear();
+    if (a?.root !== b?.root || a?.branches?.head !== b?.branches?.head || a?.changes !== b?.changes) update(100);
+  });
+  update(0);
   return {
     dispose() {
       clearTimeout(timer);
@@ -773,11 +834,13 @@ export function EditorArea({ project }: { project: Project }) {
       if (isCs()) void renameAt(editor);
     }, "1_modification");
     const lineBlame = installLineBlame(project, editor);
+    const changes = installLineChanges(project, editor);
     const wheel = zedWheel(editor);
     editorRef.current = editor;
     currentEditor = editor;
     return () => {
       lineBlame.dispose();
+      changes.dispose();
       wheel.dispose();
       if (shownPath.current) viewStates.set(shownPath.current, editor.saveViewState());
       editor.dispose();
