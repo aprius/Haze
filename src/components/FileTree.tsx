@@ -208,21 +208,24 @@ export function FileTree({ project }: { project: Project }) {
   const remove = async (entries: DirEntry[]) => {
     const list = entries.filter((e) => e.path !== project.path);
     if (!list.length) return;
-    if (!(await confirmAction("Delete", `${deleteQuestion(list)} It will be moved to the Trash.`, "Delete", true))) return;
+    const paths = withMeta(list.map((e) => e.path));
+    const gone = (p: string) => paths.some((x) => isWithin(p, x));
+    // As in Rider, the deleted files' tabs close with them, unsaved edits included: say so first.
+    const unsaved = Object.keys(meta).filter((p) => gone(p) && metaDirty(meta[p])).length;
+    const warning = unsaved ? ` ${unsaved === 1 ? "1 file has" : `${unsaved} files have`} unsaved changes that will be lost.` : "";
+    if (!(await confirmAction("Delete", `${deleteQuestion(list)} It will be moved to the Trash.${warning}`, "Delete", true))) return;
     // As in Rider, the row after the deleted ones (or before them) is selected next.
     const at = rows.findIndex((r) => list.some((e) => e.path === r.entry.path));
     const rest = rows.filter((r) => !list.some((e) => isWithin(r.entry.path, e.path)));
     const next = rest.find((r) => rows.indexOf(r) > at) ?? rest.filter((r) => rows.indexOf(r) < at).pop();
-    const paths = withMeta(list.map((e) => e.path));
     const ok = await run("Delete", () => api.trashPaths(paths));
     if (ok === null) return;
     const ws = useWorkspace.getState();
-    const gone = (p: string) => paths.some((x) => isWithin(p, x));
-    const closing = (ws.ui[project.id]?.tabs ?? []).filter((t) => gone(t.path)).map((t) => t.path);
-    // Unsaved buffers stay open so their text is not lost.
-    const clean = closing.filter((p) => !metaDirty(meta[p]));
-    ws.closeTabs(project.id, clean);
-    clean.forEach(disposeBuffer);
+    for (const [id, u] of Object.entries(ws.ui)) {
+      const closing = u.tabs.filter((t) => gone(t.path)).map((t) => t.path);
+      if (closing.length) ws.closeTabs(id, closing);
+    }
+    Object.keys(useBuffers.getState().meta).filter(gone).forEach(disposeBuffer);
     setSelection(project.id, next ? [next.entry.path] : [], next?.entry.path);
     afterChange();
   };
