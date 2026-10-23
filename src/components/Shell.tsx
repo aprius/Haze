@@ -1,7 +1,7 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { AlertCircle, Box, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
+import { AlertCircle, Box, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Search, Settings, Star, Sun, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type BuildDiagnostic, type TextEncoding } from "../lib/ipc";
@@ -14,6 +14,7 @@ import { useTree } from "../store/tree";
 import { useUnity } from "../store/unity";
 import { toggleCommitWindow, useUi } from "../store/ui";
 import { diffTitle, parseDiffPath } from "./DiffView";
+import { useFind } from "./FindPanel";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
 import { useWorkspace, type BottomTab, type Project } from "../store/workspace";
@@ -329,6 +330,7 @@ export function StatusBar({ project }: { project: Project | null }) {
   const commitOpen = useUi((s) => !!project && s.commitWindow === project.id);
   const zoom = useZoom((s) => s.zoom);
   const unity = useUnity((s) => (project ? !!s.projects[project.id] : false));
+  const findTabs = useFind((s) => (project ? !!s.tabs[project.id]?.length : false));
   return (
     <div className="status-bar">
       {project && (
@@ -400,6 +402,15 @@ export function StatusBar({ project }: { project: Project | null }) {
           >
             <GitGraph size={14} /> Git
           </button>
+          {findTabs && (
+            <button
+              className={"status-item status-btn" + (ui?.bottomVisible && ui.bottomTab === "find" ? " on" : "")}
+              onClick={() => toggleBottom(project.id, "find")}
+              title="Find: usages opened in the Find window"
+            >
+              <Search size={14} /> Find
+            </button>
+          )}
           {unity && (
             <button
               className={"status-item status-btn" + (ui?.bottomVisible && ui.bottomTab === "unity" ? " on" : "")}

@@ -24,7 +24,7 @@ export interface EditorTab {
 export type TreeView = "unity" | "files";
 
 /** Tool windows of the bottom dock; Unity and Tests only in Unity projects. */
-export type BottomTab = "build" | "git" | "unity" | "tests";
+export type BottomTab = "build" | "git" | "unity" | "tests" | "find";
 
 export interface ProjectUi {
   expanded: string[];

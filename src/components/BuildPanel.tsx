@@ -6,6 +6,7 @@ import { cancelBuild, useDotnet, type BuildState } from "../store/dotnet";
 import { buildProject, useUnity } from "../store/unity";
 import { useWorkspace, type BottomTab, type Project } from "../store/workspace";
 import { shortcutLabel } from "../lib/keymap";
+import { useFind } from "./FindPanel";
 
 export function BuildPanel({ project }: { project: Project }) {
   const build = useDotnet((s) => s.builds[project.id]);
@@ -105,6 +106,7 @@ function buildStatus(build: BuildState | undefined): string {
 export function ToolTabs({ project }: { project: Project }) {
   const tab = useWorkspace((s) => s.ui[project.id]?.bottomTab ?? "build");
   const unity = useUnity((s) => !!s.projects[project.id]);
+  const find = useFind((s) => !!s.tabs[project.id]?.length);
   const set = (bottomTab: BottomTab) => useWorkspace.getState().updateUi(project.id, { bottomTab });
   return (
     <div className="tool-tabs">
@@ -114,6 +116,11 @@ export function ToolTabs({ project }: { project: Project }) {
       <button className={"tool-tab" + (tab === "git" ? " active" : "")} onClick={() => set("git")} title="Git (Alt+9)">
         Git
       </button>
+      {find && (
+        <button className={"tool-tab" + (tab === "find" ? " active" : "")} onClick={() => set("find")} title="Find: usages opened in the Find window">
+          Find
+        </button>
+      )}
       {unity && (
         <>
           <button className={"tool-tab" + (tab === "unity" ? " active" : "")} onClick={() => set("unity")} title="Unity's Console">

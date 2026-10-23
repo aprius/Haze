@@ -11,6 +11,7 @@ import { TestsPanel, UnityPanel } from "./components/UnityPanel";
 import { CommitWindow } from "./components/CommitPanel";
 import { DiffWindow } from "./components/DiffView";
 import { BranchesPopup, openBranchesPopup, openPullDialog, openPushDialog, PullDialog, PushDialog, updateProject } from "./components/GitDialogs";
+import { FindPanel } from "./components/FindPanel";
 import { GitPanel } from "./components/GitPanel";
 import { RebaseDialog } from "./components/RebaseDialog";
 import { openSettings, SettingsDialog } from "./components/SettingsDialog";
@@ -91,6 +92,7 @@ function ProjectView({ project }: { project: Project }) {
 function BottomPanel({ project, tab }: { project: Project; tab: BottomTab }) {
   const unity = useUnity((s) => !!s.projects[project.id]);
   if (tab === "git") return <GitPanel project={project} />;
+  if (tab === "find") return <FindPanel project={project} />;
   if (tab === "unity" && unity) return <UnityPanel project={project} />;
   if (tab === "tests" && unity) return <TestsPanel project={project} />;
   return <BuildPanel project={project} />;

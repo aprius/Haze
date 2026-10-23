@@ -90,6 +90,8 @@ async function doRestore(): Promise<void> {
       }
       // The terminal used to share the bottom panel.
       if ((ui[p.id].bottomTab as string) === "terminal") ui[p.id].bottomTab = "build";
+      // Find results are not kept.
+      if (ui[p.id].bottomTab === "find") ui[p.id].bottomTab = "build";
     }
     for (const [path, d] of Object.entries(data.drafts ?? {})) recoveredDrafts.set(path, d);
     // Load every draft now, not when its tab is first shown: background tabs

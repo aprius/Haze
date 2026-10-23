@@ -1,6 +1,8 @@
 // Results popup for Find Usages (Alt+F7), Go to Implementation (Ctrl+Alt+B)
 // and Go to Declaration (Ctrl+B, Ctrl+Click) when there is more than one, and
-// for a Unity script's asset usages (scenes, prefabs, assets).
+// for a Unity script's asset usages (scenes, prefabs, assets). Usages move to
+// the Find tool window (FindPanel) to keep them, like Rider's "Open in Find Window".
+import { PanelBottom } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { getModel, isVirtualPath } from "../lib/buffers";
@@ -10,10 +12,12 @@ import { basename, dirname, relative } from "../lib/path";
 import { popupClosed } from "../store/ui";
 import { unityCommand, useUnity } from "../store/unity";
 import { useWorkspace, type Project } from "../store/workspace";
+import { CodeLine } from "./CodePreview";
 import { FileIcon } from "./FileIcon";
+import { openInFindWindow } from "./FindPanel";
 import { toast } from "./Overlays";
 
-interface Usage extends FoundLocation {
+export interface Usage extends FoundLocation {
   text: string;
   /** Asset usages: the GameObject, and the component's id to select it in Unity. */
   object?: string | null;
@@ -30,9 +34,11 @@ interface UsagesState {
   items: Usage[];
   /** Viewport point to open under (the symbol), else centred like Search Everywhere. */
   anchor: { x: number; y: number } | null;
+  /** Searches again, for the Find window's Rerun. */
+  rerun: (() => Promise<Usage[]>) | null;
 }
 
-const useUsages = create<UsagesState>(() => ({ open: false, kind: "usages", title: "", loading: false, error: null, items: [], anchor: null }));
+const useUsages = create<UsagesState>(() => ({ open: false, kind: "usages", title: "", loading: false, error: null, items: [], anchor: null, rerun: null }));
 
 function close() {
   useUsages.setState({ open: false });
@@ -47,7 +53,8 @@ export async function showLocations(
   jumpIfSingle = false,
   anchor: { x: number; y: number } | null = null,
 ): Promise<void> {
-  useUsages.setState({ open: true, kind: "usages", title, loading: true, error: null, items: [], anchor });
+  const rerun = async () => sortUsages(await withText(await query()));
+  useUsages.setState({ open: true, kind: "usages", title, loading: true, error: null, items: [], anchor, rerun });
   try {
     const found = await query();
     if (jumpIfSingle && found.length === 1) {
@@ -55,16 +62,19 @@ export async function showLocations(
       useWorkspace.getState().openFile(project.id, found[0].path, { line: found[0].line, column: found[0].column });
       return;
     }
-    const items = (await withText(found)).sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
-    useUsages.setState({ loading: false, items });
+    useUsages.setState({ loading: false, items: sortUsages(await withText(found)) });
   } catch (e) {
     useUsages.setState({ loading: false, error: errorMessage(e) });
   }
 }
 
+function sortUsages(items: Usage[]): Usage[] {
+  return items.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line || a.column - b.column);
+}
+
 /** Lists the declarations of `name` to choose from, titled with its kind when they agree ("Declarations of class 'Foo'"). */
 export async function showDeclarations(name: string, found: FoundLocation[], anchor: { x: number; y: number } | null): Promise<void> {
-  useUsages.setState({ open: true, kind: "declarations", title: `Declarations of '${name}'`, loading: true, error: null, items: [], anchor });
+  useUsages.setState({ open: true, kind: "declarations", title: `Declarations of '${name}'`, loading: true, error: null, items: [], anchor, rerun: null });
   try {
     const items = (await withText(found)).sort((a, b) => basename(a.path).localeCompare(basename(b.path)) || a.path.localeCompare(b.path) || a.line - b.line);
     const kinds = new Set(items.map((u) => declKind(u.text, name)));
@@ -78,7 +88,7 @@ export async function showDeclarations(name: string, found: FoundLocation[], anc
 /** Lists scenes, prefabs and assets using a script or method; picking one selects it in Unity when it is linked. */
 export function showAssetUsages(title: string, usages: AssetUsage[], anchor: { x: number; y: number } | null): void {
   const items = usages.map((u) => ({ path: u.path, line: u.line, column: 1, endLine: u.line, endColumn: 1, text: "", object: u.object, fileId: u.fileId }));
-  useUsages.setState({ open: true, kind: "assets", title, loading: false, error: null, items, anchor });
+  useUsages.setState({ open: true, kind: "assets", title, loading: false, error: null, items, anchor, rerun: null });
 }
 
 /** What `name` is declared as on `line` ("class", "method"), as far as the text tells. */
@@ -88,6 +98,14 @@ function declKind(line: string, name: string): string | undefined {
   if (type) return type[1];
   // `void Save(`, `T Get<T>(`, `func save(`: the name, then its parameters.
   if (new RegExp(`\\b${n}\\s*(?:<[^>]*>)?\\s*\\(`).test(line) && !new RegExp(`\\bnew\\s+${n}\\b`).test(line)) return "method";
+}
+
+/** The usage's line coloured like the editor, indentation dropped and the usage marked. */
+export function UsageCode({ usage: u }: { usage: Usage }) {
+  const lead = u.text.length - u.text.trimStart().length;
+  const text = u.text.slice(lead).trimEnd();
+  const hl: [number, number] = u.line === u.endLine ? [u.column - 1 - lead, u.endColumn - 1 - lead] : [0, 0];
+  return <CodeLine path={u.path} hash={null} line={u.line} from={lead} text={text} hl={hl} hlClass="usage-hl" />;
 }
 
 /** Adds each location's line text: from open buffers, else read from disk in one batch. */
@@ -103,7 +121,7 @@ async function withText(found: FoundLocation[]): Promise<Usage[]> {
 }
 
 export function UsagesPopup({ project }: { project: Project | null }) {
-  const { open, kind, title, loading, error, items, anchor } = useUsages();
+  const { open, kind, title, loading, error, items, anchor, rerun } = useUsages();
   const [selected, setSelected] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -142,6 +160,10 @@ export function UsagesPopup({ project }: { project: Project | null }) {
     }
     useWorkspace.getState().openFile(project.id, u.path, { line: u.line, column: u.column });
   };
+  const toFindWindow = () => {
+    close();
+    openInFindWindow(project.id, title, items, rerun);
+  };
   const files = new Set(items.map((i) => i.path)).size;
   let lastFile = "";
 
@@ -156,6 +178,8 @@ export function UsagesPopup({ project }: { project: Project | null }) {
           else if (e.key === "ArrowDown") setSelected((s) => Math.min(items.length - 1, s + 1));
           else if (e.key === "ArrowUp") setSelected((s) => Math.max(0, s - 1));
           else if (e.key === "Enter") go(items[selected], e.ctrlKey || e.metaKey);
+          // Rider: Find Usages again in the popup moves the results to the Find window.
+          else if (e.key === "F7" && e.altKey && kind === "usages" && !loading) toFindWindow();
           else return;
           e.preventDefault();
           e.stopPropagation();
@@ -163,7 +187,16 @@ export function UsagesPopup({ project }: { project: Project | null }) {
       >
         <div className="usages-title">
           <b>{title}</b>
-          {(kind !== "declarations" || loading) && <span className="muted small">{loading ? "Searching…" : `${items.length} in ${files} file(s)`}</span>}
+          {(kind !== "declarations" || loading) && (
+            <span className="muted small">
+              {loading ? "Searching…" : kind === "usages" ? `${items.length} usage${items.length === 1 ? "" : "s"}` : `${items.length} in ${files} file(s)`}
+            </span>
+          )}
+          {kind === "usages" && (
+            <button className="icon-btn usages-to-window" disabled={loading} title="Open in Find Window (Alt+F7)" onClick={toFindWindow}>
+              <PanelBottom size={15} />
+            </button>
+          )}
           {kind === "assets" && <span className="muted small">{unityLinked ? "Click selects it in Unity; Ctrl+click opens the file" : "Unity is not linked: opens the file"}</span>}
         </div>
         <div className="se-list" ref={listRef} tabIndex={-1}>
@@ -202,33 +235,24 @@ export function UsagesPopup({ project }: { project: Project | null }) {
                 </div>
               );
             })}
-          {kind === "usages" && items.map((u, i) => {
-            const header = u.path !== lastFile;
-            lastFile = u.path;
-            return (
-              <div key={`${u.path}:${u.line}:${u.column}:${i}`}>
-                {header && (
-                  <div className="se-group">
-                    {basename(u.path)} <span className="muted">{relative(project.path, dirname(u.path))}</span>
-                  </div>
-                )}
-                <div className={"se-item usage" + (i === selected ? " selected" : "")} onMouseMove={() => setSelected(i)} onClick={() => go(u)}>
-                  <span className="find-lineno">{u.line}</span>
-                  <span className="se-line">
-                    {u.line === u.endLine ? (
-                      <>
-                        {u.text.slice(0, u.column - 1).trimStart()}
-                        <b>{u.text.slice(u.column - 1, u.endColumn - 1)}</b>
-                        {u.text.slice(u.endColumn - 1)}
-                      </>
-                    ) : (
-                      u.text.trim()
-                    )}
-                  </span>
-                </div>
+          {kind === "usages" &&
+            items.map((u, i) => (
+              <div
+                key={`${u.path}:${u.line}:${u.column}:${i}`}
+                className={"se-item usage usage-row" + (i === selected ? " selected" : "")}
+                title={relative(project.path, u.path)}
+                onMouseMove={() => setSelected(i)}
+                onClick={() => go(u)}
+              >
+                <FileIcon name={basename(u.path)} />
+                <span className="se-line">
+                  <UsageCode usage={u} />
+                </span>
+                <span className="usage-where">
+                  {basename(u.path)} <span className="decl-line">{u.line}</span>
+                </span>
               </div>
-            );
-          })}
+            ))}
         </div>
       </div>
     </div>
