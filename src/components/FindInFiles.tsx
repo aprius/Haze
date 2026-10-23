@@ -476,7 +476,15 @@ export function FindInFiles({ project }: { project: Project | null }) {
 
     const undo = async () => {
       let failed = 0;
-      if (undoId !== null) failed += (await api.undoReplace(undoId).catch(() => [{ path: "", reason: "" }])).length;
+      // Dropped from the history (later replaces): the editor edits are still undone.
+      let diskError: string | null = null;
+      if (undoId !== null) {
+        try {
+          failed += (await api.undoReplace(undoId)).length;
+        } catch (e) {
+          diskError = errorMessage(e);
+        }
+      }
       for (const u of undoBuffers) {
         if (u.model.isDisposed() || u.model.getAlternativeVersionId() !== u.version) {
           failed++;
@@ -485,7 +493,12 @@ export function FindInFiles({ project }: { project: Project | null }) {
         u.model.undo();
         if (u.save && !(await saveBuffer(u.path).catch(() => false))) failed++;
       }
-      toast(failed ? `Undo finished; ${failed} file(s) had changed and were left as is.` : "Replace undone.", failed ? "error" : "info");
+      if (diskError) {
+        // `failed` then counts editors only.
+        const editors = undoBuffers.length ? `. Open editors were undone${failed ? `, except ${failed} that had changed` : ""}.` : "";
+        toast(`Files on disk were left as they are: ${diskError}${editors}`, "error");
+      }
+      else toast(failed ? `Undo finished; ${failed} file(s) had changed and were left as is.` : "Replace undone.", failed ? "error" : "info");
     };
 
     toast(`Replaced ${count} occurrence(s) in ${files} file(s).`, "info", { label: "Undo", run: () => void undo() });

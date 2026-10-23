@@ -6,7 +6,7 @@
 //! Replacing re-runs the search on the current file content and only touches
 //! matches that are still where the preview showed them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -632,11 +632,40 @@ struct UndoEntry {
     written_mtime: u64,
 }
 
-/// Original bytes of replaced files, so a whole Replace All can be undone.
+/// Batches kept for undo, and the bytes they may hold together. Undo is
+/// offered on the toast a Replace All shows for a few seconds, so only the
+/// last few matter; each holds the original bytes of every file it changed.
+const UNDO_BATCHES: usize = 10;
+const UNDO_BYTES: usize = 64 * 1024 * 1024;
+
+/// Original bytes of replaced files, so the last Replace Alls can be undone.
 #[derive(Default)]
 pub struct ReplaceHistory {
     next: AtomicU64,
-    batches: Mutex<HashMap<u64, Vec<UndoEntry>>>,
+    /// Oldest first.
+    batches: Mutex<VecDeque<(u64, Vec<UndoEntry>)>>,
+}
+
+impl ReplaceHistory {
+    /// Keeps `undo` as batch `id`, dropping the oldest past the limits. The
+    /// newest stays whatever its size: it is the one the toast offers.
+    fn keep(&self, id: u64, undo: Vec<UndoEntry>) {
+        let mut batches = self.batches.lock();
+        batches.push_back((id, undo));
+        let size = |b: &Vec<UndoEntry>| b.iter().map(|e| e.original.len()).sum::<usize>();
+        let mut bytes: usize = batches.iter().map(|(_, b)| size(b)).sum();
+        while batches.len() > 1 && (batches.len() > UNDO_BATCHES || bytes > UNDO_BYTES) {
+            if let Some((_, old)) = batches.pop_front() {
+                bytes -= size(&old);
+            }
+        }
+    }
+
+    fn take(&self, id: u64) -> Option<Vec<UndoEntry>> {
+        let mut batches = self.batches.lock();
+        let at = batches.iter().position(|(i, _)| *i == id)?;
+        batches.remove(at).map(|(_, b)| b)
+    }
 }
 
 pub fn replace_in_files(
@@ -692,7 +721,7 @@ pub fn replace_in_files(
     }
     let undo_id = (!undo.is_empty()).then(|| {
         let id = history.next.fetch_add(1, Ordering::Relaxed) + 1;
-        history.batches.lock().insert(id, undo);
+        history.keep(id, undo);
         id
     });
     Ok(ReplaceOutcome {
@@ -704,11 +733,9 @@ pub fn replace_in_files(
 
 /// Restores files of a replace batch that were not modified afterwards.
 pub fn undo_replace(history: &ReplaceHistory, id: u64) -> Result<Vec<Skipped>> {
-    let batch = history
-        .batches
-        .lock()
-        .remove(&id)
-        .context("nothing to undo")?;
+    let batch = history.take(id).context(
+        "this replace can no longer be undone (too many replaces since, or undone already)",
+    )?;
     let mut skipped = Vec::new();
     for e in batch {
         let current = std::fs::metadata(&e.path)
@@ -735,6 +762,37 @@ pub fn undo_replace(history: &ReplaceHistory, id: u64) -> Result<Vec<Skipped>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(bytes: usize) -> Vec<UndoEntry> {
+        vec![UndoEntry {
+            path: PathBuf::from("/x"),
+            original: vec![0; bytes],
+            written_mtime: 0,
+        }]
+    }
+
+    #[test]
+    fn undo_history_keeps_the_latest_batches() {
+        let h = ReplaceHistory::default();
+        for id in 1..=UNDO_BATCHES as u64 + 3 {
+            h.keep(id, entry(1));
+        }
+        let ids: Vec<u64> = h.batches.lock().iter().map(|(i, _)| *i).collect();
+        assert_eq!(ids, (4..=UNDO_BATCHES as u64 + 3).collect::<Vec<_>>());
+        assert!(h.take(1).is_none());
+        assert!(h.take(5).is_some());
+
+        // Past the byte budget the oldest go, but never the newest.
+        let h = ReplaceHistory::default();
+        h.keep(1, entry(UNDO_BYTES / 2));
+        h.keep(2, entry(UNDO_BYTES / 2));
+        h.keep(3, entry(1));
+        let ids: Vec<u64> = h.batches.lock().iter().map(|(i, _)| *i).collect();
+        assert_eq!(ids, [2, 3]);
+        h.keep(4, entry(UNDO_BYTES * 2));
+        let ids: Vec<u64> = h.batches.lock().iter().map(|(i, _)| *i).collect();
+        assert_eq!(ids, [4]);
+    }
 
     fn q(query: &str) -> SearchQuery {
         SearchQuery {
@@ -938,6 +996,10 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(std::fs::read(&a).unwrap(), original);
+        assert!(
+            undo_replace(&history, out.undo_id.unwrap()).is_err(),
+            "undone already"
+        );
     }
 
     #[test]
