@@ -114,8 +114,11 @@ pub fn run() -> Result<()> {
 fn spawn_idle_watchdog(host: Arc<Host>) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_secs(5));
-        let busy = !host.clients.lock().is_empty()
-            || host.sessions.lock().values().any(|s| s.lock().info.running);
+        // Its own statement: the guard would otherwise live through the whole
+        // `let`, and an output reader holding a session lock waits for
+        // `clients` (see `broadcast`) while this waits for that session.
+        let has_clients = !host.clients.lock().is_empty();
+        let busy = has_clients || host.sessions.lock().values().any(|s| s.lock().info.running);
         let mut last = host.last_activity.lock();
         if busy {
             *last = Some(Instant::now());

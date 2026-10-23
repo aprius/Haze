@@ -21,6 +21,12 @@ type CacheKey = (String, bool);
 #[derive(Default)]
 pub struct FileIndex {
     cache: Mutex<HashMap<CacheKey, Arc<Vec<String>>>>,
+    /// Bumped per root by `invalidate`: a list whose walk started before
+    /// then may miss the change and is not cached.
+    generations: Mutex<HashMap<String, u64>>,
+    /// One walk per key at a time: each keystroke of Go to File asks, and
+    /// on a cold index every one of them walked the whole tree.
+    building: Mutex<HashMap<CacheKey, Arc<Mutex<()>>>>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -56,12 +62,26 @@ impl FileIndex {
         if let Some(f) = self.cache.lock().get(&key) {
             return f.clone();
         }
+        let gate = self.building.lock().entry(key.clone()).or_default().clone();
+        let _building = gate.lock();
+        // Built by the query this one waited for.
+        if let Some(f) = self.cache.lock().get(&key) {
+            return f.clone();
+        }
+        let generation = self.generation(root);
         let files = Arc::new(build(Path::new(root), include_ignored));
-        self.cache.lock().insert(key, files.clone());
+        if self.generation(root) == generation {
+            self.cache.lock().insert(key, files.clone());
+        }
         files
     }
 
+    fn generation(&self, root: &str) -> u64 {
+        self.generations.lock().get(root).copied().unwrap_or(0)
+    }
+
     pub fn invalidate(&self, root: &str) {
+        *self.generations.lock().entry(root.to_string()).or_default() += 1;
         let mut cache = self.cache.lock();
         cache.remove(&(root.to_string(), false));
         cache.remove(&(root.to_string(), true));
