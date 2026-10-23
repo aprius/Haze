@@ -58,3 +58,44 @@ describe("lineMapper", () => {
     expect([m(0), m(2)]).toEqual([null, null]);
   });
 });
+
+describe("diff", () => {
+  // A C#-like file: braces and blank lines match everywhere.
+  const csharp = (n: number) => {
+    const out: string[] = [];
+    for (let i = 0; out.length < n; i++) out.push(`    void M${i}()`, "    {", `        Call(${i});`, "    }", "");
+    return out.slice(0, n);
+  };
+
+  it("calls the second of two identical lines the added one, like git", () => {
+    expect(lineChanges(text("f();", "}", "", "x"), text("f();", "}", "}", "", "x"))).toEqual([{ kind: "added", start: 3, end: 3 }]);
+    expect(lineChanges(text("a", "", "", "b"), text("a", "", "b"))).toEqual([{ kind: "deleted", start: 2, end: 2 }]);
+  });
+
+  it("stays fast with edits far apart in a large file", () => {
+    const base = csharp(10_000);
+    const cur = [...base];
+    cur.splice(3, 0, "        Log();");
+    cur.splice(cur.length - 3, 0, "        Log();");
+    const t = performance.now();
+    // The LCS this replaced took about 39 s here.
+    expect(lineChanges(base.join("\n"), cur.join("\n"))).toEqual([
+      { kind: "added", start: 4, end: 4 },
+      { kind: "added", start: cur.length - 3, end: cur.length - 3 },
+    ]);
+    expect(performance.now() - t).toBeLessThan(1000);
+  });
+
+  it("calls a change too large to diff modified as a whole", () => {
+    const base = csharp(20_000);
+    // Every statement differs: far more edits than the diff looks for.
+    const cur = base.map((l) => (l.includes("Call") ? l + " // x" : l));
+    const t = performance.now();
+    const changes = lineChanges(base.join("\n"), cur.join("\n"));
+    expect(performance.now() - t).toBeLessThan(1000);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].kind).toBe("modified");
+    const m = lineMapper(base.join("\n"), cur.join("\n"));
+    expect([m(1), m(2), m(3)]).toEqual([1, 2, null]);
+  });
+});
