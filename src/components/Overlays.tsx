@@ -319,12 +319,14 @@ function mirrorStyles(win: Window): () => void {
   };
 }
 
+type ExternalHost = { win: Window; root: HTMLElement; label: string };
+
 /**
  * Opens a real window that our React tree renders into (same JS context, so
  * stores and Monaco models are shared). Null outside Tauri or when refused.
  */
-function useExternalWindow(width: number, height: number, onClose: () => void): { win: Window; root: HTMLElement } | "opening" | null {
-  const [host, setHost] = useState<{ win: Window; root: HTMLElement } | "opening" | null>(isTauri ? "opening" : null);
+function useExternalWindow(width: number, height: number, onClose: () => void): ExternalHost | "opening" | null {
+  const [host, setHost] = useState<ExternalHost | "opening" | null>(isTauri ? "opening" : null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
@@ -361,7 +363,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
       unmirror();
       root.remove();
       root = mount();
-      setHost({ win, root });
+      setHost({ win, root, label });
       unmirror = mirrorStyles(win);
       listen();
       useHost.setState({ doc });
@@ -413,7 +415,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
       await w.setFocus();
     });
     useHost.setState({ doc });
-    setHost({ win, root });
+    setHost({ win, root, label });
     return () => {
       closing = true;
       clearInterval(poll);
@@ -466,6 +468,23 @@ export function FloatWindow({
     if (external) external.win.focus();
     ref.current?.focus();
   }, [external]);
+
+  // Its shortcut again (Ctrl+K) while it is open, maybe behind Haze's window: bring it to the front.
+  useEffect(() => {
+    const onRaise = (e: Event) => {
+      if (!className || (e as CustomEvent<string>).detail !== className) return;
+      if (!external) return void ref.current?.focus();
+      void import("@tauri-apps/api/webviewWindow").then(async ({ WebviewWindow }) => {
+        const w = await WebviewWindow.getByLabel(external.label);
+        if (!w) return;
+        await w.unminimize().catch(() => {});
+        await w.show();
+        await w.setFocus();
+      });
+    };
+    window.addEventListener("haze:raise-window", onRaise);
+    return () => window.removeEventListener("haze:raise-window", onRaise);
+  }, [external, className]);
 
   // The native title bar shows the title.
   useEffect(() => {

@@ -59,7 +59,13 @@ export function closeFindInFiles(): void {
   popupClosed();
 }
 
+/** Brings an open floating window (by its class) to the front, maybe from behind another window (see FloatWindow). */
+function raiseWindow(className: string): void {
+  window.dispatchEvent(new CustomEvent("haze:raise-window", { detail: className }));
+}
+
 export function openCommitWindow(projectId: string): void {
+  if (useUi.getState().commitWindow === projectId) return raiseWindow("commit-window");
   useUi.setState({ commitWindow: projectId });
   // Commit window: type the message straight away.
   requestAnimationFrame(() => (document.querySelector(".commit-window .commit-message") as HTMLElement | null)?.focus());
@@ -76,7 +82,10 @@ export function toggleCommitWindow(projectId: string): void {
 }
 
 export function openDiffWindow(projectId: string, spec: DiffSpec): void {
+  const open = !!useUi.getState().diffWindow;
+  // The selected file's diff, in the window already open (raised) or a new one.
   useUi.setState({ diffWindow: { projectId, spec } });
+  if (open) raiseWindow("diff-window");
 }
 
 export function closeDiffWindow(): void {
