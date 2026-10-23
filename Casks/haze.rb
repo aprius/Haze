@@ -15,8 +15,6 @@ cask "haze" do
     strategy :github_latest
   end
 
-  depends_on macos: ">= :catalina"
-
   app "Haze.app"
 
   postflight do
