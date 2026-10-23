@@ -445,6 +445,9 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
     }));
     host.sessions.lock().insert(id.clone(), session.clone());
 
+    // The reader says it went on (bounded: one pending mark is enough), and
+    // ends the channel when the PTY closes; see `settle`.
+    let (activity, output_activity) = mpsc::sync_channel::<()>(1);
     let out_host = host.clone();
     let out_session = session.clone();
     let out_id = id.clone();
@@ -470,12 +473,15 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
                     data: b64(chunk),
                 },
             );
+            drop(s);
+            let _ = activity.try_send(());
         }
     });
 
     let exit_host = host.clone();
     thread::spawn(move || {
         let code = child.wait().ok().map(|status| status.exit_code());
+        settle(&output_activity, EXIT_QUIET, EXIT_WAIT_MAX);
         let mut s = session.lock();
         s.info.running = false;
         s.info.exit_code = code;
@@ -493,6 +499,30 @@ fn create(host: &Arc<Host>, spec: SessionSpec) -> Result<SessionInfo> {
     Ok(info)
 }
 
+/// After a program exits, how long its output may pause before the exit is
+/// told, and the longest the exit waits for it.
+const EXIT_QUIET: Duration = Duration::from_millis(50);
+const EXIT_WAIT_MAX: Duration = Duration::from_secs(1);
+
+/// Waits for output still on its way after the program exited (left in the
+/// PTY, or still being drawn by ConPTY's console host, which goes on after the
+/// process is gone), so `[Process exited]` comes after the last lines: until
+/// the reader ends (`activity` closes), or goes `quiet`, at most `max`. A
+/// background process keeping the terminal open only costs `quiet`.
+fn settle(activity: &mpsc::Receiver<()>, quiet: Duration, max: Duration) {
+    let deadline = Instant::now() + max;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        match activity.recv_timeout(quiet.min(left)) {
+            Ok(()) => continue,
+            Err(_) => return,
+        }
+    }
+}
+
 fn broadcast(host: &Host, subscribers: &HashSet<ClientId>, event: Event) {
     let clients = host.clients.lock();
     for c in subscribers {
@@ -507,6 +537,46 @@ fn broadcast(host: &Host, subscribers: &HashSet<ClientId>, event: Event) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_waits_for_output_to_settle() {
+        let (quiet, max) = (Duration::from_millis(50), Duration::from_millis(400));
+        let timed = |rx: &mpsc::Receiver<()>| {
+            let t = Instant::now();
+            settle(rx, quiet, max);
+            t.elapsed()
+        };
+
+        // Output keeps coming every 10 ms: waits, but not past `max`.
+        let (tx, rx) = mpsc::sync_channel::<()>(1);
+        let feeder = thread::spawn(move || {
+            for _ in 0..100 {
+                let _ = tx.try_send(());
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let busy = timed(&rx);
+        assert!(
+            busy >= Duration::from_millis(390) && busy < Duration::from_millis(800),
+            "{busy:?}"
+        );
+        feeder.join().unwrap();
+
+        // No more output: one quiet pause.
+        let (_tx, rx) = mpsc::sync_channel::<()>(1);
+        let took = timed(&rx);
+        assert!(
+            took >= quiet && took < Duration::from_millis(300),
+            "{took:?}"
+        );
+
+        // The reader ended: no wait, even with a mark still pending.
+        let (tx, rx) = mpsc::sync_channel::<()>(1);
+        tx.try_send(()).unwrap();
+        drop(tx);
+        let took = timed(&rx);
+        assert!(took < Duration::from_millis(30), "{took:?}");
+    }
 
     #[test]
     fn scrollback_is_bounded_and_cuts_at_newline() {
