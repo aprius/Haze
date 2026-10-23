@@ -547,6 +547,18 @@ kbd {
   outline-offset: -1px;
 }
 
+.tree-drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  white-space: nowrap;
+}
+
 .tree-row.cut {
   opacity: 0.5;
 }

@@ -33,19 +33,28 @@ pub fn parse(argv: &[String], cwd: &Path) -> Option<OpenRequest> {
             "--terminal" => req.terminal = args.next().cloned(),
             // macOS adds a process serial number when started by Finder.
             _ if a.starts_with("-psn_") || a.starts_with('-') => {}
-            _ => {
-                let path = cwd.join(a);
-                let path = path.canonicalize().unwrap_or(path);
-                let s = path.to_string_lossy().into_owned();
-                if path.is_dir() {
-                    req.project = Some(s);
-                } else {
-                    req.file = Some(s);
-                }
-            }
+            _ => set_path(&mut req, &cwd.join(a)),
         }
     }
     (req.project.is_some() || req.file.is_some()).then_some(req)
+}
+
+/// A file or folder dropped on the window: opened like `haze <path>`.
+pub fn dropped(path: &Path) -> OpenRequest {
+    let mut req = OpenRequest::default();
+    set_path(&mut req, path);
+    req
+}
+
+/// A folder is the project to open, anything else the file.
+fn set_path(req: &mut OpenRequest, path: &Path) {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let s = path.to_string_lossy().into_owned();
+    if path.is_dir() {
+        req.project = Some(s);
+    } else {
+        req.file = Some(s);
+    }
 }
 
 #[cfg(test)]

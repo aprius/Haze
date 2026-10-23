@@ -1,6 +1,6 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, EllipsisVertical, Eye, LocateFixed } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { disposeBuffer, metaDirty, renameBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type DirEntry, type GitFileStatus } from "../lib/ipc";
 import { basename, dirname, isWithin, join, relative } from "../lib/path";
@@ -56,6 +56,9 @@ export function FileTree({ project }: { project: Project }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(400);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [ghost, setGhost] = useState<{ x: number; y: number; label: string } | null>(null);
+  // Set from the end of a drag until the click its release produces has passed.
+  const dragged = useRef(false);
 
   const expanded = useMemo(() => new Set(ui?.expanded ?? []), [ui?.expanded]);
   const unity = isUnityProject(dirs, project.path);
@@ -377,27 +380,53 @@ export function FileTree({ project }: { project: Project }) {
     }
   };
 
-  const onDragStart = (e: DragEvent, row: Row) => {
-    if (row.entry.path === project.path) return e.preventDefault();
+  // Rows move by pointer events rather than HTML5 drag and drop: the native
+  // handler that opens files dropped from Finder/Explorer takes HTML5 drag and
+  // drop away from the page on Windows.
+  const onRowPointerDown = (e: PointerEvent, row: Row) => {
+    if (e.button !== 0 || row.entry.path === project.path) return;
     const paths = selected.has(row.entry.path) ? selection : [row.entry.path];
-    e.dataTransfer.setData("application/x-haze-paths", JSON.stringify(paths));
-    e.dataTransfer.effectAllowed = "copyMove";
-  };
-
-  const onDragOver = (e: DragEvent, row: Row) => {
-    if (!e.dataTransfer.types.includes("application/x-haze-paths")) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = e.ctrlKey || e.altKey ? "copy" : "move";
-    setDropTarget(targetDir(row.entry));
-  };
-
-  const onDrop = (e: DragEvent, row: Row) => {
-    e.preventDefault();
-    setDropTarget(null);
-    const raw = e.dataTransfer.getData("application/x-haze-paths");
-    if (!raw) return;
-    const paths = JSON.parse(raw) as string[];
-    void moveInto(paths, targetDir(row.entry), e.ctrlKey || e.altKey);
+    const label = paths.length === 1 ? basename(paths[0]) : `${paths.length} items`;
+    const [startX, startY] = [e.clientX, e.clientY];
+    let active = false;
+    let target: string | null = null;
+    const move = (ev: globalThis.PointerEvent) => {
+      if (!active && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
+      active = true;
+      const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(".tree-row");
+      const dir = el && scroller.current?.contains(el) ? (el.dataset.dir ?? null) : null;
+      // Not into itself or one of its own folders.
+      target = dir && !paths.some((p) => isWithin(dir, p)) ? dir : null;
+      setDropTarget(target);
+      setGhost({ x: ev.clientX, y: ev.clientY, label });
+      const box = scroller.current?.getBoundingClientRect();
+      if (box && ev.clientY < box.top + ROW_H) scroller.current!.scrollTop -= ROW_H / 2;
+      else if (box && ev.clientY > box.bottom - ROW_H) scroller.current!.scrollTop += ROW_H / 2;
+    };
+    const end = (drop: boolean, copy: boolean) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", key, true);
+      if (!active) return;
+      dragged.current = true;
+      setTimeout(() => (dragged.current = false));
+      setGhost(null);
+      setDropTarget(null);
+      if (drop && target) void moveInto(paths, target, copy);
+    };
+    const up = (ev: globalThis.PointerEvent) => end(true, ev.ctrlKey || ev.altKey);
+    const cancel = () => end(false, false);
+    const key = (ev: globalThis.KeyboardEvent) => {
+      if (ev.key !== "Escape" || !active) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      end(false, false);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", key, true);
   };
 
   const first = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
@@ -414,9 +443,6 @@ export function FileTree({ project }: { project: Project }) {
         tabIndex={0}
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
         onKeyDown={onKeyDown}
-        onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null);
-        }}
       >
         <div style={{ height: rows.length * ROW_H, position: "relative" }}>
           {rows.slice(first, last).map((row, i) => {
@@ -437,11 +463,9 @@ export function FileTree({ project }: { project: Project }) {
                   (st ? " git-" + st : "")
                 }
                 style={{ top: index * ROW_H, height: ROW_H, paddingLeft: 6 + row.depth * 16 }}
-                draggable
-                onDragStart={(e) => onDragStart(e, row)}
-                onDragOver={(e) => onDragOver(e, row)}
-                onDrop={(e) => onDrop(e, row)}
-                onClick={(e) => onRowClick(e, row, index)}
+                data-dir={targetDir(row.entry)}
+                onPointerDown={(e) => onRowPointerDown(e, row)}
+                onClick={(e) => !dragged.current && onRowClick(e, row, index)}
                 onDoubleClick={() => onRowDoubleClick(row)}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -488,6 +512,11 @@ export function FileTree({ project }: { project: Project }) {
           })}
         </div>
       </div>
+      {ghost && (
+        <div className="tree-drag-ghost" style={{ left: ghost.x + 12, top: ghost.y + 8 }}>
+          {ghost.label}
+        </div>
+      )}
     </div>
   );
 }

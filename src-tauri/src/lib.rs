@@ -777,7 +777,8 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
         return Ok(());
     };
     let handle = app.handle().clone();
-    tauri::WebviewWindowBuilder::from_config(app, &config)?
+    let drop_handle = app.handle().clone();
+    let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
         .on_new_window(move |url, features| {
             let label = url.fragment().filter(|f| f.starts_with("float-")).map(str::to_owned);
             let Some(label) = label.filter(|l| handle.get_webview_window(l).is_none()) else {
@@ -803,6 +804,17 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
             }
         })
         .build()?;
+    // Files and folders dropped from Finder or Explorer open like `haze <path>`.
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+            if paths.is_empty() {
+                return;
+            }
+            let reqs = paths.iter().map(|p| cli_open::dropped(p));
+            drop_handle.state::<cli_open::PendingOpens>().0.lock().extend(reqs);
+            let _ = drop_handle.emit("app://open", ());
+        }
+    });
     Ok(())
 }
 

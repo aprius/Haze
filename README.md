@@ -34,6 +34,7 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 ### Projects and file tree
 
 - Multiple projects in a sidebar with favorites, ordering and a Welcome screen of recent projects.
+- Drag a file or folder from Finder or the file manager onto the window to open it (a folder opens as a project; a file opens in the project that contains it, or in its folder).
 - Full session restore: open projects, expanded folders, editor tabs, panel sizes and terminals.
 - Dark and light themes (switch from the project rail), and two layouts (**Settings → Appearance → Layout**): **Classic**, panels edge to edge, or **Islands**, like Rider's Islands UI: Project, editor, terminal and Build/Git as rounded blocks with gaps between them, and tabs as rounded chips. The screenshots use Islands.
 - Lazy-loaded, virtualized file tree that updates live when files change on disk, with JetBrains' file and folder icons (light and dark).
