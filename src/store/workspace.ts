@@ -111,6 +111,10 @@ interface WorkspaceState {
   lineBlame: boolean;
   /** Rider's Code Vision: usages and author above C# types and members; unused private members greyed. */
   codeVision: boolean;
+  /** Rider's Rainbow Brackets: (), [] and {} coloured by nesting depth. */
+  rainbowBrackets: boolean;
+  /** Vertical guides for each bracket pair in its depth's colour (needs rainbowBrackets). */
+  rainbowGuides: boolean;
   /** Desktop notifications when an agent needs you or finishes. */
   notifyAgents: boolean;
   /** Unity refreshes its assets (and compiles) when files change on disk, without waiting for focus. */
@@ -144,6 +148,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   stickyScroll: true,
   lineBlame: true,
   codeVision: true,
+  rainbowBrackets: true,
+  rainbowGuides: true,
   notifyAgents: true,
   unityAutoRefresh: true,
 

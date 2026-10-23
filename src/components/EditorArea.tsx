@@ -886,6 +886,24 @@ export function PathCrumbs({ project, path }: { project: Project; path: string }
   );
 }
 
+/**
+ * Rider's Rainbow Brackets plugin: brackets coloured by depth (theme colours in
+ * lib/monaco.ts) and, with guides on, a line per pair in the same colour in place
+ * of the plain indent guides; the pair around the caret is drawn brighter.
+ */
+function rainbowOptions(s: { rainbowBrackets: boolean; rainbowGuides: boolean }): monaco.editor.IEditorOptions {
+  const guides = s.rainbowBrackets && s.rainbowGuides;
+  return {
+    bracketPairColorization: { enabled: s.rainbowBrackets },
+    guides: {
+      bracketPairs: guides,
+      bracketPairsHorizontal: guides ? "active" : false,
+      highlightActiveBracketPair: true,
+      indentation: !guides,
+    },
+  };
+}
+
 function DiskBanner({ path }: { path: string }) {
   return (
     <div className="banner warn">
@@ -910,6 +928,8 @@ export function EditorArea({ project }: { project: Project }) {
   const reveal = useWorkspace((s) => s.reveal);
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
   const codeVision = useWorkspace((s) => s.codeVision);
+  const rainbowBrackets = useWorkspace((s) => s.rainbowBrackets);
+  const rainbowGuides = useWorkspace((s) => s.rainbowGuides);
   const active = ui?.activeTab ?? null;
   const meta = useBuffers((s) => (active ? s.meta[active] : undefined));
   const host = useRef<HTMLDivElement>(null);
@@ -931,7 +951,7 @@ export function EditorArea({ project }: { project: Project }) {
       stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
       codeLens: useWorkspace.getState().codeVision,
       suggest: suggestOptions,
-      bracketPairColorization: { enabled: true },
+      ...rainbowOptions(useWorkspace.getState()),
       // Roslyn's semantic tokens (lsp/csharp.ts); the theme alone would leave them off.
       "semanticHighlighting.enabled": true,
       theme: monacoTheme(),
@@ -1022,6 +1042,10 @@ export function EditorArea({ project }: { project: Project }) {
   useEffect(() => {
     editorRef.current?.updateOptions({ stickyScroll: { enabled: stickyScroll } });
   }, [stickyScroll]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions(rainbowOptions({ rainbowBrackets, rainbowGuides }));
+  }, [rainbowBrackets, rainbowGuides]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ codeLens: codeVision });

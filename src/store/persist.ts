@@ -18,6 +18,8 @@ interface Persisted {
   stickyScroll?: boolean;
   lineBlame?: boolean;
   codeVision?: boolean;
+  rainbowBrackets?: boolean;
+  rainbowGuides?: boolean;
   notifyAgents?: boolean;
   unityAutoRefresh?: boolean;
 }
@@ -42,6 +44,8 @@ function snapshot(): Persisted {
     stickyScroll: s.stickyScroll,
     lineBlame: s.lineBlame,
     codeVision: s.codeVision,
+    rainbowBrackets: s.rainbowBrackets,
+    rainbowGuides: s.rainbowGuides,
     notifyAgents: s.notifyAgents,
     unityAutoRefresh: s.unityAutoRefresh,
   };
@@ -111,6 +115,8 @@ async function doRestore(): Promise<void> {
       stickyScroll: data.stickyScroll ?? true,
       lineBlame: data.lineBlame ?? true,
       codeVision: data.codeVision ?? true,
+      rainbowBrackets: data.rainbowBrackets ?? true,
+      rainbowGuides: data.rainbowGuides ?? true,
       notifyAgents: data.notifyAgents ?? true,
       unityAutoRefresh: data.unityAutoRefresh ?? true,
     });

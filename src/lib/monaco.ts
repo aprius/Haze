@@ -33,6 +33,16 @@ const MONOKAI = {
 
 function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)["dark"]) {
   const strip = (hex: string) => hex.slice(1);
+  // Rainbow Brackets: one colour per nesting depth, cycling after six. Each
+  // pair's guide takes its brackets' colour, faint until the caret is inside.
+  const rainbow = [c.yellow, c.purple, c.blue, c.green, c.orange, c.red];
+  const rainbowColors = Object.fromEntries(
+    rainbow.flatMap((col, i) => [
+      [`editorBracketHighlight.foreground${i + 1}`, col],
+      [`editorBracketPairGuide.background${i + 1}`, col + "30"],
+      [`editorBracketPairGuide.activeBackground${i + 1}`, col + "a0"],
+    ]),
+  );
   monaco.editor.defineTheme(name, {
     base,
     inherit: true,
@@ -92,6 +102,8 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
       "editorWhitespace.foreground": c.gutter,
       "editorBracketMatch.background": c.gutter + "40",
       "editorBracketMatch.border": "#00000000",
+      ...rainbowColors,
+      "editorBracketHighlight.unexpectedBracket.foreground": c.red,
       "editorWidget.background": c.widget,
       "editorWidget.border": c.border,
       "editorSuggestWidget.background": c.widget,

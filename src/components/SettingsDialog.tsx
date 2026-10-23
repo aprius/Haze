@@ -434,6 +434,8 @@ function EditorSection() {
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
   const lineBlame = useWorkspace((s) => s.lineBlame);
   const codeVision = useWorkspace((s) => s.codeVision);
+  const rainbowBrackets = useWorkspace((s) => s.rainbowBrackets);
+  const rainbowGuides = useWorkspace((s) => s.rainbowGuides);
   return (
     <>
       <PageHeader title="Editor" />
@@ -456,6 +458,22 @@ function EditorSection() {
           checked={codeVision}
           onChange={(on) => useWorkspace.setState({ codeVision: on })}
         />
+      </div>
+      <div className="settings-card">
+        <SwitchRow
+          label="Rainbow brackets"
+          desc="Colours (), [] and {} by how deeply they are nested, so the matching pair is easy to spot."
+          checked={rainbowBrackets}
+          onChange={(on) => useWorkspace.setState({ rainbowBrackets: on })}
+        />
+        {rainbowBrackets && (
+          <SwitchRow
+            label="Rainbow scope guides"
+            desc="Draws each bracket pair's indent guide in its colour, brighter for the block around the caret."
+            checked={rainbowGuides}
+            onChange={(on) => useWorkspace.setState({ rainbowGuides: on })}
+          />
+        )}
       </div>
     </>
   );
