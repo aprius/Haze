@@ -135,6 +135,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version="${GITHUB_REF_NAME#v}"
+          # A slow run for an older tag must not downgrade a cask that a newer
+          # release has already updated.
+          current=$(sed -n -E 's/^  version "(.*)"/\1/p' Casks/haze.rb)
+          if [ "$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n1)" != "$version" ]; then
+            echo "Cask is at $current, newer than $version; skipping"
+            exit 0
+          fi
           dmg="Haze_${version}_universal.dmg"
           gh release download "$GITHUB_REF_NAME" --pattern "$dmg" --dir "$RUNNER_TEMP"
           sha=$(sha256sum "$RUNNER_TEMP/$dmg" | cut -d' ' -f1)
