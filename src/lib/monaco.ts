@@ -159,6 +159,17 @@ useFonts.subscribe((f, prev) => {
   });
 });
 
+// The Find widget's Close button gets no tooltip: it opened over the button
+// and got in the way of clicking it. Monaco shows it on the button's own
+// mouseover, so stopping the event on its way down keeps it from firing.
+window.addEventListener(
+  "mouseover",
+  (e) => {
+    if (e.target instanceof Element && e.target.closest(".find-widget .codicon-widget-close")) e.stopPropagation();
+  },
+  true,
+);
+
 export function languageFor(path: string): string {
   const lower = path.toLowerCase();
   const name = lower.split(/[\\/]/).pop() ?? lower;

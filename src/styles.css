@@ -2993,6 +2993,12 @@ kbd {
   opacity: 0.5;
 }
 
+/* Monaco's button tooltips (the Find widget's Close, Previous, Next…) can open
+   over the button itself; clicks pass through them to the button underneath. */
+.context-view:has(.workbench-hover) {
+  pointer-events: none;
+}
+
 /* Code Vision above declarations: quiet until hovered, like Rider's. */
 .monaco-editor .codelens-decoration,
 .monaco-editor .codelens-decoration a {
