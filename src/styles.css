@@ -1372,6 +1372,47 @@ kbd {
   padding: 3px 10px;
 }
 
+/* Rider's preview pane: the popup grows and the list shares it with the code. */
+.se-main.with-preview {
+  height: min(760px, 85vh);
+}
+
+.se-main.with-preview .se-list {
+  flex: 0 0 38%;
+}
+
+.se-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.se-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  margin-left: 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.se-preview-btn:hover {
+  background: var(--hover);
+}
+
+.se-preview-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--selected);
+}
+
 .se-include {
   margin-left: auto;
   display: inline-flex;

@@ -1,6 +1,6 @@
 // Search Everywhere (Double Shift), Go to File (Ctrl+Shift+N), Find Action
 // (Ctrl+Shift+A) and recent files (Ctrl+E) — one popup, like Rider.
-import { Search } from "lucide-react";
+import { PanelBottom, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { actions, scoreLabel, type Action } from "../lib/actions";
 import { api, type FileHit, type SearchMatch } from "../lib/ipc";
@@ -10,6 +10,7 @@ import { basename, dirname, relative } from "../lib/path";
 import { keepSearchFocus } from "../lib/popupFocus";
 import { closeSearchEverywhere, toggleSeIncludeAll, useUi, type SeTab } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
+import { CodePreview, type PreviewRange } from "./CodePreview";
 import { FileIcon } from "./FileIcon";
 
 type Item =
@@ -34,6 +35,31 @@ export function splitLineSuffix(q: string): { query: string; line?: number; colu
 }
 
 let textSearchId = 1_000_000;
+
+// The preview pane stays on or off between openings, per machine.
+const PREVIEW_KEY = "haze.searchEverywhere.preview";
+function loadPreview(): boolean {
+  try {
+    return localStorage.getItem(PREVIEW_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+const NO_RANGES: PreviewRange[] = [];
+
+/** What the preview shows for a row: the file and where; actions have none. */
+function previewOf(item: Item | undefined, line?: number, column?: number): { path: string; range: PreviewRange } | null {
+  if (!item || item.kind === "action") return null;
+  if (item.kind === "text") return { path: item.path, range: item.match };
+  if (item.kind === "symbol") {
+    const { path, line: l, column: c, name } = item.symbol;
+    return { path, range: { line: l, column: c, endLine: l, endColumn: c + name.length } };
+  }
+  const l = line ?? 1;
+  const c = column ?? 1;
+  return { path: item.path, range: { line: l, column: c, endLine: l, endColumn: c } };
+}
 
 function Highlighted({ text, indices }: { text: string; indices: number[] }) {
   if (!indices.length) return <>{text}</>;
@@ -111,6 +137,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
   const [text, setText] = useState<{ path: string; match: SearchMatch }[]>([]);
   const [symbols, setSymbols] = useState<WorkspaceSymbolHit[]>([]);
   const [selected, setSelected] = useState(0);
+  const [preview, setPreview] = useState(loadPreview);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const recentFiles = useWorkspace((s) => (project ? s.ui[project.id]?.recentFiles : undefined)) ?? [];
@@ -219,7 +246,19 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
     listRef.current?.querySelector(".se-item.selected")?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
+  const shown = useMemo(() => previewOf(items[selected], line, column), [items, selected, line, column]);
+
   if (!open) return null;
+
+  const togglePreview = () =>
+    setPreview((on) => {
+      try {
+        localStorage.setItem(PREVIEW_KEY, on ? "0" : "1");
+      } catch {
+        // Private mode: the choice lasts until the window closes.
+      }
+      return !on;
+    });
 
   const activate = (item: Item | undefined) => {
     if (!item) return;
@@ -255,7 +294,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
   let lastGroup = "";
   return (
     <div className="modal-backdrop se-backdrop" onMouseDown={(e) => e.target === e.currentTarget && closeSearchEverywhere()}>
-      <div className="se-popup se-main" tabIndex={-1} onKeyDown={onKeyDown} onMouseDown={keepSearchFocus}>
+      <div className={"se-popup se-main" + (preview ? " with-preview" : "")} tabIndex={-1} onKeyDown={onKeyDown} onMouseDown={keepSearchFocus}>
         <div className="se-tabs">
           {TABS.map((t) => (
             <button key={t.id} className={"se-tab" + (t.id === tab ? " active" : "")} onClick={() => setTab(t.id)}>
@@ -266,6 +305,9 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
             <input type="checkbox" checked={includeAll} onChange={toggleSeIncludeAll} />
             Include non-solution items
           </label>
+          <button className={"se-preview-btn" + (preview ? " on" : "")} title={preview ? "Hide preview" : "Show preview"} onClick={togglePreview}>
+            <PanelBottom size={15} />
+          </button>
         </div>
         <label className="se-field">
           <Search size={16} className="ico" />
@@ -351,6 +393,22 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
             <div className="se-empty">{query ? "Nothing found" : tab === "text" ? "Type at least 2 characters" : "No recent files"}</div>
           )}
         </div>
+        {preview && (
+          <div className="se-preview">
+            <div className="find-preview-header">
+              {shown && project ? (
+                <>
+                  <FileIcon name={basename(shown.path)} />
+                  <span className="find-file-name">{basename(shown.path)}</span>
+                  <span className="find-file-dir">{relative(project.path, shown.path)}</span>
+                </>
+              ) : (
+                <span className="muted">No preview</span>
+              )}
+            </div>
+            <CodePreview path={shown?.path ?? null} hash={null} match={shown?.range ?? null} others={NO_RANGES} />
+          </div>
+        )}
         <div className="se-footer">
           <span>
             <kbd>↑</kbd>

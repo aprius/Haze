@@ -9,8 +9,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
 import { getModel, metaDirty, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type FileMatches, type ReplaceTarget, type SearchContext, type SearchMatch, type SearchQuery, type SearchResults } from "../lib/ipc";
-import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
-import { monacoTheme } from "../lib/theme";
+import { monaco } from "../lib/monaco";
+import { CodePreview } from "./CodePreview";
 import { basename, dirname, isWithin, relative } from "../lib/path";
 import { keepSearchFocus } from "../lib/popupFocus";
 import { closeFindInFiles, useUi } from "../store/ui";
@@ -191,84 +191,6 @@ function Toggle({ on, title, label, onClick }: { on: boolean; title: string; lab
       {label}
     </button>
   );
-}
-
-/**
- * Read-only editor showing the selected match in context, the file's other
- * matches highlighted more faintly; `hash` is the searched content's.
- */
-function Preview({ path, hash, match, others }: { path: string | null; hash: string | null; match: SearchMatch | null; others: SearchMatch[] }) {
-  const host = useRef<HTMLDivElement>(null);
-  const editor = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  const own = useRef<monaco.editor.ITextModel | null>(null);
-  const ownHash = useRef<string | null>(null);
-  const decorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
-  const stickyScroll = useWorkspace((s) => s.stickyScroll);
-
-  useEffect(() => {
-    if (!host.current) return;
-    editor.current = monaco.editor.create(host.current, {
-      model: null,
-      readOnly: true,
-      automaticLayout: true,
-      minimap: { enabled: false },
-      ...codeFontOptions(),
-      scrollBeyondLastLine: false,
-      renderLineHighlight: "none",
-      stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
-      theme: monacoTheme(),
-    });
-    decorations.current = editor.current.createDecorationsCollection();
-    return () => {
-      editor.current?.dispose();
-      own.current?.dispose();
-    };
-  }, []);
-
-  useEffect(() => {
-    editor.current?.updateOptions({ stickyScroll: { enabled: stickyScroll } });
-  }, [stickyScroll]);
-
-  useEffect(() => {
-    const ed = editor.current;
-    if (!ed || !path || !match) {
-      ed?.setModel(null);
-      return;
-    }
-    let cancelled = false;
-    const show = (model: monaco.editor.ITextModel) => {
-      if (cancelled) return;
-      ed.setModel(model);
-      const range = new monaco.Range(match.line, match.column, match.endLine, match.endColumn);
-      decorations.current?.set([
-        ...others
-          .filter((m) => m !== match)
-          .map((m) => ({ range: new monaco.Range(m.line, m.column, m.endLine, m.endColumn), options: { inlineClassName: "find-hit-other" } })),
-        { range, options: { inlineClassName: "find-hit" } },
-      ]);
-      ed.revealRangeInCenter(range);
-    };
-    const buffer = getModel(path);
-    if (buffer) {
-      show(buffer);
-    } else if (own.current?.uri.path === monaco.Uri.file(path).path && ownHash.current === hash) {
-      show(own.current);
-    } else {
-      // Read again after a replace changed the file, or the highlight lands on old text.
-      void api.readFile(path).then((f) => {
-        if (cancelled || f.kind !== "text") return;
-        own.current?.dispose();
-        own.current = monaco.editor.createModel(f.content, languageFor(path), monaco.Uri.from({ scheme: "preview", path: monaco.Uri.file(path).path }));
-        ownHash.current = hash;
-        show(own.current);
-      });
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [path, hash, match, others]);
-
-  return <div ref={host} className="find-preview-editor" />;
 }
 
 export function FindInFiles({ project }: { project: Project | null }) {
@@ -858,7 +780,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
                 <span className="muted">No match selected</span>
               )}
             </div>
-            <Preview
+            <CodePreview
               path={selMatch?.file.path ?? null}
               hash={selMatch?.file.hash ?? null}
               match={selMatch?.match ?? null}
