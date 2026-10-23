@@ -3950,8 +3950,14 @@ html:has(.float-external) body {
   border: 1px solid var(--border);
   border-bottom-width: 2px;
   border-radius: 5px;
+  min-width: 30px;
+  justify-content: center;
 }
+/* The macOS system font draws ⌘ ⇧ ⌥ ⌃ at the size and baseline of the letters; the code font has no such glyphs. */
 .keymap-chip kbd {
+  font-family: -apple-system, BlinkMacSystemFont, var(--font-ui);
+  font-size: var(--ui-font-size);
+  letter-spacing: 0.08em;
   color: var(--fg);
 }
 .keymap-chip.recording {
