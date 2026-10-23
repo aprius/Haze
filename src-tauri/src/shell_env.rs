@@ -6,6 +6,8 @@
 //! An interactive login shell takes a few hundred milliseconds (more with a
 //! heavy profile), so launches use the PATH the last run saw and ask the
 //! shell again in the background for the next one. Only the first launch waits.
+//!
+//! Every platform also gets the folders .NET installs to (see `set_path`).
 
 #[cfg(target_os = "macos")]
 pub fn load_login_path() {
@@ -105,16 +107,36 @@ fn apply(from_shell: Option<String>) {
     {
         dirs.extend(std::env::split_paths(&source));
     }
-    // Usual install locations, in case the profile does not set them up.
+    for d in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        dirs.push(d.into());
+    }
+    set_path(dirs);
+}
+
+/// PATH as given, plus where .NET installs: found when the profile does not
+/// set them up, or when .NET was installed after Haze started.
+#[cfg(not(target_os = "macos"))]
+pub fn load_login_path() {
+    let dirs = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    set_path(dirs);
+}
+
+fn set_path(mut dirs: Vec<std::path::PathBuf>) {
+    // `dotnet-install` installs per user, under ~/.dotnet.
     if let Some(home) = dirs::home_dir() {
         dirs.push(home.join(".dotnet").join("tools"));
         dirs.push(home.join(".dotnet"));
     }
-    for d in [
-        "/usr/local/share/dotnet",
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-    ] {
+    #[cfg(target_os = "macos")]
+    dirs.push("/usr/local/share/dotnet".into());
+    #[cfg(windows)]
+    if let Some(p) = std::env::var_os("ProgramFiles") {
+        dirs.push(std::path::PathBuf::from(p).join("dotnet"));
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    for d in ["/usr/share/dotnet", "/usr/lib/dotnet", "/snap/bin"] {
         dirs.push(d.into());
     }
     let mut seen = std::collections::HashSet::new();
@@ -123,6 +145,3 @@ fn apply(from_shell: Option<String>) {
         std::env::set_var("PATH", path);
     }
 }
-
-#[cfg(not(target_os = "macos"))]
-pub fn load_login_path() {}

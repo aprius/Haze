@@ -1,17 +1,18 @@
 // Title bar: the window's drag area with the project name, and for a .NET project
 // the C# server status, run configuration and Build / Run / Test; for a Unity
 // project, Play / Pause / Step and Refresh in its Unity Editor.
+import { homeDir } from "@tauri-apps/api/path";
 import { FlaskConical, Hammer, Pause, Play, RefreshCw, Square, StepForward, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { DotnetInfo } from "../lib/ipc";
+import { api, type DotnetInfo } from "../lib/ipc";
 import { restartCsharp } from "../lib/lsp/csharp";
 import { basename, dirname } from "../lib/path";
-import { cancelBuild, defaultBuildTarget, useDotnet, type CsharpStatus } from "../store/dotnet";
+import { cancelBuild, defaultBuildTarget, loadDotnetInfo, useDotnet, type CsharpStatus } from "../store/dotnet";
 import { buildProject, unityCommand, useUnity } from "../store/unity";
 import { closeTerminal, newTerminal, useTerminals } from "../store/terminals";
 import { useWorkspace, type Project } from "../store/workspace";
 import { confirmAction } from "./Overlays";
-import { isMac, shortcutLabel } from "../lib/keymap";
+import { isMac, isWindows, shortcutLabel } from "../lib/keymap";
 import { useZoom } from "../lib/zoom";
 
 export interface RunConfig {
@@ -75,23 +76,71 @@ function keepsCsharpLs(): boolean {
 }
 
 /**
- * Installs Roslyn's language server in a terminal (which shows any failure),
- * then starts C# again, now with Roslyn, where it was missing or csharp-ls ran.
+ * The .NET SDK from the system's package manager (Homebrew, winget) where it
+ * has one, else Microsoft's `dotnet-install` script into ~/.dotnet, which needs
+ * no admin rights. Haze looks in both places (shell_env.rs), with no restart.
  */
-async function installRoslyn(project: Project): Promise<void> {
-  const id = await newTerminal(project.id, project.path, { title: "Install C# server", command: ROSLYN_INSTALL });
-  if (!id) return;
-  const unsubscribe = useTerminals.subscribe((s) => {
-    const t = s.sessions[id];
-    if (t?.running) return;
-    unsubscribe();
-    if (t?.exitCode !== 0) return;
-    const { csharp } = useDotnet.getState();
-    for (const p of useWorkspace.getState().projects) {
-      const status = csharp[p.id];
-      if (p.open && status && (status.state === "missing" || status.kind === "csharp-ls")) void restartCsharp(p.id, p.path);
-    }
+const DOTNET_INSTALL = isWindows
+  ? [
+      "powershell.exe",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "if (Get-Command winget -ErrorAction SilentlyContinue) { winget install --id Microsoft.DotNet.SDK.10 --exact --accept-source-agreements --accept-package-agreements; exit $LASTEXITCODE } " +
+        "else { & ([scriptblock]::Create((Invoke-RestMethod https://dot.net/v1/dotnet-install.ps1))) -Channel LTS }",
+    ]
+  : [
+      "/bin/sh",
+      "-c",
+      // Downloaded first: `curl | bash` succeeds when the download fails.
+      (isMac ? "if command -v brew >/dev/null 2>&1; then brew install --cask dotnet-sdk; else " : "{ ") +
+        'f=$(mktemp) && curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$f" && bash "$f" --channel LTS' +
+        (isMac ? "; fi" : "; }"),
+    ];
+
+/**
+ * Runs a global install in a terminal (which shows any failure); whether it
+ * succeeded. From the home folder: `dotnet tool install --global` still reads
+ * the folder it runs in, and fails in one with several project files (Unity's).
+ */
+async function installInTerminal(project: Project, title: string, command: string[]): Promise<boolean> {
+  const id = await newTerminal(project.id, await homeDir(), { title, command });
+  if (!id) return false;
+  return new Promise((resolve) => {
+    const unsubscribe = useTerminals.subscribe((s) => {
+      const t = s.sessions[id];
+      if (t?.running) return;
+      unsubscribe();
+      resolve(t?.exitCode === 0);
+    });
   });
+}
+
+/** Starts C# again in the open projects where it was missing or failed, or where csharp-ls ran. */
+function restartWhereNeeded(): void {
+  const { csharp } = useDotnet.getState();
+  for (const p of useWorkspace.getState().projects) {
+    const status = csharp[p.id];
+    if (p.open && status && (status.state === "missing" || status.state === "stopped" || status.state === "error" || status.kind === "csharp-ls")) void restartCsharp(p.id, p.path);
+  }
+}
+
+/** Installs Roslyn's language server, then starts C# again, now with Roslyn. */
+async function installRoslyn(project: Project): Promise<void> {
+  if (await installInTerminal(project, "Install C# server", ROSLYN_INSTALL)) restartWhereNeeded();
+}
+
+/**
+ * Installs the .NET SDK, then Roslyn's language server unless one is there
+ * already, then starts C# again: one click from nothing to C# support.
+ */
+async function installDotnet(project: Project): Promise<void> {
+  if (!(await installInTerminal(project, "Install .NET", DOTNET_INSTALL))) return;
+  const open = useWorkspace.getState().projects.filter((p) => p.open);
+  await Promise.all(open.map((p) => loadDotnetInfo(p.id, p.path)));
+  if (await api.lspFindServer()) restartWhereNeeded();
+  else await installRoslyn(project);
 }
 
 function csharpLabel(s: CsharpStatus | undefined): { text: string; tone: string } {
@@ -128,7 +177,9 @@ function RunControls({ project }: { project: Project }) {
     ) : null;
   const current = configs.find((c) => c.id === selected) ?? configs[0];
   const target = defaultBuildTarget(project.id);
-  const label = csharpLabel(csharp);
+  // Without .NET nothing C# works (server, build, run): that is the one thing to fix.
+  const noDotnet = !info.dotnetVersion && csharp?.state !== "ready";
+  const label = noDotnet ? { text: ".NET SDK not installed", tone: "warn" } : csharpLabel(csharp);
   // Roslyn loads projects faster and has more fixes and refactorings; it needs the .NET 10 runtime.
   const suggestRoslyn = csharp?.kind === "csharp-ls" && csharp.state !== "missing" && !keepCsharpLs && Number(info.dotnetVersion?.split(".")[0]) >= 10;
 
@@ -137,7 +188,16 @@ function RunControls({ project }: { project: Project }) {
       {label.text && (
         <span className={"csharp-status " + label.tone} title={[csharp?.kind && `Language server: ${csharp.kind}`, csharp?.message].filter(Boolean).join("\n") || undefined}>
           {label.text}
-          {csharp?.state === "missing" && (
+          {noDotnet && (
+            <button
+              className="btn small"
+              title={"Installs the .NET SDK (" + DOTNET_INSTALL.join(" ") + "), then the C# language server, then starts C#."}
+              onClick={() => void installDotnet(project)}
+            >
+              Install .NET
+            </button>
+          )}
+          {!noDotnet && csharp?.state === "missing" && (
             <button className="btn small" onClick={() => void installRoslyn(project)}>
               Install
             </button>
@@ -167,8 +227,12 @@ function RunControls({ project }: { project: Project }) {
               </button>
             </>
           )}
-          {(csharp?.state === "missing" || csharp?.state === "stopped" || csharp?.state === "error") && (
-            <button className="icon-btn" title="Start the C# server again" onClick={() => void restartCsharp(project.id, project.path)}>
+          {(noDotnet || csharp?.state === "missing" || csharp?.state === "stopped" || csharp?.state === "error") && (
+            <button
+              className="icon-btn"
+              title={noDotnet ? "Look for .NET and start the C# server again (after installing .NET yourself)" : "Start the C# server again"}
+              onClick={() => void (noDotnet ? loadDotnetInfo(project.id, project.path) : Promise.resolve()).then(() => restartCsharp(project.id, project.path))}
+            >
               <RefreshCw size={16} />
             </button>
           )}

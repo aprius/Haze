@@ -3,6 +3,7 @@
 // Windows Rider defaults Haze always had. A Haze key Rider leaves free is kept.
 
 export const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
+export const isWindows = typeof navigator !== "undefined" && /Win/i.test(navigator.platform || navigator.userAgent);
 
 /** IntelliJ keystroke syntax: modifiers then a key, e.g. "meta shift N", "alt F12", "ctrl BACK_QUOTE". */
 type Keystroke = string;
