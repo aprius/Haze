@@ -658,7 +658,7 @@ MonoBehaviour:
         std::fs::create_dir_all(root.join("Assets/Scripts")).unwrap();
         std::fs::create_dir_all(root.join("Assets/Ignored~")).unwrap();
         std::fs::create_dir_all(root.join("Library/PackageCache/com.unity.ugui/Runtime")).unwrap();
-        let player = root.join("Assets/Scripts/Player.cs");
+        let player = root.join("Assets").join("Scripts").join("Player.cs");
         std::fs::write(&player, "class Player : Character {}").unwrap();
         std::fs::write(
             root.join("Assets/Scripts/Player.cs.meta"),
@@ -675,7 +675,8 @@ MonoBehaviour:
             "abstract class UIBehaviour : MonoBehaviour {}",
         )
         .unwrap();
-        let scene = root.join("Assets/Main.unity");
+        // Native separators: the index reports paths as the OS spells them.
+        let scene = root.join("Assets").join("Main.unity");
         std::fs::write(&scene, SCENE).unwrap();
 
         let indexes = UnityIndexes::default();

@@ -6,7 +6,7 @@
 //! listens again on the same port, so the link reconnects on its own.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +22,9 @@ use serde::{Deserialize, Serialize};
 const RETRY: Duration = Duration::from_millis(1000);
 /// Most messages per event to the UI: a Debug.Log every frame arrives in bursts.
 const MAX_BATCH: usize = 500;
+/// How long a read waits before looking at `stop` again: on Windows,
+/// `shutdown` from another handle does not wake a blocked read.
+const READ_POLL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,19 +139,27 @@ fn run(link: &Link, root: &str, sink: &UnitySink) {
             break;
         }
         emit(vec![serde_json::json!({ "t": "link", "connected": true })]);
+        let _ = stream.set_read_timeout(Some(READ_POLL));
         // Lines already received go out together: one UI event per burst, not per line.
         let mut reader = BufReader::new(stream);
         let mut batch = Vec::new();
-        let mut line = String::new();
+        // Bytes, not a String: a timeout in the middle of a UTF-8 character
+        // would drop what read_line had read so far; read_until keeps it.
+        let mut line = Vec::new();
         loop {
-            line.clear();
-            match reader.read_line(&mut line) {
+            match reader.read_until(b'\n', &mut line) {
                 Ok(n) if n > 0 => {
-                    if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Ok(event) = serde_json::from_slice::<serde_json::Value>(&line) {
                         batch.push(event);
                     }
+                    line.clear();
                     if reader.buffer().is_empty() || batch.len() >= MAX_BATCH {
                         emit(std::mem::take(&mut batch));
+                    }
+                }
+                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                    if link.stop.load(Ordering::Relaxed) {
+                        break;
                     }
                 }
                 _ => break,
