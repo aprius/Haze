@@ -338,7 +338,7 @@ function KeymapRow({ id, name }: { id: Command; name: string }) {
           <span key={ks} className="keymap-chip">
             <kbd>{keystrokeLabel(ks)}</kbd>
             <button className="keymap-chip-x" title="Remove" onClick={() => setKeystrokes(id, list.filter((k) => k !== ks))}>
-              <X size={11} />
+              <X size={10} strokeWidth={3} />
             </button>
           </span>
         ))}
