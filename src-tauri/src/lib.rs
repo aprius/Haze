@@ -850,7 +850,8 @@ fn app_menu(handle: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
 }
 
 /// Opens the About window (public/about.html), or brings it forward. It
-/// starts hidden and shows itself once drawn (`about_ready`).
+/// starts hidden and is shown once the page has loaded, or it flashes white.
+/// Not from the page: WebKit runs no animation frames in a hidden window.
 fn open_about(handle: &AppHandle) -> tauri::Result<()> {
     use base64::Engine;
     if let Some(w) = handle.get_webview_window("about") {
@@ -864,7 +865,7 @@ fn open_about(handle: &AppHandle) -> tauri::Result<()> {
             base64::engine::general_purpose::STANDARD.encode(include_bytes!("../icons/128x128@2x.png"))
         ),
     });
-    let size = tauri::LogicalSize::new(440.0, 300.0);
+    let size = tauri::LogicalSize::new(440.0, 340.0);
     let mut builder = tauri::WebviewWindowBuilder::new(handle, "about", tauri::WebviewUrl::App("about.html".into()))
         .title("")
         .inner_size(size.width, size.height)
@@ -872,7 +873,13 @@ fn open_about(handle: &AppHandle) -> tauri::Result<()> {
         .minimizable(false)
         .maximizable(false)
         .visible(false)
-        .initialization_script(format!("window.__HAZE_ABOUT__ = {info};"));
+        .initialization_script(format!("window.__HAZE_ABOUT__ = {info};"))
+        .on_page_load(|w, p| {
+            if matches!(p.event(), tauri::webview::PageLoadEvent::Finished) {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        });
     #[cfg(target_os = "macos")]
     {
         builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
@@ -883,14 +890,6 @@ fn open_about(handle: &AppHandle) -> tauri::Result<()> {
     };
     builder.build()?;
     Ok(())
-}
-
-#[tauri::command]
-fn about_ready(window: tauri::WebviewWindow) {
-    if window.label() == "about" {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
 }
 
 #[tauri::command]
@@ -1032,7 +1031,6 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_close,
-            about_ready,
             about_close,
         ])
         .build(tauri::generate_context!())

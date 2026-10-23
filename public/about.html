@@ -17,6 +17,7 @@
         --btn: #363337;
         --btn-hover: #403d41;
         --btn-border: #19181a;
+        --accent: #ffd866;
       }
       :root[data-theme="light"] {
         --bg: #faf4f2;
@@ -25,6 +26,7 @@
         --btn: #ede7e5;
         --btn-hover: #e0dad8;
         --btn-border: #d3cdcc;
+        --accent: #1c8ca8;
       }
       html,
       body {
@@ -73,15 +75,26 @@
         user-select: text;
         cursor: text;
       }
-      .buttons {
+      .credits {
         margin-top: auto;
+        color: var(--muted);
+        font-size: 11.5px;
+        line-height: 1.5;
+      }
+      .credits b {
+        color: var(--accent);
+        font-weight: 500;
+      }
+      .buttons {
+        margin-top: 14px;
         display: flex;
-        gap: 6px;
+        justify-content: flex-end;
+        gap: 8px;
         width: 100%;
       }
       button {
-        flex: 1;
         height: 26px;
+        padding: 0 16px;
         font: inherit;
         color: var(--fg);
         background: var(--btn);
@@ -107,9 +120,13 @@
     </div>
     <div class="label">Version</div>
     <div class="value" id="version"></div>
+    <div class="credits">
+      <div>Powered by <b>aprius</b></div>
+      <div>Copyright © 2026 <b>aprius</b></div>
+    </div>
     <div class="buttons">
-      <button id="ok">OK</button>
-      <button id="copy">Copy</button>
+      <button id="close">Close</button>
+      <button id="copy">Copy and Close</button>
     </div>
     <script>
       const info = window.__HAZE_ABOUT__ ?? { version: "", commit: "", icon: "" };
@@ -121,7 +138,7 @@
       document.getElementById("commit-row").hidden = !info.commit;
       document.getElementById("version").textContent = full;
       const close = () => invoke("about_close");
-      document.getElementById("ok").onclick = close;
+      document.getElementById("close").onclick = close;
       document.getElementById("copy").onclick = () => {
         const text = info.commit ? `Haze ${full}\nCommit ${info.commit}` : `Haze ${full}`;
         void navigator.clipboard.writeText(text).finally(close);
@@ -129,9 +146,7 @@
       addEventListener("keydown", (e) => {
         if (e.key === "Escape" || (e.key === "Enter" && e.target.tagName !== "BUTTON")) close();
       });
-      document.getElementById("ok").focus();
-      // Shown once drawn, or it flashes white first.
-      requestAnimationFrame(() => invoke("about_ready"));
+      document.getElementById("close").focus();
     </script>
   </body>
 </html>
