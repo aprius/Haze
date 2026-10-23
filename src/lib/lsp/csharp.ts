@@ -27,6 +27,7 @@ import {
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
 import { isVirtualPath, setVirtualSource } from "../buffers";
 import { MIN_PREFIX, pickInline, type LspCompletionItem } from "./inline";
+import { buildHover, declarationAt, type Declaration } from "./hoverDoc";
 import { SEMANTIC_LEGEND, semanticTranslator, type LspSemanticLegend } from "./semantic";
 import { useUnity, type TestResult } from "../../store/unity";
 import { unityMessage } from "../unity/messages";
@@ -458,6 +459,18 @@ const docParams = (model: monaco.editor.ITextModel, position: monaco.IPosition) 
   position: toLspPosition(position),
 });
 
+/** The declaration at a definition: from its open model, else from disk (Roslyn's metadata-as-source files too). */
+async function hoverDeclaration(loc: LspLocation | undefined): Promise<Declaration | null> {
+  if (!loc) return null;
+  const uri = locationUri(loc.uri);
+  let text = monaco.editor.getModel(uri)?.getValue();
+  if (text === undefined && uri.scheme === "file") {
+    const file = await api.readFile(uri.fsPath);
+    if (file.kind === "text") text = file.content;
+  }
+  return text === undefined ? null : declarationAt(text.split(/\r?\n/), loc.range.start.line);
+}
+
 // ------------------------------------------------------------------ queries used by commands
 
 export interface FoundLocation {
@@ -718,10 +731,20 @@ export function registerProviders(): void {
     async provideHover(model, position, token) {
       const s = ready(model);
       if (!s) return null;
-      const res = await s.request<{ contents: unknown; range?: LspRange } | null>("textDocument/hover", docParams(model, position), token);
+      // The declaration fills in what Roslyn's hover leaves out (see hoverDoc.ts).
+      const [res, decl] = await Promise.all([
+        s.request<{ contents: unknown; range?: LspRange } | null>("textDocument/hover", docParams(model, position), token),
+        s
+          .request<unknown>("textDocument/definition", docParams(model, position), token)
+          .then((d) => hoverDeclaration(toLocations(d)[0]))
+          .catch(() => null),
+      ]);
       if (!res) return null;
       const value = markupToString(res.contents);
-      return value ? { contents: [{ value }], range: res.range ? toMonacoRange(res.range) : undefined } : null;
+      if (!value) return null;
+      // supportHtml: the docs table and the codicons in the "in class Player" line.
+      const contents = buildHover(value, decl).map((part) => ({ value: part, supportHtml: true }));
+      return { contents, range: res.range ? toMonacoRange(res.range) : undefined };
     },
   });
 

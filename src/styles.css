@@ -3173,6 +3173,30 @@ button.toggle.on {
   font-size: 12px;
 }
 
+/* C# hovers' docs table (lib/lsp/hoverDoc.ts): Rider's "Params: / Returns:"
+   labels in a quiet left column, no header row or borders. */
+.monaco-hover .hover-contents table {
+  border-collapse: collapse;
+  margin: 6px 0 2px;
+}
+.monaco-hover .hover-contents thead {
+  display: none;
+}
+.monaco-hover .hover-contents td {
+  border: none;
+  padding: 2px 0;
+  vertical-align: top;
+}
+.monaco-hover .hover-contents td:first-child {
+  color: var(--muted);
+  padding-right: 12px;
+  white-space: nowrap;
+}
+.monaco-hover .hover-contents .codicon {
+  vertical-align: text-bottom;
+  color: var(--muted);
+}
+
 /* Code Vision above declarations: quiet until hovered. */
 .monaco-editor .codelens-decoration,
 .monaco-editor .codelens-decoration a {
