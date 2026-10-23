@@ -853,10 +853,10 @@ const ABOUT_MENU_ID: &str = "haze-about";
 /// Tauri's default menu with Haze's About window and "Check for Updates…"
 /// under it.
 fn app_menu(handle: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    use tauri::menu::{Menu, MenuItem};
-    let menu = Menu::default(handle)?;
+    let menu = tauri::menu::Menu::default(handle)?;
     #[cfg(target_os = "macos")]
     if let Some(app) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
+        use tauri::menu::MenuItem;
         app.remove_at(0)?;
         app.insert(&MenuItem::with_id(handle, ABOUT_MENU_ID, "About Haze", true, None::<&str>)?, 0)?;
         let check = MenuItem::with_id(handle, CHECK_UPDATES_MENU, "Check for Updates…", true, None::<&str>)?;
