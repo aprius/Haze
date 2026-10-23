@@ -27,8 +27,6 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 - **Never overwrite the agent's work silently**: files changed on disk reload automatically, and conflicting edits are always surfaced.
 - **No phantom errors**: C# errors come only from a real `dotnet build`, not from a language server that is out of sync.
 
-> Status: early development (v0.2.0).
-
 ## Haze vs Rider
 
 Haze is not a Rider replacement: it keeps the Rider workflow for reviewing and steering agents, and leaves out what an agent-driven workflow rarely needs (debugger, profiler, deep inspections).
