@@ -93,6 +93,7 @@ function apply(f: FontSettings): void {
   root.setProperty("--font-ui", uiFontFamily(f));
   root.setProperty("--font-mono", codeFontFamily(f));
   root.setProperty("--ui-font-size", `${f.uiSize}px`);
+  root.setProperty("--code-font-size", `${f.codeSize}px`);
 }
 
 apply(useFonts.getState());

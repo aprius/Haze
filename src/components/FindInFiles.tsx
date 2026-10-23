@@ -10,7 +10,8 @@ import { create } from "zustand";
 import { getModel, metaDirty, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type FileMatches, type ReplaceTarget, type SearchContext, type SearchMatch, type SearchQuery, type SearchResults } from "../lib/ipc";
 import { monaco } from "../lib/monaco";
-import { CodePreview } from "./CodePreview";
+import { CodeLine, CodePreview } from "./CodePreview";
+import { codeLineHeight, useFonts } from "../lib/fonts";
 import { basename, dirname, isWithin, relative } from "../lib/path";
 import { keepSearchFocus } from "../lib/popupFocus";
 import { closeFindInFiles, useUi } from "../store/ui";
@@ -83,7 +84,6 @@ const CONTEXTS: { id: SearchContext; label: string }[] = [
   { id: "exceptCommentsAndStrings", label: "Except comments and string literals" },
 ];
 
-const ROW_H = 22;
 let searchId = 1;
 
 const NO_MATCHES: SearchMatch[] = [];
@@ -184,6 +184,30 @@ function toQuery(o: FindOptions, replace: boolean): SearchQuery {
   };
 }
 
+/** The match's line without its indentation, coloured like the editor; replacing, the old text struck out and the new after it. */
+function MatchLine({ file, match, replace }: { file: FileMatches; match: SearchMatch; replace: boolean }) {
+  const text = match.lineText.trimStart();
+  const lead = match.lineText.length - text.length;
+  // Where `lineText` (a window on long lines) starts in the line.
+  const from = match.column - 1 - match.previewStart + lead;
+  const hl = useMemo<[number, number]>(
+    () => [Math.max(match.previewStart - lead, 0), Math.max(match.previewEnd - lead, 0)],
+    [match.previewStart, match.previewEnd, lead],
+  );
+  return (
+    <CodeLine
+      path={file.path}
+      hash={file.hash}
+      line={match.line}
+      from={from}
+      text={text}
+      hl={hl}
+      hlClass={replace ? "find-old" : "find-hl"}
+      insert={replace ? (match.replacement ?? "") : null}
+    />
+  );
+}
+
 function Toggle({ on, title, label, onClick }: { on: boolean; title: string; label: ReactNode; onClick: () => void }) {
   return (
     // Out of the tab order so Tab goes from the search field to the replace field.
@@ -207,6 +231,8 @@ export function FindInFiles({ project }: { project: Project | null }) {
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
+  // Rows in the editor's font, a little taller than its lines, like Rider's.
+  const ROW_H = codeLineHeight(useFonts((f) => f.codeSize)) + 4;
   const [listHeight, setListHeight] = useState(300);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyIndex, setHistoryIndex] = useState(0);
@@ -749,10 +775,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
                   >
                     {replace && <input type="checkbox" checked={!off} onChange={() => toggleMatch(row.file.path, m)} onClick={(e) => e.stopPropagation()} />}
                     <span className="find-text">
-                      {m.lineText.slice(0, m.previewStart).trimStart()}
-                      <span className={replace ? "find-old" : "find-hl"}>{m.lineText.slice(m.previewStart, m.previewEnd)}</span>
-                      {replace && <span className="find-new">{m.replacement}</span>}
-                      {m.lineText.slice(m.previewEnd)}
+                      <MatchLine file={row.file} match={m} replace={replace} />
                     </span>
                     <span className="find-where">
                       {row.file.fromBuffer && <span className="tag">unsaved</span>}

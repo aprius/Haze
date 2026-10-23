@@ -1,6 +1,6 @@
 // Read-only code preview under a results list: Find in Files and Search
 // Everywhere, like Rider's preview pane.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getModel } from "../lib/buffers";
 import { api } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco } from "../lib/monaco";
@@ -94,4 +94,138 @@ export function CodePreview({ path, hash, match, others }: { path: string | null
   }, [path, hash, match, others]);
 
   return <div ref={host} className="find-preview-editor" />;
+}
+
+// Result rows coloured like the editor, from the whole file's tokens so a
+// line inside a block comment or a multi-line string gets its real colours.
+// Files open in the editor use their buffer; others get a hidden model,
+// kept for the last few files while the searched content is unchanged.
+
+/** Monaco's model internals behind the editor's own colouring. */
+interface TokenizedModel {
+  tokenization: {
+    forceTokenization(line: number): void;
+    getLineTokens(line: number): { getCount(): number; getEndOffset(i: number): number; getClassName(i: number): string };
+  };
+}
+
+const rowModels = new Map<string, { hash: string | null; model: Promise<monaco.editor.ITextModel | null> }>();
+const ROW_MODELS_MAX = 40;
+let rowModelId = 0;
+
+function rowModel(path: string, hash: string | null): Promise<monaco.editor.ITextModel | null> {
+  const buffer = getModel(path);
+  if (buffer) return Promise.resolve(buffer);
+  const cached = rowModels.get(path);
+  rowModels.delete(path);
+  if (cached?.hash === hash) {
+    rowModels.set(path, cached);
+    return cached.model;
+  }
+  void cached?.model.then((m) => m?.dispose());
+  if (rowModels.size >= ROW_MODELS_MAX) {
+    const [oldest, entry] = rowModels.entries().next().value!;
+    rowModels.delete(oldest);
+    void entry.model.then((m) => m?.dispose());
+  }
+  const language = languageFor(path);
+  // colorize("") waits for the language's tokenizer, loaded lazily.
+  const model = Promise.all([api.readFile(path), monaco.editor.colorize("", language, {})])
+    .then(([f]) =>
+      f.kind === "text"
+        ? monaco.editor.createModel(f.content, language, monaco.Uri.from({ scheme: "find-rows", path: monaco.Uri.file(path).path, query: String(++rowModelId) }))
+        : null,
+    )
+    .catch(() => null);
+  rowModels.set(path, { hash, model });
+  return model;
+}
+
+interface Segment {
+  text: string;
+  className: string;
+}
+
+/** The tokens of `line` between `from` and `from + text.length`, or null when the file no longer has `text` there. */
+function lineSegments(model: monaco.editor.ITextModel, line: number, from: number, text: string): Segment[] | null {
+  if (model.isDisposed() || line > model.getLineCount() || model.getLineContent(line).substr(from, text.length) !== text) return null;
+  const { tokenization } = model as unknown as TokenizedModel;
+  tokenization.forceTokenization(line);
+  const tokens = tokenization.getLineTokens(line);
+  const out: Segment[] = [];
+  let start = 0;
+  for (let i = 0; i < tokens.getCount(); i++) {
+    const end = tokens.getEndOffset(i);
+    const a = Math.max(start, from);
+    const b = Math.min(end, from + text.length);
+    if (a < b) out.push({ text: text.slice(a - from, b - from), className: tokens.getClassName(i) });
+    start = end;
+  }
+  return out;
+}
+
+/**
+ * One line of code coloured like the editor: `text` is what line `line` of
+ * `path` holds from offset `from`. `hl` (offsets in `text`) is marked with
+ * `hlClass`, and `insert` (a replacement) follows it. Plain until the colours are ready.
+ */
+export function CodeLine({
+  path,
+  hash,
+  line,
+  from,
+  text,
+  hl,
+  hlClass,
+  insert,
+}: {
+  path: string;
+  hash: string | null;
+  line: number;
+  from: number;
+  text: string;
+  hl: [number, number];
+  hlClass: string;
+  insert?: string | null;
+}) {
+  const [segments, setSegments] = useState<Segment[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    setSegments(null);
+    void rowModel(path, hash).then((model) => live && model && setSegments(lineSegments(model, line, from, text)));
+    return () => {
+      live = false;
+    };
+  }, [path, hash, line, from, text]);
+
+  const parts: React.ReactNode[] = [];
+  let offset = 0;
+  let inserted = insert == null;
+  const flushInsert = () => {
+    if (inserted) return;
+    inserted = true;
+    parts.push(
+      <span key="insert" className="find-new">
+        {insert}
+      </span>,
+    );
+  };
+  for (const [i, seg] of (segments ?? [{ text, className: "" }]).entries()) {
+    const end = offset + seg.text.length;
+    // Cut the token where the highlight starts and ends.
+    const cuts = [offset, ...[hl[0], hl[1]].filter((c) => c > offset && c < end), end];
+    for (let k = 0; k + 1 < cuts.length; k++) {
+      const [a, b] = [cuts[k], cuts[k + 1]];
+      if (a === hl[1]) flushInsert();
+      const marked = a >= hl[0] && b <= hl[1] && hl[0] < hl[1];
+      parts.push(
+        <span key={`${i}:${k}`} className={seg.className + (marked ? " " + hlClass : "")}>
+          {seg.text.slice(a - offset, b - offset)}
+        </span>,
+      );
+    }
+    offset = end;
+  }
+  flushInsert();
+  return <span className="code-line">{parts}</span>;
 }

@@ -1982,6 +1982,7 @@ kbd {
 }
 
 .find-match {
+  padding: 0 12px;
   cursor: default;
 }
 
@@ -1993,7 +1994,7 @@ kbd {
   margin-left: auto;
   padding-left: 16px;
   color: var(--muted);
-  font-size: calc(var(--ui-font-size) * 12 / 13);
+  font-size: var(--ui-font-size);
 }
 
 .find-match:hover {
@@ -2016,13 +2017,20 @@ kbd {
   font-family: var(--font-mono);
 }
 
+/* The editor's font and size, as Rider draws these rows. */
 .find-text {
   flex: 0 1 auto;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: calc(var(--ui-font-size) * 12 / 13);
+  font-size: var(--code-font-size, 13px);
+  white-space: pre;
+  tab-size: 4;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.code-line {
+  white-space: pre;
 }
 
 .find-hl {
