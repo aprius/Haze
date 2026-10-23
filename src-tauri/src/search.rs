@@ -66,6 +66,10 @@ pub struct SearchScope {
     pub file_mask: Option<String>,
     #[serde(default)]
     pub include_ignored: bool,
+    /// Projects (`.csproj`) whose files are searched: "In Solution" without
+    /// non-solution items. Unity's projects list their files; others add their folder.
+    #[serde(default)]
+    pub projects: Vec<String>,
     /// Unsaved editor content, searched instead of the file on disk.
     #[serde(default)]
     pub overrides: HashMap<String, String>,
@@ -533,28 +537,47 @@ pub fn search(
         WalkState::Continue
     };
 
-    for file in &scope.files {
-        if let WalkState::Quit = process(Path::new(file)) {
-            break;
+    let mut files: Vec<PathBuf> = scope.files.iter().map(PathBuf::from).collect();
+    let mut dirs: Vec<PathBuf> = scope.dirs.iter().map(PathBuf::from).collect();
+    for project in &scope.projects {
+        let project = Path::new(project);
+        match crate::dotnet::project_items(project) {
+            Some(items) => files.extend(items),
+            None => dirs.extend(project.parent().map(Path::to_path_buf)),
         }
     }
-    for dir in &scope.dirs {
+    // Listed files on every core: Unity's projects name thousands.
+    let workers = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(files.len().max(1));
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                let Some(file) = files.get(i) else { break };
+                if let WalkState::Quit = process(file) {
+                    next.store(files.len(), Ordering::Relaxed);
+                    break;
+                }
+            });
+        }
+    });
+    for dir in &dirs {
         if cancelled.load(Ordering::Relaxed) || truncated.load(Ordering::Relaxed) {
             break;
         }
-        walker(Path::new(dir), scope.include_ignored)
-            .build_parallel()
-            .run(|| {
-                Box::new(|entry| {
-                    let Ok(entry) = entry else {
-                        return WalkState::Continue;
-                    };
-                    if !entry.file_type().is_some_and(|t| t.is_file()) {
-                        return WalkState::Continue;
-                    }
-                    process(entry.path())
-                })
-            });
+        walker(dir, scope.include_ignored).build_parallel().run(|| {
+            Box::new(|entry| {
+                let Ok(entry) = entry else {
+                    return WalkState::Continue;
+                };
+                if !entry.file_type().is_some_and(|t| t.is_file()) {
+                    return WalkState::Continue;
+                }
+                process(entry.path())
+            })
+        });
     }
 
     let mut files = results.into_inner();
@@ -915,6 +938,64 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(std::fs::read(&a).unwrap(), original);
+    }
+
+    #[test]
+    fn solution_items_from_unity_projects() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("Assets/Scripts")).unwrap();
+        std::fs::write(root.join("Assets/Scripts/Player.cs"), "class Player {}").unwrap();
+        std::fs::write(root.join("Assets/Scripts/Player.cs.meta"), "guid: Player").unwrap();
+        std::fs::write(root.join("Assets/Player.prefab"), "m_Name: Player").unwrap();
+        std::fs::write(
+            root.join("Assembly-CSharp.csproj"),
+            r#"<Project><ItemGroup><Compile Include="Assets\Scripts\Player.cs" /></ItemGroup></Project>"#,
+        )
+        .unwrap();
+        let q = SearchQuery {
+            query: "Player".into(),
+            is_regex: false,
+            match_case: true,
+            whole_word: false,
+            context: SearchContext::Anywhere,
+            replacement: None,
+            preserve_case: false,
+        };
+        let run = |scope: &SearchScope| {
+            let mut paths: Vec<_> = search(&q, scope, 1, &AtomicU64::new(1), 100)
+                .unwrap()
+                .files
+                .into_iter()
+                .map(|f| {
+                    Path::new(&f.path)
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            paths.sort();
+            paths
+        };
+        let solution = SearchScope {
+            projects: vec![root.join("Assembly-CSharp.csproj").to_string_lossy().into()],
+            ..Default::default()
+        };
+        assert_eq!(run(&solution), ["Player.cs"]);
+        let everything = SearchScope {
+            dirs: vec![root.to_string_lossy().into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            run(&everything),
+            [
+                "Assembly-CSharp.csproj",
+                "Player.cs",
+                "Player.cs.meta",
+                "Player.prefab"
+            ]
+        );
     }
 
     #[test]

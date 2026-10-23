@@ -19,7 +19,15 @@ import { useWorkspace, type Project } from "../store/workspace";
 import { FileIcon } from "./FileIcon";
 import { toast } from "./Overlays";
 
-type ScopeKind = "project" | "solution" | "directory" | "openFiles";
+// Rider's scopes: the solution, one of its projects (a `.csproj`), a directory.
+// Without a solution, "In Project" is the opened folder.
+type ScopeKind = "solution" | "csproj" | "folder" | "directory" | "openFiles";
+
+function effectiveScope(scope: ScopeKind, hasSolution: boolean): ScopeKind {
+  if (!hasSolution && (scope === "solution" || scope === "csproj")) return "folder";
+  if (hasSolution && scope === "folder") return "solution";
+  return scope;
+}
 
 interface FindOptions {
   query: string;
@@ -32,8 +40,12 @@ interface FindOptions {
   fileMask: string;
   fileMaskOn: boolean;
   scope: ScopeKind;
+  /** The `.csproj` searched by the "Project" scope. */
+  csproj: string;
   directory: string;
   includeIgnored: boolean;
+  /** "Solution": also files no project lists (Unity's assets and `.meta`s), like Rider. */
+  nonSolution: boolean;
 }
 
 // Options survive closing the popup, like Rider.
@@ -47,10 +59,20 @@ const useFindOptions = create<FindOptions>(() => ({
   context: "anywhere",
   fileMask: "",
   fileMaskOn: false,
-  scope: "project",
+  scope: "solution",
+  csproj: "",
   directory: "",
   includeIgnored: false,
+  nonSolution: false,
 }));
+
+const SCOPE_LABELS: Record<ScopeKind, string> = {
+  solution: "In Solution",
+  csproj: "Project",
+  folder: "In Project",
+  directory: "Directory",
+  openFiles: "Open Files",
+};
 
 const CONTEXTS: { id: SearchContext; label: string }[] = [
   { id: "anywhere", label: "Anywhere" },
@@ -303,7 +325,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
     }
     const t = setTimeout(() => void runSearch(), 250);
     return () => clearTimeout(t);
-  }, [open, project, replace, opts.query, opts.replacement, opts.isRegex, opts.matchCase, opts.wholeWord, opts.preserveCase, opts.context, opts.fileMask, opts.fileMaskOn, opts.scope, opts.directory, opts.includeIgnored]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, project, replace, opts.query, opts.replacement, opts.isRegex, opts.matchCase, opts.wholeWord, opts.preserveCase, opts.context, opts.fileMask, opts.fileMaskOn, opts.scope, opts.csproj, opts.directory, opts.includeIgnored, opts.nonSolution]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runSearch = async () => {
     if (!project) return;
@@ -319,17 +341,23 @@ export function FindInFiles({ project }: { project: Project | null }) {
       if (m.dirty) overrides[path] = model.getValue();
     }
     const openTabs = Object.values(useWorkspace.getState().ui).flatMap((u) => u.tabs.map((t) => t.path));
+    const info = useDotnet.getState().info[project.id];
+    const projects = info?.projects ?? [];
+    const kind = effectiveScope(o.scope, projects.length > 0);
+    const csproj = projects.find((p) => p.path === o.csproj) ?? projects[0];
     const scope = {
-      // "Solution" without a solution (another project chose it) searches the project.
+      // The projects' own files; with non-solution items, everything in the
+      // folders of the projects and solutions (Unity's assets, `.meta`s).
+      projects: kind === "solution" && !o.nonSolution ? projects.map((p) => p.path) : kind === "csproj" && csproj ? [csproj.path] : [],
       dirs:
-        o.scope === "solution" && solutionDirs(project.id).length
-          ? solutionDirs(project.id)
-          : o.scope === "directory"
+        kind === "solution" && o.nonSolution
+          ? [...new Set([...solutionDirs(project.id), ...(info?.solutions ?? []).map(dirname)])]
+          : kind === "directory"
             ? [o.directory || project.path]
-            : o.scope === "openFiles"
-              ? []
-              : [project.path],
-      files: o.scope === "openFiles" ? [...new Set(openTabs)] : [],
+            : kind === "folder"
+              ? [project.path]
+              : [],
+      files: kind === "openFiles" ? [...new Set(openTabs)] : [],
       fileMask: (o.fileMaskOn && o.fileMask.trim()) || null,
       includeIgnored: o.includeIgnored,
       overrides,
@@ -569,7 +597,8 @@ export function FindInFiles({ project }: { project: Project | null }) {
     e.stopPropagation();
   };
 
-  const shownScope = opts.scope === "solution" && !hasSolution ? "project" : opts.scope;
+  const shownScope = effectiveScope(opts.scope, hasSolution);
+  const csprojs = useDotnet.getState().info[project.id]?.projects ?? [];
   const bounds = layout.bounds;
 
   const moveBy = (e: React.PointerEvent) => {
@@ -689,12 +718,38 @@ export function FindInFiles({ project }: { project: Project | null }) {
         {error && <div className="find-error">{error}</div>}
         <div className="find-options">
           <div className="seg">
-            {(["project", ...(hasSolution ? ["solution"] : []), "directory", "openFiles"] as ScopeKind[]).map((s) => (
+            {((hasSolution ? ["solution", "csproj"] : ["folder"]).concat(["directory", "openFiles"]) as ScopeKind[]).map((s) => (
               <button key={s} className={"seg-btn" + (shownScope === s ? " on" : "")} onClick={() => set({ scope: s })}>
-                {s === "project" ? "In Project" : s === "solution" ? "Solution" : s === "directory" ? "Directory" : "Open Files"}
+                {SCOPE_LABELS[s]}
               </button>
             ))}
           </div>
+          {shownScope === "solution" && (
+            <button
+              className={"seg-toggle" + (opts.nonSolution ? " on" : "")}
+              title="Also search files no project lists: Unity's assets, scenes and .meta files"
+              onClick={() => set({ nonSolution: !opts.nonSolution })}
+            >
+              Include non-solution items
+            </button>
+          )}
+          {shownScope === "csproj" && (
+            <select
+              className="find-select"
+              value={(csprojs.find((p) => p.path === opts.csproj) ?? csprojs[0])?.path}
+              title="Project to search"
+              onChange={(e) => {
+                set({ csproj: e.target.value });
+                queryRef.current?.focus();
+              }}
+            >
+              {csprojs.map((p) => (
+                <option key={p.path} value={p.path}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
           {opts.scope === "directory" && (
             <span className="find-dir">
               <input

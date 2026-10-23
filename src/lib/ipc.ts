@@ -148,6 +148,8 @@ export interface SearchScope {
   files: string[];
   fileMask: string | null;
   includeIgnored: boolean;
+  /** `.csproj` files whose items are searched ("In Solution" without non-solution items). */
+  projects?: string[];
   overrides: Record<string, string>;
 }
 

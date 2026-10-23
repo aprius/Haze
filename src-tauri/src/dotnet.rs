@@ -143,6 +143,31 @@ fn describe(project: &Path) -> DotnetProject {
     }
 }
 
+static ITEM: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<(?:Compile|None|Content|EmbeddedResource|AdditionalFiles)\s+Include="([^"]+)""#)
+        .unwrap()
+});
+
+/// The files a project lists (Unity's generated `.csproj` names each one), or
+/// `None` when it globs its folder (SDK-style projects, wildcards): then the
+/// folder is the project's.
+pub fn project_items(project: &Path) -> Option<Vec<PathBuf>> {
+    let text = std::fs::read_to_string(project).ok()?;
+    let dir = project.parent()?;
+    let mut out = Vec::new();
+    for c in ITEM.captures_iter(&text) {
+        let include = &c[1];
+        if include.contains('*') || include.contains("$(") {
+            return None;
+        }
+        // `Assets\Scripts\Player.cs`, relative to the project, `&amp;` escaped.
+        let rel = include.replace('\\', "/").replace("&amp;", "&");
+        out.push(dir.join(rel));
+    }
+    // A project with no `<Compile Include>` compiles its folder by default.
+    (!out.is_empty()).then_some(out)
+}
+
 pub fn dotnet_command() -> Command {
     #[allow(unused_mut)]
     let mut cmd = Command::new("dotnet");

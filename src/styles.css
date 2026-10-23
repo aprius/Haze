@@ -1789,6 +1789,23 @@ kbd {
   color: var(--fg);
 }
 
+/* An on/off option beside the scopes: "Include non-solution items". */
+.seg-toggle {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  padding: 2px 10px;
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.seg-toggle.on {
+  background: var(--selected);
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
 .seg.small .seg-btn {
   padding: 1px 8px;
 }
