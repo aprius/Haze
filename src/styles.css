@@ -3912,6 +3912,58 @@ html:has(.float-external) body {
 .settings-row.static {
   cursor: default;
 }
+.keymap-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 28px;
+}
+.keymap-row + .keymap-row {
+  border-top: 1px solid var(--border);
+}
+.keymap-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.keymap-changed {
+  color: var(--accent);
+}
+.keymap-clash {
+  color: var(--mk-orange);
+}
+.keymap-keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+}
+.keymap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 2px 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.keymap-chip.recording {
+  padding: 1px 6px;
+  color: var(--muted);
+  border-color: var(--accent);
+  outline: none;
+}
+.keymap-chip-x {
+  display: inline-flex;
+  padding: 1px;
+  border-radius: 3px;
+  color: var(--muted);
+}
+.keymap-chip-x:hover {
+  color: inherit;
+  background: var(--border);
+}
 
 /* Unity: title bar controls and the Console tool window */
 

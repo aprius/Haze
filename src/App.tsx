@@ -25,7 +25,7 @@ import { loadDotnetInfo, useDotnet } from "./store/dotnet";
 import { buildProject, startUnityLink, stopUnityLink, unityFilesChanged, useUnity } from "./store/unity";
 import { unityFilesChangedForCode, warmUnityIndex } from "./lib/unity/scripts";
 import { handleDiskChanges } from "./lib/buffers";
-import { matches, type Command } from "./lib/keymap";
+import { isRecordingKeys, matches, type Command } from "./lib/keymap";
 import { api, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
 import { basename, dirname } from "./lib/path";
 import { resetZoom, zoomIn, zoomOut } from "./lib/zoom";
@@ -129,6 +129,10 @@ function useGlobalShortcuts(project: Project | null) {
       else if (is("rename") && triggerEditorAction("haze.rename")) {
         /* handled */
       }
+      // Monaco only knows the default; a shortcut set in Settings › Keymap comes through here.
+      else if (is("copyContext") && triggerEditorAction("haze.copyContext")) {
+        /* handled */
+      }
       // Capture phase: Monaco binds Alt+F12 to Peek Definition on Windows and macOS.
       else if (is("terminal") && project) toggleTerminal(project.id);
       else if (is("push") && project) openPushDialog(project);
@@ -161,7 +165,7 @@ function useGlobalShortcuts(project: Project | null) {
       if (e.key === "Shift" && !e.repeat) otherKey = false;
     };
     const onUp = (e: KeyboardEvent) => {
-      if (e.key !== "Shift" || otherKey) return;
+      if (e.key !== "Shift" || otherKey || isRecordingKeys()) return;
       const now = Date.now();
       // Double Shift: two lone Shift presses within 350 ms. Again in Search
       // Everywhere toggles "Include non-solution items", as in Rider.

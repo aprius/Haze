@@ -1,6 +1,6 @@
-// Settings: fonts, layout style, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting.
-import { Bot, Box, Code, FolderTree, GitBranch, type LucideIcon, Type, X } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+// Settings: fonts, layout style, keymap, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting.
+import { Bot, Box, Code, FolderTree, GitBranch, Keyboard, type LucideIcon, Plus, RotateCcw, Type, X } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import {
   CODE_FONT_SUGGESTIONS,
@@ -16,13 +16,25 @@ import {
   type FontSettings,
 } from "../lib/fonts";
 import { api, errorMessage, type HookAgent, type HookStatus } from "../lib/ipc";
+import {
+  type Command,
+  COMMANDS,
+  conflicts,
+  keystrokeFromEvent,
+  keystrokeLabel,
+  keystrokes,
+  resetKeystrokes,
+  setKeystrokes,
+  setRecordingKeys,
+  useKeymap,
+} from "../lib/keymap";
 import { setUiStyle, type UiStyle, useUiStyle } from "../lib/theme";
 import { popupClosed } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
 import { toast } from "./Overlays";
 
-type Page = "appearance" | "editor" | "agents" | "vcs" | "project" | "unity";
+type Page = "appearance" | "editor" | "keymap" | "agents" | "vcs" | "project" | "unity";
 
 // The page stays selected between openings.
 const useSettings = create<{ open: boolean; page: Page }>(() => ({ open: false, page: "appearance" }));
@@ -280,6 +292,111 @@ function SwitchRow({ label, desc, checked, onChange }: { label: string; desc?: s
   );
 }
 
+const commandName = (cmd: Command) => COMMANDS.find((c) => c.id === cmd)?.name ?? cmd;
+
+/** Focused while it records: the next key press, with its modifiers, becomes a shortcut. Esc alone cancels. */
+function KeyRecorder({ onKey, onCancel }: { onKey: (ks: string) => void; onCancel: () => void }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    setRecordingKeys(true);
+    ref.current?.focus();
+    return () => setRecordingKeys(false);
+  }, []);
+  return (
+    <span
+      className="keymap-chip recording"
+      tabIndex={0}
+      ref={ref}
+      onBlur={onCancel}
+      onKeyDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const plain = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+        if (e.key === "Escape" && plain) return onCancel();
+        const ks = keystrokeFromEvent(e.nativeEvent);
+        if (ks) onKey(ks);
+      }}
+    >
+      Press keys…
+    </span>
+  );
+}
+
+function KeymapRow({ id, name }: { id: Command; name: string }) {
+  const changed = useKeymap((s) => id in s);
+  const list = keystrokes(id);
+  const [recording, setRecording] = useState(false);
+  const clashes = list.flatMap((ks) => conflicts(id, ks).map((other) => `${keystrokeLabel(ks)} is also ${commandName(other)}`));
+  return (
+    <div className="keymap-row">
+      <div className="keymap-name">
+        <span className={changed ? "keymap-changed" : undefined}>{name}</span>
+        {clashes.length > 0 && <span className="keymap-clash small">{clashes.join(" · ")}</span>}
+      </div>
+      <div className="keymap-keys">
+        {list.map((ks) => (
+          <span key={ks} className="keymap-chip">
+            <kbd>{keystrokeLabel(ks)}</kbd>
+            <button className="keymap-chip-x" title="Remove" onClick={() => setKeystrokes(id, list.filter((k) => k !== ks))}>
+              <X size={11} />
+            </button>
+          </span>
+        ))}
+        {id === "searchEverywhere" && <span className="muted small">Double Shift</span>}
+        {recording ? (
+          <KeyRecorder
+            onCancel={() => setRecording(false)}
+            onKey={(ks) => {
+              if (!list.includes(ks)) setKeystrokes(id, [...list, ks]);
+              setRecording(false);
+            }}
+          />
+        ) : (
+          <button className="icon-btn" title="Add Shortcut" onClick={() => setRecording(true)}>
+            <Plus size={13} />
+          </button>
+        )}
+        <button className="icon-btn" title="Reset to Default" style={{ visibility: changed ? undefined : "hidden" }} onClick={() => resetKeystrokes(id)}>
+          <RotateCcw size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function KeymapSection() {
+  const changed = useKeymap((s) => Object.keys(s).length > 0);
+  // Labels and conflicts are read from the keymap, so any change redraws the page.
+  useKeymap();
+  const [filter, setFilter] = useState("");
+  const q = filter.trim().toLowerCase();
+  const shown = COMMANDS.filter((c) => !q || c.name.toLowerCase().includes(q) || keystrokes(c.id).some((ks) => keystrokeLabel(ks).toLowerCase().includes(q)));
+  const groups = [...new Set(shown.map((c) => c.group))];
+  return (
+    <>
+      <PageHeader title="Keymap" desc="Click + and press the keys to add a shortcut; a command can have several. Changed commands are highlighted.">
+        {changed && (
+          <button className="btn small" onClick={() => resetKeystrokes()}>
+            Reset All
+          </button>
+        )}
+      </PageHeader>
+      <input className="modal-input" placeholder="Filter by action or shortcut" value={filter} spellCheck={false} onChange={(e) => setFilter(e.target.value)} />
+      {groups.map((g) => (
+        <div key={g} className="settings-card">
+          <div className="muted small">{g}</div>
+          {shown
+            .filter((c) => c.group === g)
+            .map((c) => (
+              <KeymapRow key={c.id} id={c.id} name={c.name} />
+            ))}
+        </div>
+      ))}
+      {shown.length === 0 && <div className="muted small">No matching actions</div>}
+    </>
+  );
+}
+
 function AgentsSection() {
   const notifyAgents = useWorkspace((s) => s.notifyAgents);
   return (
@@ -391,6 +508,7 @@ function UnitySection() {
 const PAGES: { id: Page; name: string; icon: LucideIcon; body: () => ReactNode }[] = [
   { id: "appearance", name: "Appearance", icon: Type, body: () => <FontSettingsSection /> },
   { id: "editor", name: "Editor", icon: Code, body: () => <EditorSection /> },
+  { id: "keymap", name: "Keymap", icon: Keyboard, body: () => <KeymapSection /> },
   { id: "agents", name: "AI Agents", icon: Bot, body: () => <AgentsSection /> },
   { id: "vcs", name: "Version Control", icon: GitBranch, body: () => <GitAccountsSection /> },
   { id: "project", name: "Project View", icon: FolderTree, body: () => <ProjectViewSection /> },

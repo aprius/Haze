@@ -6,7 +6,7 @@ import { openFolder } from "../components/Shell";
 import { newTerminal } from "../store/terminals";
 import { useTree } from "../store/tree";
 import { openFindInFiles, openSearchEverywhere } from "../store/ui";
-import { shortcutLabel } from "./keymap";
+import type { Command } from "./keymap";
 import { toggleThemeMode } from "./theme";
 import { resetZoom, zoomIn, zoomOut } from "./zoom";
 import { activeProject, useWorkspace } from "../store/workspace";
@@ -14,7 +14,8 @@ import { activeProject, useWorkspace } from "../store/workspace";
 export interface Action {
   id: string;
   label: string;
-  shortcut?: string;
+  /** Its keymap command, whose shortcut is shown next to it. */
+  command?: Command;
   /** Only offered when a project is open. */
   needsProject?: boolean;
   run(): void;
@@ -28,27 +29,27 @@ function withProject(f: (projectId: string, path: string) => void) {
 }
 
 export const actions: Action[] = [
-  { id: "searchEverywhere", label: "Search Everywhere", shortcut: shortcutLabel("searchEverywhere"), run: () => openSearchEverywhere("all") },
-  { id: "gotoFile", label: "Go to File…", shortcut: shortcutLabel("gotoFile"), run: () => openSearchEverywhere("files") },
-  { id: "findInFiles", label: "Find in Files…", shortcut: shortcutLabel("findInFiles"), needsProject: true, run: () => openFindInFiles() },
+  { id: "searchEverywhere", label: "Search Everywhere", command: "searchEverywhere", run: () => openSearchEverywhere("all") },
+  { id: "gotoFile", label: "Go to File…", command: "gotoFile", run: () => openSearchEverywhere("files") },
+  { id: "findInFiles", label: "Find in Files…", command: "findInFiles", needsProject: true, run: () => openFindInFiles() },
   {
     id: "replaceInFiles",
     label: "Replace in Files…",
-    shortcut: shortcutLabel("replaceInFiles"),
+    command: "replaceInFiles",
     needsProject: true,
     run: () => openFindInFiles({ replace: true }),
   },
-  { id: "saveAll", label: "Save All", shortcut: shortcutLabel("saveAll"), run: () => void saveAll() },
+  { id: "saveAll", label: "Save All", command: "saveAll", run: () => void saveAll() },
   { id: "openFolder", label: "Open Folder…", run: () => void openFolder() },
   { id: "toggleTheme", label: "Toggle Light/Dark Theme", run: toggleThemeMode },
-  { id: "zoomIn", label: "Zoom In", shortcut: shortcutLabel("zoomIn"), run: zoomIn },
-  { id: "zoomOut", label: "Zoom Out", shortcut: shortcutLabel("zoomOut"), run: zoomOut },
-  { id: "resetZoom", label: "Reset Zoom", shortcut: shortcutLabel("resetZoom"), run: resetZoom },
-  { id: "settings", label: "Settings (AI agent hooks, notifications)", shortcut: shortcutLabel("settings"), run: () => openSettings() },
+  { id: "zoomIn", label: "Zoom In", command: "zoomIn", run: zoomIn },
+  { id: "zoomOut", label: "Zoom Out", command: "zoomOut", run: zoomOut },
+  { id: "resetZoom", label: "Reset Zoom", command: "resetZoom", run: resetZoom },
+  { id: "settings", label: "Settings (AI agent hooks, notifications)", command: "settings", run: () => openSettings() },
   {
     id: "closeTab",
     label: "Close Tab",
-    shortcut: shortcutLabel("closeTab"),
+    command: "closeTab",
     needsProject: true,
     run: withProject((id) => {
       const tab = useWorkspace.getState().ui[id]?.activeTab;
@@ -64,11 +65,11 @@ export const actions: Action[] = [
       void closeTabsWithPrompt(id, tabs.map((t) => t.path));
     }),
   },
-  { id: "copyContext", label: "Copy Context (code with path and lines)", shortcut: shortcutLabel("copyContext"), needsProject: true, run: () => copyContext() },
+  { id: "copyContext", label: "Copy Context (code with path and lines)", command: "copyContext", needsProject: true, run: () => copyContext() },
   {
     id: "selectInProject",
     label: "Select Opened File in Project View",
-    shortcut: shortcutLabel("selectInProject"),
+    command: "selectInProject",
     needsProject: true,
     run: () => {
       const p = activeProject();
@@ -79,7 +80,7 @@ export const actions: Action[] = [
   {
     id: "toggleTerminal",
     label: "Terminal",
-    shortcut: shortcutLabel("terminal"),
+    command: "terminal",
     needsProject: true,
     run: withProject((id) => toggleTerminal(id, false)),
   },
@@ -87,7 +88,7 @@ export const actions: Action[] = [
   {
     id: "toggleProjectView",
     label: "Project View",
-    shortcut: shortcutLabel("projectView"),
+    command: "projectView",
     needsProject: true,
     run: withProject((id) => useWorkspace.getState().updateUi(id, (u) => ({ sidebarVisible: !u.sidebarVisible }))),
   },

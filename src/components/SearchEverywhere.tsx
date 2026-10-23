@@ -7,6 +7,7 @@ import { api, type FileHit, type SearchMatch } from "../lib/ipc";
 import { symbolKindName } from "../lib/lsp/convert";
 import { workspaceSymbols, type WorkspaceSymbolHit } from "../lib/lsp/csharp";
 import { basename, dirname, relative } from "../lib/path";
+import { shortcutLabel } from "../lib/keymap";
 import { keepSearchFocus } from "../lib/popupFocus";
 import { closeSearchEverywhere, toggleSeIncludeAll, useUi, type SeTab } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -370,7 +371,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
                       <span className="se-name">
                         <Highlighted text={item.action.label} indices={matchIndices(item.action.label, query)} />
                       </span>
-                      {item.action.shortcut && <span className="se-shortcut">{item.action.shortcut}</span>}
+                      {item.action.command && <span className="se-shortcut">{shortcutLabel(item.action.command)}</span>}
                     </>
                   )}
                   {item.kind === "text" && (

@@ -1,6 +1,9 @@
 // App-wide shortcuts. On macOS they follow the "ReSharper (macOS)" Rider keymap
 // as customised by the user (Alt+1, Alt+9, Alt+P, Cmd+. …); elsewhere the
 // Windows Rider defaults Haze always had. A Haze key Rider leaves free is kept.
+// Settings › Keymap overrides any command's shortcuts; overrides are kept in
+// localStorage, like fonts, so the first keystroke already uses them.
+import { create } from "zustand";
 
 export const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
 export const isWindows = typeof navigator !== "undefined" && /Win/i.test(navigator.platform || navigator.userAgent);
@@ -44,9 +47,102 @@ const app = {
 
 export type Command = keyof typeof app;
 
-export function keystrokes(cmd: Command): Keystroke[] {
+/** Names and groups for Settings › Keymap, in the order shown there. */
+export const COMMANDS: { id: Command; name: string; group: string }[] = [
+  { id: "searchEverywhere", name: "Search Everywhere", group: "Navigation" },
+  { id: "gotoFile", name: "Go to File", group: "Navigation" },
+  { id: "recentFiles", name: "Recent Files", group: "Navigation" },
+  { id: "findAction", name: "Find Action", group: "Navigation" },
+  { id: "findInFiles", name: "Find in Files", group: "Navigation" },
+  { id: "replaceInFiles", name: "Replace in Files", group: "Navigation" },
+  { id: "selectInProject", name: "Select Opened File in Project View", group: "Navigation" },
+  { id: "nextTab", name: "Next Tab", group: "Navigation" },
+  { id: "previousTab", name: "Previous Tab", group: "Navigation" },
+  { id: "saveAll", name: "Save All", group: "Editing" },
+  { id: "closeTab", name: "Close Tab", group: "Editing" },
+  { id: "rename", name: "Rename", group: "Editing" },
+  { id: "delete", name: "Delete (Project view)", group: "Editing" },
+  { id: "copyContext", name: "Copy Context", group: "Editing" },
+  { id: "projectView", name: "Project View", group: "Tool Windows" },
+  { id: "terminal", name: "Terminal", group: "Tool Windows" },
+  { id: "commitView", name: "Commit View", group: "Tool Windows" },
+  { id: "gitView", name: "Git View", group: "Tool Windows" },
+  { id: "settings", name: "Settings", group: "Tool Windows" },
+  { id: "commit", name: "Commit", group: "Version Control" },
+  { id: "push", name: "Push", group: "Version Control" },
+  { id: "pull", name: "Pull", group: "Version Control" },
+  { id: "updateProject", name: "Update Project", group: "Version Control" },
+  { id: "branches", name: "Branches", group: "Version Control" },
+  { id: "build", name: "Build", group: "Build and Run" },
+  { id: "run", name: "Run", group: "Build and Run" },
+  { id: "zoomIn", name: "Zoom In", group: "View" },
+  { id: "zoomOut", name: "Zoom Out", group: "View" },
+  { id: "resetZoom", name: "Reset Zoom", group: "View" },
+];
+
+const KEY = "haze.keymap";
+
+/** The user's shortcuts for the commands they changed, for this platform. */
+type Overrides = Partial<Record<Command, Keystroke[]>>;
+
+function initial(): Overrides {
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+    const out: Overrides = {};
+    for (const cmd of Object.keys(app) as Command[]) {
+      const v = saved?.[cmd];
+      if (Array.isArray(v) && v.every((k) => typeof k === "string")) out[cmd] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export const useKeymap = create<Overrides>(() => initial());
+
+function save(next: Overrides): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(next));
+  } catch {}
+  useKeymap.setState(next, true);
+}
+
+export function defaultKeystrokes(cmd: Command): Keystroke[] {
   return isMac ? app[cmd].mac : app[cmd].other;
 }
+
+export function keystrokes(cmd: Command): Keystroke[] {
+  return useKeymap.getState()[cmd] ?? defaultKeystrokes(cmd);
+}
+
+export function setKeystrokes(cmd: Command, list: Keystroke[]): void {
+  const { [cmd]: _, ...rest } = useKeymap.getState();
+  const same = list.length === defaultKeystrokes(cmd).length && list.every((k, i) => k === defaultKeystrokes(cmd)[i]);
+  save(same ? rest : { ...rest, [cmd]: list });
+}
+
+/** Back to the default shortcuts: of one command, or of all of them. */
+export function resetKeystrokes(cmd?: Command): void {
+  if (!cmd) return save({});
+  const { [cmd]: _, ...rest } = useKeymap.getState();
+  save(rest);
+}
+
+/** The other commands a keystroke is bound to. */
+export function conflicts(cmd: Command, ks: Keystroke): Command[] {
+  const p = parse(ks);
+  return COMMANDS.filter((c) => c.id !== cmd && keystrokes(c.id).some((k) => samePressed(parse(k), p))).map((c) => c.id);
+}
+
+const samePressed = (a: Parsed, b: Parsed) => a.ctrl === b.ctrl && a.meta === b.meta && a.alt === b.alt && a.shift === b.shift && a.code === b.code;
+
+// While Settings › Keymap records a shortcut, no command runs on the keys pressed.
+let recording = false;
+export function setRecordingKeys(on: boolean): void {
+  recording = on;
+}
+export const isRecordingKeys = () => recording;
 
 interface Parsed {
   ctrl: boolean;
@@ -113,7 +209,20 @@ export function matchesKeystroke(e: KeyboardEvent, ks: Keystroke): boolean {
 }
 
 export function matches(e: KeyboardEvent, cmd: Command): boolean {
-  return keystrokes(cmd).some((ks) => matchesKeystroke(e, ks));
+  return !recording && keystrokes(cmd).some((ks) => matchesKeystroke(e, ks));
+}
+
+const codeNames = Object.fromEntries(Object.entries(named).map(([k, v]) => [v, k]));
+const modifierKeys = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock", "Fn", "OS"]);
+
+/** The keystroke a key press makes, e.g. "meta shift N"; null for a lone modifier or a key Haze cannot name. */
+export function keystrokeFromEvent(e: KeyboardEvent): Keystroke | null {
+  if (modifierKeys.has(e.key)) return null;
+  const c = e.code;
+  const key = /^Key[A-Z]$/.test(c) ? c.slice(3) : /^Digit\d$/.test(c) ? c.slice(5) : /^F\d{1,2}$/.test(c) ? c : /^Numpad\d$/.test(c) ? `NUMPAD${c.slice(6)}` : codeNames[c];
+  if (!key) return null;
+  const mods = [e.ctrlKey && "ctrl", e.metaKey && "meta", e.altKey && "alt", e.shiftKey && "shift"].filter(Boolean);
+  return [...mods, key].join(" ");
 }
 
 const macLabel: Record<string, string> = { BACK_SPACE: "⌫", DELETE: "⌦" };
@@ -142,10 +251,14 @@ const label: Record<string, string> = {
 export function shortcutLabel(cmd: Command): string | undefined {
   const ks = keystrokes(cmd)[0];
   if (!ks) return cmd === "searchEverywhere" ? "Double Shift" : undefined;
+  return keystrokeLabel(ks);
+}
+
+export function keystrokeLabel(ks: Keystroke): string {
   const p = parse(ks);
   const raw = ks.split(" ").pop()!.toUpperCase();
   const key = (isMac ? macLabel[raw] : undefined) ?? label[raw] ?? (raw.length === 1 ? raw : raw.charAt(0) + raw.slice(1).toLowerCase().replace(/_(\w)/g, (_, c: string) => c.toUpperCase()));
   const keyText = /^F\d+$/i.test(raw) ? raw : key;
   if (isMac) return (p.ctrl ? "⌃" : "") + (p.alt ? "⌥" : "") + (p.shift ? "⇧" : "") + (p.meta ? "⌘" : "") + keyText;
-  return [p.ctrl && "Ctrl", p.alt && "Alt", p.shift && "Shift", keyText].filter(Boolean).join("+");
+  return [p.ctrl && "Ctrl", p.meta && "Win", p.alt && "Alt", p.shift && "Shift", keyText].filter(Boolean).join("+");
 }
