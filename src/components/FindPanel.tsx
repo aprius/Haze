@@ -1,6 +1,5 @@
 // Rider's Find tool window in the bottom panel: usages moved there from the
-// usages popup stay listed, one tab per search, as a tree of files and lines
-// with the code previewed beside it.
+// usages popup stay listed, one tab per search, as a tree of files and lines.
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Pin, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
@@ -8,7 +7,6 @@ import { errorMessage } from "../lib/ipc";
 import { basename, dirname, relative } from "../lib/path";
 import { useWorkspace, type Project } from "../store/workspace";
 import { ToolTabs } from "./BuildPanel";
-import { CodePreview } from "./CodePreview";
 import { FileIcon } from "./FileIcon";
 import { UsageCode, type Usage } from "./UsagesPopup";
 
@@ -149,7 +147,6 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
   }, [selected]);
 
   const current = rows.find((r) => rowKey(r) === selected);
-  const shown = current?.kind === "usage" ? current.usage : undefined;
 
   const open = (u: Usage) => useWorkspace.getState().openFile(project.id, u.path, { line: u.line, column: u.column });
   const toggle = (path: string, collapse = !collapsed.has(path)) =>
@@ -268,14 +265,6 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
             </div>
           );
         })}
-      </div>
-      <div className="fw-preview">
-        <CodePreview
-          path={shown?.path ?? null}
-          hash={null}
-          match={shown ?? null}
-          others={shown ? (byFile.get(shown.path) ?? []).map((i) => tab.items[i]) : []}
-        />
       </div>
     </div>
   );
