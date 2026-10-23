@@ -73,6 +73,24 @@ if (typeof window !== "undefined") {
   });
 }
 
+/**
+ * What to do with terminal views when the session list changes: drop those
+ * whose session the host no longer has, and attach again those a disconnect
+ * cut off once it is back (`wasConnected` false). Nothing while disconnected:
+ * the list is not known then.
+ */
+export function reconcileViews(
+  views: { id: string; detached: boolean }[],
+  state: { connected: boolean; sessions: Record<string, unknown> },
+  wasConnected: boolean,
+): { dispose: string[]; attach: string[] } {
+  if (!state.connected) return { dispose: [], attach: [] };
+  return {
+    dispose: views.filter((v) => !state.sessions[v.id]).map((v) => v.id),
+    attach: wasConnected ? [] : views.filter((v) => v.detached && state.sessions[v.id]).map((v) => v.id),
+  };
+}
+
 type Handler = (e: PtyEvent) => void;
 const handlers = new Map<string, Handler>();
 
@@ -149,6 +167,8 @@ export async function newTerminal(
   cwd: string,
   opts: { title?: string; command?: string[] } = {},
 ): Promise<string | null> {
+  // Creating reconnects to the host, maybe a new one: its list then replaces the old.
+  const reconnecting = !useTerminals.getState().connected;
   try {
     const info = await api.ptyCreate({
       projectId,
@@ -168,6 +188,8 @@ export async function newTerminal(
       activeTerminal: info.id,
       terminalVisible: true,
     }));
+    // After the new tab is in the order, which the sync keeps.
+    if (reconnecting) await syncSessions();
     return info.id;
   } catch (e) {
     useTerminals.setState({ error: errorMessage(e) });

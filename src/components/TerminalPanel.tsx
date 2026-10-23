@@ -11,7 +11,7 @@ import { api } from "../lib/ipc";
 import { matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
 import { TERMINAL_THEMES, useTheme } from "../lib/theme";
-import { agentBadge, agentName, closeTerminal, newTerminal, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
+import { agentBadge, agentName, closeTerminal, newTerminal, reconcileViews, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openMenu } from "./Overlays";
@@ -32,8 +32,22 @@ interface View {
   refit: (() => void) | null;
   /** Directory the shell last reported (OSC 7 / OSC 9;9), if it does. */
   cwd: string | null;
+  /** Cut off by a host disconnect: attaches again once the host is back. */
+  detached: boolean;
 }
 const views = new Map<string, View>();
+
+// Views of sessions the host no longer has (closed elsewhere, or gone with a
+// host that restarted) are dropped once its list is known, each holding a
+// whole xterm and its scrollback; the ones a disconnect cut off attach again.
+useTerminals.subscribe((s, prev) => {
+  const { dispose, attach } = reconcileViews([...views].map(([id, v]) => ({ id, detached: v.detached })), s, prev.connected);
+  dispose.forEach(disposeView);
+  for (const id of attach) {
+    views.get(id)!.detached = false;
+    void api.ptyAttach(id).catch(() => {});
+  }
+});
 
 // Recolour every terminal, including ones in hidden projects, on a mode switch.
 useTheme.subscribe((t) => {
@@ -120,7 +134,7 @@ function createView(id: string, project: Project): View {
   term.unicode.activeVersion = "11";
   term.open(el);
 
-  const view: View = { term, fit, search, webgl: null, el, ready: false, lastSize: "", refit: null, cwd: null };
+  const view: View = { term, fit, search, webgl: null, el, ready: false, lastSize: "", refit: null, cwd: null, detached: false };
   setWebgl(view, useFonts.getState().terminalWebgl);
   // Shells that report their directory make links right after `cd` even where
   // the OS does not tell (Windows).
@@ -288,6 +302,7 @@ function createView(id: string, project: Project): View {
       term.write(`\r\n\x1b[2m[Process exited${e.code != null ? ` with code ${e.code}` : ""}]\x1b[0m\r\n`);
     } else if (e.t === "disconnected") {
       view.ready = false;
+      view.detached = true;
     }
   });
   void terminalsListening.then(() => api.ptyAttach(id)).catch(() => {});
@@ -525,14 +540,8 @@ export function TerminalPanel({ project }: { project: Project }) {
           {error}
           <button
             className="btn small"
-            onClick={async () => {
-              await syncSessions();
-              const alive = useTerminals.getState().sessions;
-              for (const id of [...views.keys()]) {
-                if (alive[id]) void api.ptyAttach(id).catch(() => {});
-                else disposeView(id);
-              }
-            }}
+            // Reattaching and dropping views follows the list (see the useTerminals subscription).
+            onClick={() => void syncSessions()}
           >
             Reconnect
           </button>
