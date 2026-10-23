@@ -8,6 +8,7 @@ import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker
 import { csharpLanguage } from "./csharpGrammar";
 import { codeFontFamily, codeLineHeight, loadCodeFont, useFonts } from "./fonts";
 import { monacoTheme, useTheme } from "./theme";
+import { useWorkspace } from "../store/workspace";
 
 // JSON is the one language service Haze keeps (see vite.config.ts); it needs
 // its own worker, or every request fails with "Missing requestHandler".
@@ -169,6 +170,27 @@ useFonts.subscribe((f, prev) => {
     monaco.editor.remeasureFonts();
     for (const ed of monaco.editor.getEditors()) ed.updateOptions(codeFontOptions());
   });
+});
+
+/**
+ * Rider's Rainbow Brackets plugin: brackets coloured by depth (theme colours
+ * above) and, with guides on, a line per pair in the same colour in place of
+ * the plain indent guides; the pair around the caret is drawn brighter.
+ */
+function rainbowOptions(s: { rainbowBrackets: boolean; rainbowGuides: boolean }): monaco.editor.IEditorOptions {
+  const guides = s.rainbowBrackets && s.rainbowGuides;
+  return {
+    bracketPairColorization: { enabled: s.rainbowBrackets },
+    guides: { bracketPairs: guides, bracketPairsHorizontal: guides ? "active" : false, indentation: !guides },
+  };
+}
+
+// Every editor follows the setting, diff and merge sides included: Monaco
+// colours brackets by default, so one left alone would ignore it.
+monaco.editor.onDidCreateEditor((ed) => ed.updateOptions(rainbowOptions(useWorkspace.getState())));
+useWorkspace.subscribe((s, prev) => {
+  if (s.rainbowBrackets === prev.rainbowBrackets && s.rainbowGuides === prev.rainbowGuides) return;
+  for (const ed of monaco.editor.getEditors()) ed.updateOptions(rainbowOptions(s));
 });
 
 // The Find widget's Close button gets no tooltip: it opened over the button
