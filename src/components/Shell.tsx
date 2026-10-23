@@ -224,6 +224,9 @@ export function Splitter({
     <div
       className={"splitter " + (vertical ? "vertical" : "horizontal")}
       onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        // Without this the drag also starts a native text selection that sweeps across the editor.
+        e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);
         start.current = { pos: vertical ? e.clientX : e.clientY, value };
       }}
@@ -232,7 +235,9 @@ export function Splitter({
         const delta = (vertical ? e.clientX : e.clientY) - start.current.pos;
         onChange(Math.max(min, Math.min(max, start.current.value + (invert ? -delta : delta))));
       }}
+      onMouseDown={(e) => e.preventDefault()}
       onPointerUp={() => (start.current = null)}
+      onLostPointerCapture={() => (start.current = null)}
     />
   );
 }
