@@ -369,18 +369,60 @@ pub fn move_into(sources: &[PathBuf], dest_dir: &Path) -> Result<Vec<String>> {
     }
     let mut out = Vec::new();
     for (src, target) in plan {
-        if fs::rename(&src, &target).is_err() {
-            // Different volume: copy then remove.
-            copy_recursive(&src, &target)?;
-            if src.is_dir() {
-                fs::remove_dir_all(&src)?;
-            } else {
-                fs::remove_file(&src)?;
-            }
+        match fs::rename(&src, &target) {
+            Ok(()) => {}
+            Err(e) if crosses_devices(&e) => move_across_volumes(&src, &target)?,
+            // Locked (Windows), no permission, gone: copying first would end
+            // with the file in both places once removing the source failed too.
+            Err(e) => return Err(e).with_context(|| format!("moving {}", src.display())),
         }
         out.push(target.to_string_lossy().into_owned());
     }
     Ok(out)
+}
+
+/// A rename that failed only because `to` is on another volume.
+fn crosses_devices(e: &std::io::Error) -> bool {
+    // `ERROR_NOT_SAME_DEVICE` on Windows, `EXDEV` elsewhere: std maps both to
+    // the kind, checked by code too in case a platform does not.
+    #[cfg(windows)]
+    const CODE: Option<i32> = Some(17);
+    #[cfg(unix)]
+    const CODE: Option<i32> = Some(libc::EXDEV);
+    #[cfg(not(any(windows, unix)))]
+    const CODE: Option<i32> = None;
+    e.kind() == std::io::ErrorKind::CrossesDevices || (CODE.is_some() && e.raw_os_error() == CODE)
+}
+
+/// Copies `src` to `target` on another volume, then removes `src`. A failed
+/// copy is removed again; so is the copy of a file whose source cannot be
+/// removed, leaving it only where it was. A folder's copy is kept whole once
+/// removing the source started: that may already have taken some of it.
+fn move_across_volumes(src: &Path, target: &Path) -> Result<()> {
+    let undo_copy = || {
+        let _ = if target.is_dir() {
+            fs::remove_dir_all(target)
+        } else {
+            fs::remove_file(target)
+        };
+    };
+    if let Err(e) = copy_recursive(src, target) {
+        undo_copy();
+        return Err(e).with_context(|| format!("moving {}", src.display()));
+    }
+    if fs::symlink_metadata(src)?.is_dir() {
+        fs::remove_dir_all(src).with_context(|| {
+            format!(
+                "moved {} to {}, but could not remove all of the original",
+                src.display(),
+                target.display()
+            )
+        })?;
+    } else if let Err(e) = fs::remove_file(src) {
+        undo_copy();
+        return Err(e).with_context(|| format!("moving {}", src.display()));
+    }
+    Ok(())
 }
 
 /// Resolves path-like strings printed in a terminal (absolute, or relative
@@ -530,6 +572,92 @@ mod tests {
             write_file(&p, "x", encoding, Some(mtime.wrapping_sub(5000))).unwrap(),
             WriteResult::Conflict { .. }
         ));
+    }
+
+    #[test]
+    fn only_cross_volume_errors_copy() {
+        use std::io::{Error, ErrorKind};
+        assert!(crosses_devices(&Error::from(ErrorKind::CrossesDevices)));
+        #[cfg(unix)]
+        assert!(crosses_devices(&Error::from_raw_os_error(libc::EXDEV)));
+        #[cfg(windows)]
+        assert!(crosses_devices(&Error::from_raw_os_error(17)));
+        assert!(!crosses_devices(&Error::from(ErrorKind::PermissionDenied)));
+        assert!(!crosses_devices(&Error::from(ErrorKind::NotFound)));
+    }
+
+    #[test]
+    fn moving_across_volumes_copies_then_removes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (src, dest) = (dir.path().join("src"), dir.path().join("dest"));
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::write(src.join("sub/A.cs"), "a").unwrap();
+        fs::write(dir.path().join("B.cs"), "b").unwrap();
+        // The cross-volume path, on one volume.
+        move_across_volumes(&src, &dest).unwrap();
+        assert_eq!(fs::read_to_string(dest.join("sub/A.cs")).unwrap(), "a");
+        assert!(!src.exists());
+        move_across_volumes(&dir.path().join("B.cs"), &dest.join("B.cs")).unwrap();
+        assert!(!dir.path().join("B.cs").exists());
+        // A copy that fails leaves nothing at the target.
+        assert!(move_across_volumes(&dir.path().join("gone.cs"), &dest.join("gone.cs")).is_err());
+        assert!(!dest.join("gone.cs").exists());
+    }
+
+    /// A rename refused for another reason than crossing volumes (here: the
+    /// source folder is read-only, as a file locked on Windows is) must fail
+    /// without a copy: copying then failing to remove left both.
+    #[cfg(unix)]
+    #[test]
+    fn failed_move_leaves_no_copy_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (src, dest) = (dir.path().join("src"), dir.path().join("dest"));
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(src.join("A.cs"), "a").unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = move_into(&[src.join("A.cs")], &dest);
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
+        // Root may write anyway: then the move simply succeeds.
+        if result.is_err() {
+            assert!(!dest.join("A.cs").exists(), "a copy was left behind");
+            assert!(src.join("A.cs").exists());
+        }
+
+        // Across volumes, a source that cannot be removed takes its copy back.
+        fs::write(src.join("B.cs"), "b").unwrap();
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = move_across_volumes(&src.join("B.cs"), &dest.join("B.cs"));
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).unwrap();
+        if result.is_err() {
+            assert!(!dest.join("B.cs").exists(), "a copy was left behind");
+            assert!(src.join("B.cs").exists());
+        }
+    }
+
+    /// A real move to another volume, when `HAZE_OTHER_VOLUME` names a folder on one.
+    #[test]
+    fn moves_to_another_volume() {
+        let Ok(other) = std::env::var("HAZE_OTHER_VOLUME") else {
+            return;
+        };
+        let here = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let there = tempfile::tempdir_in(other).unwrap();
+        fs::create_dir_all(here.path().join("Pkg/sub")).unwrap();
+        fs::write(here.path().join("Pkg/sub/A.cs"), "a").unwrap();
+        let rename = fs::rename(here.path().join("Pkg"), there.path().join("probe"));
+        assert!(
+            rename.as_ref().is_err_and(crosses_devices),
+            "not another volume: {rename:?}"
+        );
+        let moved = move_into(&[here.path().join("Pkg")], there.path()).unwrap();
+        assert_eq!(
+            fs::read_to_string(there.path().join("Pkg/sub/A.cs")).unwrap(),
+            "a"
+        );
+        assert!(!here.path().join("Pkg").exists());
+        assert_eq!(moved.len(), 1);
     }
 
     #[test]
