@@ -203,6 +203,7 @@ function Preview({ path, hash, match, others }: { path: string | null; hash: str
   const own = useRef<monaco.editor.ITextModel | null>(null);
   const ownHash = useRef<string | null>(null);
   const decorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const stickyScroll = useWorkspace((s) => s.stickyScroll);
 
   useEffect(() => {
     if (!host.current) return;
@@ -214,6 +215,7 @@ function Preview({ path, hash, match, others }: { path: string | null; hash: str
       ...codeFontOptions(),
       scrollBeyondLastLine: false,
       renderLineHighlight: "none",
+      stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
       theme: monacoTheme(),
     });
     decorations.current = editor.current.createDecorationsCollection();
@@ -222,6 +224,10 @@ function Preview({ path, hash, match, others }: { path: string | null; hash: str
       own.current?.dispose();
     };
   }, []);
+
+  useEffect(() => {
+    editor.current?.updateOptions({ stickyScroll: { enabled: stickyScroll } });
+  }, [stickyScroll]);
 
   useEffect(() => {
     const ed = editor.current;
