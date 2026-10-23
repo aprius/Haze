@@ -334,7 +334,7 @@ export default function App() {
       const project = ws.projects.find((p) => p.path === change.root);
       if (!project) return;
       handleFsChange(project.id, change, ws.nestFiles);
-      if (affectsGit(project.id, change)) refreshRepo(project.id, project.path, 400, true);
+      if (affectsGit(project.id, change)) refreshRepo(project.id, project.path, 400, true, change.git || change.overflow);
       void handleDiskChanges(change.overflow ? "all" : change.files);
       notifyFileChanges(change);
       unityFilesChanged(project.id, change);

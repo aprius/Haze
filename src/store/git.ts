@@ -10,7 +10,7 @@ import { withUnsaved } from "../lib/gitView";
 import { api, errorMessage, type BranchesInfo, type ChangedFile, type Checkpoint, type GitChange, type GitOutput, type StashEntry } from "../lib/ipc";
 import { isWithin, relative } from "../lib/path";
 import { withTask } from "./tasks";
-import { isIgnored, onGitStatus, refreshGit as refreshTreeGit, useTree } from "./tree";
+import { cappedDelay, isIgnored, onGitStatus, refreshGit as refreshTreeGit, useTree } from "./tree";
 import { openCommitWindow, useUi } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -115,6 +115,7 @@ useBuffers.subscribe(() => {
 const touchesFiles = new Set(["stash", "checkout", "switch", "merge", "rebase", "cherry-pick", "revert", "reset", "pull", "add", "rm", "restore"]);
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
+const waitingSince = new Map<string, number>();
 /** Projects with a refresh requested by an operation (not the watcher) still to run. */
 const explicit = new Set<string>();
 
@@ -134,58 +135,96 @@ function historyKey(branches: BranchesInfo | null, stashes: StashEntry[], checkp
   ].join("\n");
 }
 
+/** Projects whose branches, stashes and checkpoints the pending refresh reloads. */
+const refsDirty = new Set<string>();
+/** Projects with a refresh running; one asked for meanwhile runs after it (`rerun`). */
+const running = new Set<string>();
+const rerun = new Map<string, string>();
+
 /**
  * Reloads changes, branches and stashes (debounced when `delay` > 0). The log
  * reloads too (`revision`), except after a watcher refresh that left the
  * history as it was: an agent editing files would reload it constantly.
+ * Like Rider, a watcher refresh for edits in the working tree (`gitChanged`
+ * false) leaves branches, stashes and checkpoints alone: only files in `.git`
+ * change them.
  */
-export function refreshRepo(projectId: string, projectPath: string, delay = 0, fromWatcher = false): void {
+export function refreshRepo(projectId: string, projectPath: string, delay = 0, fromWatcher = false, gitChanged = true): void {
   if (!fromWatcher) explicit.add(projectId);
-  refreshTreeGit(projectId, projectPath, delay);
+  if (!fromWatcher || gitChanged) refsDirty.add(projectId);
+  // The watcher's change has asked for its own (scoped) status already, see handleFsChange.
+  if (!fromWatcher) refreshTreeGit(projectId, projectPath, delay);
   const t = timers.get(projectId);
   if (t) clearTimeout(t);
   timers.set(
     projectId,
-    setTimeout(async () => {
+    setTimeout(() => {
       timers.delete(projectId);
-      const force = explicit.delete(projectId);
-      let root = repo(projectId).root;
-      if (!root) {
-        root = await api.gitToplevel(projectPath).catch(() => null);
-        if (!root) return;
-        patchRepo(projectId, { root });
-      }
-      const cur = repo(projectId);
-      const reviewedRels = Object.keys(cur.reviewed);
-      const [branches, stashes, checkpoints, prints] = await Promise.all([
-        api.gitBranches(root).catch(() => cur.branches),
-        api.gitStashes(root).catch(() => cur.stashes),
-        api.gitCheckpoints(root).catch(() => cur.checkpoints),
-        reviewedRels.length ? api.gitFingerprints(root, reviewedRels).catch(() => []) : Promise.resolve([]),
-      ]);
-      const checkpoint = cur.checkpoint && checkpoints.some((c) => c.hash === cur.checkpoint) ? cur.checkpoint : (checkpoints[0]?.hash ?? null);
-      // Diffing against a checkpoint snapshots the whole working tree (`git add -A`
-      // into a scratch index); only the Commit window shows it, and opening it refreshes.
-      const since = !checkpoint ? [] : commitWindowShown(projectId) ? await api.gitChangesSince(root, checkpoint).catch(() => []) : cur.since;
-      // A reviewed mark only holds while the file is unchanged since marking it.
-      const reviewed: Record<string, string> = {};
-      reviewedRels.forEach((rel, i) => {
-        if ((prints[i] ?? "missing") === cur.reviewed[rel]) reviewed[rel] = cur.reviewed[rel];
-      });
-      const key = historyKey(branches, stashes, checkpoints);
-      const moved = historyKeys.get(projectId) !== key;
-      historyKeys.set(projectId, key);
-      patchRepo(projectId, (r) => ({
-        branches,
-        stashes,
-        checkpoints,
-        checkpoint,
-        since,
-        reviewed,
-        revision: force || moved ? r.revision + 1 : r.revision,
-      }));
-    }, delay),
+      waitingSince.delete(projectId);
+      void runRefresh(projectId, projectPath);
+    }, cappedDelay(waitingSince, projectId, delay)),
   );
+}
+
+async function runRefresh(projectId: string, projectPath: string): Promise<void> {
+  if (running.has(projectId)) {
+    rerun.set(projectId, projectPath);
+    return;
+  }
+  running.add(projectId);
+  try {
+    await reload(projectId, projectPath);
+  } finally {
+    running.delete(projectId);
+    const again = rerun.get(projectId);
+    rerun.delete(projectId);
+    if (again !== undefined) void runRefresh(projectId, again);
+  }
+}
+
+async function reload(projectId: string, projectPath: string): Promise<void> {
+  const force = explicit.delete(projectId);
+  let root = repo(projectId).root;
+  if (!root) {
+    root = await api.gitToplevel(projectPath).catch(() => null);
+    if (!root) return;
+    patchRepo(projectId, { root });
+  }
+  const cur = repo(projectId);
+  const refs = refsDirty.delete(projectId) || !cur.branches;
+  // Failed (a lock, a rebase midway): the next refresh asks again, whatever started it.
+  const retry = <T>(fallback: T) => () => {
+    refsDirty.add(projectId);
+    return fallback;
+  };
+  const reviewedRels = Object.keys(cur.reviewed);
+  const [branches, stashes, checkpoints, prints] = await Promise.all([
+    refs ? api.gitBranches(root).catch(retry(cur.branches)) : cur.branches,
+    refs ? api.gitStashes(root).catch(retry(cur.stashes)) : cur.stashes,
+    refs ? api.gitCheckpoints(root).catch(retry(cur.checkpoints)) : cur.checkpoints,
+    reviewedRels.length ? api.gitFingerprints(root, reviewedRels).catch(() => []) : Promise.resolve([]),
+  ]);
+  const checkpoint = cur.checkpoint && checkpoints.some((c) => c.hash === cur.checkpoint) ? cur.checkpoint : (checkpoints[0]?.hash ?? null);
+  // Diffing against a checkpoint snapshots the whole working tree (`git add -A`
+  // into a scratch index); only the Commit window shows it, and opening it refreshes.
+  const since = !checkpoint ? [] : commitWindowShown(projectId) ? await api.gitChangesSince(root, checkpoint).catch(() => []) : cur.since;
+  // A reviewed mark only holds while the file is unchanged since marking it.
+  const reviewed: Record<string, string> = {};
+  reviewedRels.forEach((rel, i) => {
+    if ((prints[i] ?? "missing") === cur.reviewed[rel]) reviewed[rel] = cur.reviewed[rel];
+  });
+  const key = historyKey(branches, stashes, checkpoints);
+  const moved = historyKeys.get(projectId) !== key;
+  historyKeys.set(projectId, key);
+  patchRepo(projectId, (r) => ({
+    branches,
+    stashes,
+    checkpoints,
+    checkpoint,
+    since,
+    reviewed,
+    revision: force || moved ? r.revision + 1 : r.revision,
+  }));
 }
 
 export { checkedPaths } from "../lib/gitView";

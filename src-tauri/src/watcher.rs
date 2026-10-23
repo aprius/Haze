@@ -97,34 +97,60 @@ fn start(root: &str, sink: ChangeSink) -> Result<RecommendedWatcher> {
     watcher.watch(Path::new(root), RecursiveMode::Recursive)?;
     // A linked worktree (or a project inside a repository) keeps its git
     // metadata outside the root; commits made in a terminal show up there.
-    let git_dir = outside_git_dir(Path::new(root));
-    if let Some(dir) = &git_dir {
-        let _ = watcher.watch(dir, RecursiveMode::Recursive);
+    let git_dirs = outside_git_dirs(Path::new(root));
+    for dir in &git_dirs {
+        // A worktree's own git dir is inside the common one.
+        if !git_dirs.iter().any(|o| o != dir && dir.starts_with(o)) {
+            let _ = watcher.watch(dir, RecursiveMode::Recursive);
+        }
     }
     let root = root.to_string();
-    thread::spawn(move || debounce_loop(root, git_dir, rx, sink));
+    thread::spawn(move || debounce_loop(root, git_dirs, rx, sink));
     Ok(watcher)
 }
 
-/// The repository's git dir when it is not `<root>/.git`.
-fn outside_git_dir(root: &Path) -> Option<PathBuf> {
-    let out = crate::git::git_command()
+/// The repository's git dirs that are not `<root>/.git`, most specific
+/// first: a linked worktree's own (its HEAD and index), then the common one,
+/// where branches, tags and stashes are (`git branch` or `git fetch` in a
+/// worktree's terminal write there).
+fn outside_git_dirs(root: &Path) -> Vec<PathBuf> {
+    let Ok(out) = crate::git::git_command()
         .arg("-C")
         .arg(root)
-        .args(["rev-parse", "--absolute-git-dir"])
+        .args(["rev-parse", "--absolute-git-dir", "--git-common-dir"])
         .output()
-        .ok()?;
+    else {
+        return Vec::new();
+    };
     if !out.status.success() {
-        return None;
+        return Vec::new();
     }
-    let dir = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-    let inside = dir.canonicalize().ok()? == root.join(".git").canonicalize().ok()?;
-    (!inside).then_some(dir)
+    let inside = root.join(".git").canonicalize().ok();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut seen = Vec::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        // The common dir is printed relative to the root when it is near.
+        let dir = root.join(line.trim());
+        let Ok(real) = dir.canonicalize() else {
+            continue;
+        };
+        if Some(&real) == inside.as_ref() || seen.contains(&real) {
+            continue;
+        }
+        seen.push(real.clone());
+        // Relative ones resolved: event paths name the real directories.
+        dirs.push(if Path::new(line.trim()).is_absolute() {
+            dir
+        } else {
+            real
+        });
+    }
+    dirs
 }
 
 fn debounce_loop(
     root: String,
-    git_dir: Option<PathBuf>,
+    git_dirs: Vec<PathBuf>,
     rx: mpsc::Receiver<notify::Result<notify::Event>>,
     sink: ChangeSink,
 ) {
@@ -160,9 +186,9 @@ fn debounce_loop(
             }
             let n = ev.paths.len();
             for (i, p) in ev.paths.into_iter().enumerate() {
-                let kind = match &git_dir {
-                    Some(g) if p.starts_with(g) => classify_git(p.strip_prefix(g).unwrap_or(&p)),
-                    _ => classify(&root_path, &p),
+                let kind = match git_dirs.iter().find(|g| p.starts_with(g)) {
+                    Some(g) => classify_git(p.strip_prefix(g).unwrap_or(&p)),
+                    None => classify(&root_path, &p),
                 };
                 match kind {
                     Kind::Git => git = true,
@@ -311,10 +337,29 @@ fn in_package(rel: &Path) -> bool {
         .is_some_and(|i| parts.len() > i + 2)
 }
 
-/// `rel` is relative to the git dir.
+/// `rel` is relative to the git dir. Like Rider's GitRepositoryUpdater: the
+/// UI reloads branches, stashes and checkpoints only for these, so each file
+/// they are read from counts (`git remote` reads `config`, branch deletes and
+/// `git pack-refs` rewrite `packed-refs`, the operation in progress is its
+/// marker file or directory).
 fn classify_git(rel: &Path) -> Kind {
-    let s = rel.to_string_lossy();
-    if s == "index" || s == "HEAD" || s.starts_with("refs") || s == "MERGE_HEAD" {
+    const FILES: &[&str] = &[
+        "index",
+        "HEAD",
+        "config",
+        "packed-refs",
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+    ];
+    const DIRS: &[&str] = &["refs", "rebase-merge", "rebase-apply"];
+    let mut comps = rel.components();
+    let Some(Component::Normal(first)) = comps.next() else {
+        return Kind::GitInternal;
+    };
+    let first = first.to_string_lossy();
+    let top_file = comps.next().is_none() && FILES.contains(&first.as_ref());
+    if top_file || DIRS.contains(&first.as_ref()) {
         Kind::Git
     } else {
         Kind::GitInternal
@@ -396,9 +441,23 @@ mod tests {
             &main,
             &["worktree", "add", "-q", "-b", "task", wt.to_str().unwrap()],
         );
-        assert_eq!(outside_git_dir(&main), None);
-        let dir = outside_git_dir(&wt).expect("worktree git dir");
-        assert!(dir.ends_with("worktrees/app-task"), "{dir:?}");
+        assert_eq!(outside_git_dirs(&main), Vec::<PathBuf>::new());
+        assert_eq!(
+            outside_git_dirs(&main.join("sub-not-there")),
+            Vec::<PathBuf>::new()
+        );
+        // A project inside the repository: git prints the common dir relative to it.
+        std::fs::create_dir_all(main.join("sub/deep")).unwrap();
+        let in_sub = outside_git_dirs(&main.join("sub/deep"));
+        assert_eq!(in_sub.len(), 1, "{in_sub:?}");
+        let dirs = outside_git_dirs(&wt);
+        assert_eq!(dirs.len(), 2, "{dirs:?}");
+        assert!(dirs[0].ends_with("worktrees/app-task"), "{dirs:?}");
+        // Branches made in the worktree are written to the common dir.
+        assert_eq!(
+            dirs[1].canonicalize().unwrap(),
+            main.join(".git").canonicalize().unwrap()
+        );
         assert!(matches!(classify_git(Path::new("index")), Kind::Git));
         assert!(matches!(
             classify_git(Path::new("refs/heads/task")),
@@ -408,5 +467,19 @@ mod tests {
             classify_git(Path::new("logs/HEAD")),
             Kind::GitInternal
         ));
+        for git in [
+            "packed-refs",
+            "config",
+            "rebase-merge/done",
+            "CHERRY_PICK_HEAD",
+        ] {
+            assert!(matches!(classify_git(Path::new(git)), Kind::Git), "{git}");
+        }
+        for internal in ["objects/ab/cdef", "index.lock", "refsx", "FETCH_HEAD"] {
+            assert!(
+                matches!(classify_git(Path::new(internal)), Kind::GitInternal),
+                "{internal}"
+            );
+        }
     }
 }

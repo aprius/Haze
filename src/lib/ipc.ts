@@ -546,6 +546,8 @@ export const api = {
   lspStop: (id: number) => invoke<void>("lsp_stop", { id }),
 
   gitStatus: (dir: string) => invoke<GitStatus>("git_status", { dir }),
+  /** Status of `paths` only (absolute, under `top`, the root a full status returned). */
+  gitStatusPaths: (top: string, paths: string[]) => invoke<GitStatus>("git_status_paths", { top, paths }),
   watchProject: (root: string) => invoke<void>("watch_project", { root }),
   unwatchProject: (root: string) => invoke<void>("unwatch_project", { root }),
 

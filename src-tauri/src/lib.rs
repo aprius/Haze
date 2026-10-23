@@ -169,6 +169,11 @@ async fn git_status(dir: String) -> CmdResult<git::GitStatus> {
 }
 
 #[tauri::command]
+async fn git_status_paths(top: String, paths: Vec<String>) -> CmdResult<git::GitStatus> {
+    blocking(move || git::status_paths(top.as_ref(), &paths)).await
+}
+
+#[tauri::command]
 fn watch_project(
     app: AppHandle,
     watchers: State<'_, watcher::Watchers>,
@@ -985,6 +990,7 @@ pub fn run() {
             resolve_paths,
             read_lines,
             git_status,
+            git_status_paths,
             watch_project,
             unwatch_project,
             search_text,

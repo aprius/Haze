@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -78,23 +78,49 @@ pub fn toplevel_of(dir: &Path) -> Result<PathBuf> {
     Ok(if same { top } else { real })
 }
 
+const STATUS_ARGS: &[&str] = &[
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--branch",
+    "--ignored=matching",
+    "--untracked-files=all",
+];
+
 pub fn status(dir: &Path) -> Result<GitStatus> {
     let Ok(top) = toplevel_of(dir) else {
         return Ok(GitStatus::default());
     };
-    let out = run(
-        &top,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--branch",
-            "--ignored=matching",
-            "--untracked-files=all",
-        ],
-    )?;
-    let changes = crate::git_ops::parse_changes(&String::from_utf8_lossy(&out));
-    let (branch, files) = parse_porcelain(&out);
+    let out = run(&top, STATUS_ARGS)?;
+    from_porcelain(top, &out)
+}
+
+/// The status of `paths` (absolute, under `top`) only, like Rider's dirty
+/// scopes: git refreshes and walks just those, not the whole working tree.
+/// `top` is the root a full `status` returned; a directory covers what is in it.
+pub fn status_paths(top: &Path, paths: &[String]) -> Result<GitStatus> {
+    // `git status --` alone is the status of everything.
+    anyhow::ensure!(!paths.is_empty(), "no paths to refresh");
+    let mut rels = Vec::with_capacity(paths.len());
+    for p in paths {
+        let rel = Path::new(p)
+            .strip_prefix(top)
+            .with_context(|| format!("{p} is outside {}", top.display()))?;
+        if rel.as_os_str().is_empty() {
+            bail!("the repository root is not a path to refresh");
+        }
+        rels.push(rel.to_string_lossy().replace('\\', "/"));
+    }
+    let mut args: Vec<&str> = STATUS_ARGS.to_vec();
+    args.push("--");
+    args.extend(rels.iter().map(String::as_str));
+    let out = run(top, &args)?;
+    from_porcelain(top.to_path_buf(), &out)
+}
+
+fn from_porcelain(top: PathBuf, out: &[u8]) -> Result<GitStatus> {
+    let changes = crate::git_ops::parse_changes(&String::from_utf8_lossy(out));
+    let (branch, files) = parse_porcelain(out);
     let files = files
         .into_iter()
         .map(|(rel, st)| (to_native(&top, &rel), st))
@@ -204,6 +230,26 @@ mod tests {
                 Some(&FileStatus::Untracked)
             );
         }
+    }
+
+    #[test]
+    fn status_of_paths_covers_only_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        run(root, &["init", "-q", "-b", "main"]).unwrap();
+        std::fs::create_dir_all(root.join("d/e")).unwrap();
+        std::fs::write(root.join("d/e/A.cs"), "").unwrap();
+        std::fs::write(root.join("B.cs"), "").unwrap();
+        let top = PathBuf::from(status(root).unwrap().root.unwrap());
+        let abs = |rel: &str| to_native(&top, rel);
+        let st = status_paths(&top, &[abs("d"), abs("gone.cs")]).unwrap();
+        assert_eq!(st.branch.as_deref(), Some("main"));
+        assert_eq!(st.files.keys().collect::<Vec<_>>(), [&abs("d/e/A.cs")]);
+        assert_eq!(st.changes.len(), 1);
+        assert!(status_paths(&top, &[top.to_string_lossy().into_owned()]).is_err());
+        assert!(status_paths(&top, &[]).is_err());
+        let outside = std::env::temp_dir().join("elsewhere.cs");
+        assert!(status_paths(&top, &[outside.to_string_lossy().into_owned()]).is_err());
     }
 
     #[test]
