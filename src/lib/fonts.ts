@@ -22,11 +22,11 @@ export interface FontSettings {
 const KEY = "haze.fonts";
 export const DEFAULT_FONTS: FontSettings = {
   uiFont: "Inter",
-  uiSize: 13,
+  uiSize: 14,
   codeFont: "JetBrains Mono",
-  codeSize: 13,
+  codeSize: 15,
   terminalSize: 15,
-  terminalLineHeight: 1.5,
+  terminalLineHeight: 1.3,
   terminalWebgl: false,
 };
 export const MIN_SIZE = 8;
