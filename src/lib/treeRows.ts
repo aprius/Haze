@@ -96,6 +96,28 @@ export function resolveView(view: TreeView | null | undefined, unity: boolean): 
   return unity && view !== "files" ? "unity" : "files";
 }
 
+/**
+ * `entries` (sorted) with each nested file right under the file it nests
+ * under, one level deeper, as the Project view shows them. A file whose
+ * parent is missing stays at the top.
+ */
+export function withNested(entries: DirEntry[]): { entry: DirEntry; depth: number }[] {
+  const names = new Set(entries.map((e) => e.name));
+  const kids = new Map<string, DirEntry[]>();
+  for (const e of entries) if (e.nestedUnder && names.has(e.nestedUnder)) kids.set(e.nestedUnder, [...(kids.get(e.nestedUnder) ?? []), e]);
+  const out: { entry: DirEntry; depth: number }[] = [];
+  const seen = new Set<string>();
+  const add = (e: DirEntry, depth: number) => {
+    // Names never nest in a loop, but a listing is not trusted to say so.
+    if (seen.has(e.name)) return;
+    seen.add(e.name);
+    out.push({ entry: e, depth });
+    for (const k of kids.get(e.name) ?? []) add(k, depth + 1);
+  };
+  for (const e of entries) if (!(e.nestedUnder && names.has(e.nestedUnder))) add(e, 0);
+  return out;
+}
+
 export function buildRows(
   project: Project,
   dirs: Record<string, DirState>,

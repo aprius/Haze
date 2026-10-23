@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DirEntry } from "./ipc";
 import type { DirState } from "../store/tree";
 import type { Project } from "../store/workspace";
-import { buildRows, isUnityProject, resolvePackages, resolveView } from "./treeRows";
+import { buildRows, isUnityProject, resolvePackages, resolveView, withNested } from "./treeRows";
 
 const project: Project = { id: "p", path: "/u", name: "u", favorite: false, open: true, lastOpenedAt: 0 };
 const dir = (path: string, isDir = true): DirEntry => ({ name: path.split("/").pop()!, path, isDir, isSymlink: false, nestedUnder: null });
@@ -120,5 +120,25 @@ describe("file nesting", () => {
 
   it("lists a Unity project's File System view flat", () => {
     expect(rows([], { unityProject: true })).toEqual(["w", "  Pages", "  appsettings.Development.json", "  appsettings.json", "  Program.cs"]);
+  });
+});
+
+describe("withNested", () => {
+  const list = (entries: DirEntry[]) => withNested(entries).map(({ entry, depth }) => "  ".repeat(depth) + entry.name);
+
+  it("puts nested files under theirs, nested ones deeper", () => {
+    expect(
+      list([
+        dir("/w/Pages"),
+        file("/w/appsettings.Development.json", "appsettings.json"),
+        file("/w/appsettings.Development.local.json", "appsettings.Development.json"),
+        file("/w/appsettings.json"),
+        file("/w/Program.cs"),
+      ]),
+    ).toEqual(["Pages", "appsettings.json", "  appsettings.Development.json", "    appsettings.Development.local.json", "Program.cs"]);
+  });
+
+  it("keeps a file whose parent is missing, and never loops", () => {
+    expect(list([file("/w/Index.razor.cs", "Index.razor"), file("/w/a", "b"), file("/w/b", "a")])).toEqual(["Index.razor.cs"]);
   });
 });

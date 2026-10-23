@@ -10,6 +10,7 @@ import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, isWithin, join, relative } from "../lib/path";
 import { clearUnusedMarks, findImplementations, findUsages, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
 import { lineChanges, lineMapper } from "../lib/lineChanges";
+import { withNested } from "../lib/treeRows";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
 import { zedWheel } from "../lib/wheel";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
@@ -888,16 +889,18 @@ export function revealInTree(project: Project, path: string, { show = true } = {
 async function openDirMenu(project: Project, dir: string, at: { clientX: number; clientY: number }, current?: string): Promise<void> {
   let entries;
   try {
-    entries = (await api.listDir(dir, true)).filter((e) => !e.nestedUnder);
+    // `.meta` files stay hidden, as in the Unity view.
+    entries = (await api.listDir(dir, useWorkspace.getState().nestFiles)).filter((e) => !(e.nestedUnder && e.name.endsWith(".meta")));
   } catch (e) {
     return toast(errorMessage(e), "error");
   }
   entries.sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name));
+  // Nested files under theirs, indented (em spaces: menus collapse plain ones).
   openMenu(
     at,
     entries.length
-      ? entries.map((e) => ({
-          label: (e.path === current ? "• " : "") + e.name + (e.isDir ? "/" : ""),
+      ? withNested(entries).map(({ entry: e, depth }) => ({
+          label: "\u2003".repeat(depth) + (e.path === current ? "• " : "") + e.name + (e.isDir ? "/" : ""),
           action: () =>
             e.isDir ? void openDirMenu(project, e.path, at, current) : useWorkspace.getState().openFile(project.id, e.path),
         }))
