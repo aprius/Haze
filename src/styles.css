@@ -2458,7 +2458,7 @@ button.toggle.on {
 }
 
 /* Find tool window: one tab per search, a tree of files and usages, and a preview. */
-.find-tabs {
+.fw-tabs {
   display: flex;
   gap: 2px;
   min-width: 0;
@@ -2467,7 +2467,7 @@ button.toggle.on {
   padding-left: 8px;
   border-left: 1px solid var(--border);
 }
-.find-tab {
+.fw-tab {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2478,16 +2478,16 @@ button.toggle.on {
   min-width: 0;
   white-space: nowrap;
 }
-.find-tab.active {
+.fw-tab.active {
   color: var(--fg);
   background: var(--selected-inactive);
 }
-.find-tab-title {
+.fw-tab-title {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 260px;
 }
-.find-tab-close {
+.fw-tab-close {
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -2496,15 +2496,15 @@ button.toggle.on {
   display: flex;
   cursor: pointer;
 }
-.find-tab-close:hover {
+.fw-tab-close:hover {
   background: var(--hover);
   color: var(--fg);
 }
-.find-body.se-empty {
+.fw-body.se-empty {
   align-items: center;
   justify-content: center;
 }
-.find-toolbar {
+.fw-toolbar {
   flex: none;
   display: flex;
   flex-direction: column;
@@ -2512,64 +2512,66 @@ button.toggle.on {
   padding: 4px 3px;
   border-right: 1px solid var(--border);
 }
-.find-toolbar .icon-btn.on {
+.fw-toolbar .icon-btn.on {
   color: var(--accent);
 }
-.find-tree {
+.fw-tree {
   outline: none;
   padding-bottom: 6px;
 }
-.find-summary {
+.fw-summary {
   padding: 5px 10px 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: calc(var(--ui-font-size) * 12 / 13);
 }
-.find-summary.error .muted {
+.fw-summary.error .muted {
   color: var(--danger);
 }
-.find-row {
+.fw-row {
   padding: 1px 10px;
 }
-.find-row.selected {
+.fw-row.selected {
   background: var(--selected-inactive);
 }
-.find-tree:focus .find-row.selected {
+.fw-tree:focus .fw-row.selected {
   background: var(--selected);
 }
-.find-file {
+.fw-file {
   gap: 5px;
 }
-.find-file .jb-ico,
-.find-chevron {
+.fw-file .jb-ico,
+.fw-chevron {
   flex: none;
 }
-.find-chevron {
+.fw-chevron {
   display: flex;
   color: var(--muted);
 }
-.find-dir {
+.fw-dir {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
-.find-usage {
+.fw-usage {
   padding-left: 48px;
 }
-.find-usage .find-lineno {
+.fw-usage .find-lineno {
   flex: none;
   color: var(--muted);
 }
-.find-code {
+.fw-code {
   font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
-.find-preview {
+.fw-preview {
   flex: 1 1 45%;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   border-left: 1px solid var(--border);
 }
 

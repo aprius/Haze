@@ -79,22 +79,22 @@ export function FindPanel({ project }: { project: Project }) {
   const tab = tabs.find((t) => t.id === activeId) ?? tabs[0];
 
   return (
-    <div className="terminal-panel build-panel find-panel">
+    <div className="terminal-panel build-panel fw-panel">
       <div className="panel-header">
         <ToolTabs project={project} />
-        <div className="find-tabs">
+        <div className="fw-tabs">
           {tabs.map((t) => (
             <div
               key={t.id}
-              className={"find-tab" + (t === tab ? " active" : "")}
+              className={"fw-tab" + (t === tab ? " active" : "")}
               onClick={() => useFind.setState((s) => ({ active: { ...s.active, [project.id]: t.id } }))}
               onMouseDown={(e) => e.button === 1 && (e.preventDefault(), closeTab(project.id, t.id))}
               title={t.title}
             >
               {t.pinned && <Pin size={11} />}
-              <span className="find-tab-title">{t.title}</span>
+              <span className="fw-tab-title">{t.title}</span>
               <button
-                className="find-tab-close"
+                className="fw-tab-close"
                 title="Close"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -112,7 +112,7 @@ export function FindPanel({ project }: { project: Project }) {
           </button>
         </div>
       </div>
-      {tab ? <FindResults key={tab.id} project={project} tab={tab} /> : <div className="build-body find-body se-empty">Find Usages, then Open in Find Window from the usages list</div>}
+      {tab ? <FindResults key={tab.id} project={project} tab={tab} /> : <div className="build-body fw-body se-empty">Find Usages, then Open in Find Window from the usages list</div>}
     </div>
   );
 }
@@ -145,7 +145,7 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
   }, []);
 
   useEffect(() => {
-    listRef.current?.querySelector(".find-row.selected")?.scrollIntoView({ block: "nearest" });
+    listRef.current?.querySelector(".fw-row.selected")?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
   const current = rows.find((r) => rowKey(r) === selected);
@@ -196,8 +196,8 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
       : `${tab.items.length} usage${tab.items.length === 1 ? "" : "s"} in ${files} file${files === 1 ? "" : "s"}`;
 
   return (
-    <div className="build-body find-body">
-      <div className="find-toolbar">
+    <div className="build-body fw-body">
+      <div className="fw-toolbar">
         <button className="icon-btn" title="Rerun" disabled={!tab.rerun || tab.loading} onClick={() => void rerunTab(project.id, tab)}>
           <RotateCcw size={15} />
         </button>
@@ -217,8 +217,8 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
           <Pin size={15} />
         </button>
       </div>
-      <div className="problems find-tree" ref={listRef} tabIndex={0} onKeyDown={onKey}>
-        <div className={"find-summary" + (tab.error ? " error" : "")}>
+      <div className="problems fw-tree" ref={listRef} tabIndex={0} onKeyDown={onKey}>
+        <div className={"fw-summary" + (tab.error ? " error" : "")}>
           <b>{tab.title}</b> <span className="muted">{summary}</span>
         </div>
         {rows.map((r) => {
@@ -228,13 +228,13 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
             return (
               <div
                 key={key}
-                className={"problem find-row find-file" + (key === selected ? " selected" : "")}
+                className={"problem fw-row fw-file" + (key === selected ? " selected" : "")}
                 onClick={() => setSelected(key)}
                 onDoubleClick={() => toggle(r.path)}
                 title={relative(project.path, r.path)}
               >
                 <span
-                  className="find-chevron"
+                  className="fw-chevron"
                   onClick={(e) => {
                     e.stopPropagation();
                     toggle(r.path);
@@ -244,7 +244,7 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
                 </span>
                 <FileIcon name={basename(r.path)} />
                 <span>{basename(r.path)}</span>
-                {dir && <span className="muted find-dir">{dir}</span>}
+                {dir && <span className="muted fw-dir">{dir}</span>}
                 <span className="muted">
                   {r.count} usage{r.count === 1 ? "" : "s"}
                 </span>
@@ -255,21 +255,21 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
           return (
             <div
               key={key}
-              className={"problem find-row find-usage" + (key === selected ? " selected" : "")}
+              className={"problem fw-row fw-usage" + (key === selected ? " selected" : "")}
               onClick={() => setSelected(key)}
               onDoubleClick={() => open(u)}
             >
               <span className="find-lineno">
                 ({u.line}, {u.column})
               </span>
-              <span className="find-code">
+              <span className="fw-code">
                 <UsageCode usage={u} />
               </span>
             </div>
           );
         })}
       </div>
-      <div className="find-preview">
+      <div className="fw-preview">
         <CodePreview
           path={shown?.path ?? null}
           hash={null}
