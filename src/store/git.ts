@@ -210,7 +210,7 @@ export async function runGit(projectId: string, args: string[], opts: { label?: 
       // Offer to log in when the remote rejects the credentials.
       toast(`${opts.label ?? "git " + args[0]} failed: the remote needs you to log in. Add a GitHub/GitLab account in Settings.`, "error", {
         label: "Log In…",
-        run: openSettings,
+        run: () => openSettings("vcs"),
       });
     else if (!out.ok) toast(`${opts.label ?? "git " + args[0]} failed: ${(out.stderr || out.stdout).trim().split("\n").slice(-3).join(" ")}`, "error");
     else if (!opts.quiet && opts.label) toast(`${opts.label}: done`);

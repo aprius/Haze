@@ -3,6 +3,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { collectDrafts, ensureBuffer, getModel, isVirtualPath, onDraftsChanged } from "../lib/buffers";
 import { api } from "../lib/ipc";
+import { restoreUpdateCheck, savedUpdateCheck, useUpdates, type SavedUpdateCheck } from "./updates";
 import { defaultUi, useWorkspace, type Project, type ProjectUi } from "./workspace";
 
 const VERSION = 1;
@@ -22,6 +23,8 @@ interface Persisted {
   rainbowGuides?: boolean;
   notifyAgents?: boolean;
   unityAutoRefresh?: boolean;
+  checkUpdates?: boolean;
+  updateCheck?: SavedUpdateCheck;
 }
 
 /** Drafts restored from the last run, consumed when their tab first opens. */
@@ -48,6 +51,8 @@ function snapshot(): Persisted {
     rainbowGuides: s.rainbowGuides,
     notifyAgents: s.notifyAgents,
     unityAutoRefresh: s.unityAutoRefresh,
+    checkUpdates: s.checkUpdates,
+    updateCheck: savedUpdateCheck(),
   };
 }
 
@@ -119,12 +124,15 @@ async function doRestore(): Promise<void> {
       rainbowGuides: data.rainbowGuides ?? true,
       notifyAgents: data.notifyAgents ?? true,
       unityAutoRefresh: data.unityAutoRefresh ?? true,
+      checkUpdates: data.checkUpdates ?? true,
     });
+    restoreUpdateCheck(data.updateCheck);
   }
   useWorkspace.setState({ loaded: true });
 
   useWorkspace.subscribe(schedule);
   onDraftsChanged(schedule);
+  useUpdates.subscribe((s, prev) => s.checkedAt !== prev.checkedAt && schedule());
   await getCurrentWindow().onCloseRequested(async () => {
     await flush().catch(console.error);
   });

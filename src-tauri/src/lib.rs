@@ -19,6 +19,7 @@ mod syntax;
 mod text;
 mod unity;
 mod unity_index;
+mod updates;
 mod watcher;
 
 use std::path::PathBuf;
@@ -740,6 +741,13 @@ async fn pty_close(pty: State<'_, Pty>, id: String) -> CmdResult<()> {
     blocking(move || client.request(Request::Close { id }).map(|_| ())).await
 }
 
+// ---------------------------------------------------------------- updates
+
+#[tauri::command]
+async fn check_update() -> CmdResult<updates::UpdateInfo> {
+    blocking(updates::check).await
+}
+
 // ---------------------------------------------------------------- command line
 
 /// Projects/files asked for on the command line or by a second launch.
@@ -819,6 +827,28 @@ fn float_position(handle: &AppHandle, size: Option<tauri::LogicalSize<f64>>) -> 
     Some((x, y))
 }
 
+/// Tauri's default menu with a fuller About panel: the app icon, the version
+/// with the commit it was built from ("Version 0.1.0 (0c8dca6)"), a tagline.
+fn app_menu(handle: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{AboutMetadata, Menu, PredefinedMenuItem};
+    let menu = Menu::default(handle)?;
+    #[cfg(target_os = "macos")]
+    if let Some(app) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
+        let commit = env!("HAZE_COMMIT");
+        let about = AboutMetadata {
+            name: Some("Haze".into()),
+            version: Some(handle.package_info().version.to_string()),
+            short_version: (!commit.is_empty()).then(|| commit.to_owned()),
+            copyright: Some("A lightweight AI-first workspace\nMIT License".into()),
+            icon: handle.default_window_icon().cloned(),
+            ..Default::default()
+        };
+        app.remove_at(0)?;
+        app.insert(&PredefinedMenuItem::about(handle, Some("About Haze"), Some(about))?, 0)?;
+    }
+    Ok(menu)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     shell_env::load_login_path();
@@ -841,6 +871,7 @@ pub fn run() {
             }
         }))
         .manage(pending)
+        .menu(app_menu)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -871,6 +902,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             take_open_requests,
+            check_update,
             load_state,
             save_state,
             list_dir,

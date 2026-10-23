@@ -1,7 +1,7 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { AlertCircle, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
+import { AlertCircle, ArrowUpCircle, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type BuildDiagnostic, type TextEncoding } from "../lib/ipc";
@@ -12,6 +12,7 @@ import { useTasks } from "../store/tasks";
 import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
 import { useTree } from "../store/tree";
 import { toggleCommitWindow, useUi } from "../store/ui";
+import { BREW_UPGRADE, openRelease, useUpdates } from "../store/updates";
 import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
@@ -19,7 +20,7 @@ import { useWorkspace, type BottomTab, type Project } from "../store/workspace";
 import { closeTabsWithPrompt, PathCrumbs, useCursor } from "./EditorArea";
 import { confirmAction, openMenu } from "./Overlays";
 import { disposeView, toggleTerminal } from "./TerminalPanel";
-import { shortcutLabel } from "../lib/keymap";
+import { isMac, shortcutLabel } from "../lib/keymap";
 import { DEFAULT_ZOOM, resetZoom, useZoom } from "../lib/zoom";
 
 export async function openFolder(): Promise<void> {
@@ -96,6 +97,30 @@ function AgentBadge({ projectId }: { projectId: string }) {
   return state ? <span className={"rail-agent " + state} title={state === "waiting" ? "An agent needs your input" : state === "done" ? "An agent finished" : "An agent is working"} /> : null;
 }
 
+/** Shown while a newer Haze release is out. */
+function UpdateButton() {
+  const info = useUpdates((s) => s.info);
+  if (!info?.available) return null;
+  return (
+    <button
+      className="rail-item rail-update"
+      title={`Haze ${info.latest} is available (you have ${info.current})`}
+      onClick={(e) =>
+        openMenu(e, [
+          { label: `Haze ${info.latest} is available`, disabled: true },
+          { separator: true },
+          { label: "Download from GitHub…", action: openRelease },
+          ...(isMac ? [{ label: `Copy "${BREW_UPGRADE}"`, action: () => void navigator.clipboard.writeText(BREW_UPGRADE) }] : []),
+          { separator: true },
+          { label: "Update Settings…", action: () => openSettings("updates") },
+        ])
+      }
+    >
+      <ArrowUpCircle size={16} />
+    </button>
+  );
+}
+
 export function ProjectRail() {
   const projects = useWorkspace((s) => s.projects);
   const activeId = useWorkspace((s) => s.activeProjectId);
@@ -133,6 +158,7 @@ export function ProjectRail() {
         <Plus size={16} />
       </button>
       <div className="rail-spacer" />
+      <UpdateButton />
       <button
         className="rail-item"
         title={themeMode === "dark" ? "Switch to Light Theme" : "Switch to Dark Theme"}

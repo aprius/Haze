@@ -14,6 +14,15 @@ export interface DirEntry {
 export type TextEncoding = "utf8" | "utf8-bom" | "utf16le" | "utf16be" | "windows1252" | "utf8-invalid" | "utf8-bom-invalid";
 export type Eol = "lf" | "crlf";
 
+/** The latest GitHub release compared with this build. */
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  /** The release page. */
+  url: string;
+  available: boolean;
+}
+
 export type FileContent =
   | { kind: "text"; content: string; encoding: TextEncoding; eol: Eol; mtime: number }
   | { kind: "binary"; size: number }
@@ -539,6 +548,8 @@ export const api = {
   gitStatus: (dir: string) => invoke<GitStatus>("git_status", { dir }),
   watchProject: (root: string) => invoke<void>("watch_project", { root }),
   unwatchProject: (root: string) => invoke<void>("unwatch_project", { root }),
+
+  checkUpdate: () => invoke<UpdateInfo>("check_update"),
 
   ptyList: () => invoke<SessionInfo[]>("pty_list"),
   ptyCreate: (spec: SessionSpec) => invoke<SessionInfo>("pty_create", { spec }),

@@ -1,5 +1,5 @@
-// Settings: fonts, layout style, keymap, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting.
-import { Bot, Box, Code, FolderTree, GitBranch, Keyboard, type LucideIcon, Plus, RotateCcw, Type, X } from "lucide-react";
+// Settings: fonts, layout style, keymap, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting, updates.
+import { ArrowUpCircle, Bot, Box, Code, FolderTree, GitBranch, Keyboard, type LucideIcon, Plus, RotateCcw, Type, X } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import {
@@ -28,19 +28,21 @@ import {
   setRecordingKeys,
   useKeymap,
 } from "../lib/keymap";
+import { isMac } from "../lib/keymap";
 import { setUiStyle, type UiStyle, useUiStyle } from "../lib/theme";
 import { popupClosed } from "../store/ui";
+import { BREW_UPGRADE, checkForUpdates, openRelease, useUpdates } from "../store/updates";
 import { useWorkspace } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
 import { toast } from "./Overlays";
 
-type Page = "appearance" | "editor" | "keymap" | "agents" | "vcs" | "project" | "unity";
+type Page = "appearance" | "editor" | "keymap" | "agents" | "vcs" | "project" | "unity" | "updates";
 
 // The page stays selected between openings.
 const useSettings = create<{ open: boolean; page: Page }>(() => ({ open: false, page: "appearance" }));
 
-export function openSettings(): void {
-  useSettings.setState({ open: true });
+export function openSettings(page?: Page): void {
+  useSettings.setState(page ? { open: true, page } : { open: true });
 }
 
 function close() {
@@ -523,6 +525,52 @@ function UnitySection() {
   );
 }
 
+function UpdatesSection() {
+  const checkUpdates = useWorkspace((s) => s.checkUpdates);
+  const { info, checking, error, checkedAt } = useUpdates();
+  const status = checking
+    ? "Checking…"
+    : error
+      ? `Last check failed: ${error}`
+      : info
+        ? info.available
+          ? `Haze ${info.latest} is available (you have ${info.current}).`
+          : `Haze ${info.current} is the latest version.`
+        : "Not checked yet.";
+  return (
+    <>
+      <PageHeader title="Updates" desc="Haze asks GitHub for its latest release. Nothing is downloaded or installed until you choose to." />
+      <div className="settings-card">
+        <SwitchRow
+          label="Check for updates automatically"
+          desc="At startup and every 6 hours. A button appears above Settings when a new version is out."
+          checked={checkUpdates}
+          onChange={(on) => useWorkspace.setState({ checkUpdates: on })}
+        />
+        <div className="settings-row static">
+          <div className="settings-row-text">
+            <div>{status}</div>
+            {checkedAt && !checking && <div className="muted small">Checked at {new Date(checkedAt).toLocaleTimeString()}</div>}
+          </div>
+          {info?.available && (
+            <button className="btn small primary" onClick={openRelease}>
+              Download…
+            </button>
+          )}
+          <button className="btn small" disabled={checking} onClick={() => void checkForUpdates(true)}>
+            Check Now
+          </button>
+        </div>
+        {info?.available && isMac && (
+          <div className="muted small">
+            Installed with Homebrew? Run <code>{BREW_UPGRADE}</code>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 const PAGES: { id: Page; name: string; icon: LucideIcon; body: () => ReactNode }[] = [
   { id: "appearance", name: "Appearance", icon: Type, body: () => <FontSettingsSection /> },
   { id: "editor", name: "Editor", icon: Code, body: () => <EditorSection /> },
@@ -531,6 +579,7 @@ const PAGES: { id: Page; name: string; icon: LucideIcon; body: () => ReactNode }
   { id: "vcs", name: "Version Control", icon: GitBranch, body: () => <GitAccountsSection /> },
   { id: "project", name: "Project View", icon: FolderTree, body: () => <ProjectViewSection /> },
   { id: "unity", name: "Unity", icon: Box, body: () => <UnitySection /> },
+  { id: "updates", name: "Updates", icon: ArrowUpCircle, body: () => <UpdatesSection /> },
 ];
 
 export function SettingsDialog() {

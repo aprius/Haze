@@ -409,6 +409,10 @@ kbd {
   border: 1px dashed var(--border);
 }
 
+.rail-item.rail-update {
+  color: var(--mk-green);
+}
+
 .rail-star {
   position: absolute;
   right: 1px;

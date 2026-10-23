@@ -119,6 +119,8 @@ interface WorkspaceState {
   notifyAgents: boolean;
   /** Unity refreshes its assets (and compiles) when files change on disk, without waiting for focus. */
   unityAutoRefresh: boolean;
+  /** Looks for a newer Haze release at startup and every few hours. */
+  checkUpdates: boolean;
 
   addProject(path: string): string;
   activateProject(id: string | null): void;
@@ -152,6 +154,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   rainbowGuides: true,
   notifyAgents: true,
   unityAutoRefresh: true,
+  checkUpdates: true,
 
   addProject(path) {
     const existing = get().projects.find((p) => p.path === path);

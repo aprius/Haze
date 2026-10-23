@@ -32,6 +32,7 @@ import { resetZoom, zoomIn, zoomOut } from "./lib/zoom";
 import { restore } from "./store/persist";
 import { startTerminals, syncSessions } from "./store/terminals";
 import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
+import { startUpdateChecks } from "./store/updates";
 import { openCommitWindow, openFindInFiles, openSearchEverywhere, toggleCommitWindow, toggleSeIncludeAll, useUi } from "./store/ui";
 import { projectForPath, useWorkspace, type BottomTab, type Project } from "./store/workspace";
 
@@ -255,6 +256,8 @@ export default function App() {
   useEffect(() => {
     void startTerminals(restore());
   }, []);
+
+  useEffect(() => (loaded ? startUpdateChecks() : undefined), [loaded]);
 
   // `haze <project> [<file>] --line N` (e.g. from Unity), at launch or from a second launch.
   useEffect(() => {
