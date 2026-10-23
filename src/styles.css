@@ -2705,8 +2705,9 @@ button.toggle.on {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 6px 8px;
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size);
+  font-family: var(--font-mono);
+  font-size: var(--code-font-size, 13px);
+  line-height: 1.54;
   outline: none;
   user-select: text;
 }
