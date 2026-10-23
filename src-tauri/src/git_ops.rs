@@ -532,13 +532,28 @@ pub fn parse_blame(out: &str) -> Vec<BlameLine> {
 }
 
 /// Blame for `rel`; `contents` (unsaved editor text, in the file's encoding)
-/// is blamed instead of the disk file when given.
-pub fn blame(root: &Path, rel: &str, contents: Option<&[u8]>) -> Result<Vec<BlameLine>> {
+/// is blamed instead of the disk file when given, `rev` (a commit) instead of
+/// both: the file as committed there.
+pub fn blame(
+    root: &Path,
+    rel: &str,
+    contents: Option<&[u8]>,
+    rev: Option<&str>,
+) -> Result<Vec<BlameLine>> {
     let mut cmd = git(root);
     cmd.args(["blame", "--line-porcelain"]);
-    if contents.is_some() {
-        cmd.args(["--contents", "-"]);
+    match (rev, contents) {
+        (Some(rev), _) => {
+            // Never an option: it comes before the `--`.
+            anyhow::ensure!(!rev.starts_with('-'), "invalid revision {rev:?}");
+            cmd.arg(rev);
+        }
+        (None, Some(_)) => {
+            cmd.args(["--contents", "-"]);
+        }
+        (None, None) => {}
     }
+    let contents = if rev.is_some() { None } else { contents };
     cmd.args(["--", rel])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -911,7 +926,10 @@ mod tests {
         assert_eq!(s.len(), 1);
         assert!(s[0].message.contains("wip"));
 
-        let blame = blame(r.path(), "a.cs", Some(b"line1\nline2\nnew\n")).unwrap();
+        let blame_of = |contents: Option<&[u8]>, rev: Option<&str>| {
+            blame(r.path(), "a.cs", contents, rev).unwrap()
+        };
+        let blame = blame_of(Some(b"line1\nline2\nnew\n"), None);
         assert_eq!(blame.len(), 3);
         assert_eq!(
             blame.iter().map(|b| b.line).collect::<Vec<_>>(),
@@ -919,6 +937,12 @@ mod tests {
         );
         assert_eq!(blame[0].summary, "init");
         assert_eq!(blame[2].hash, "0".repeat(40));
+        // At a commit: the file as committed, whatever the disk or the buffer holds.
+        r.write("a.cs", "edited\n");
+        let at_head = blame_of(Some(b"other\n"), Some("HEAD"));
+        assert_eq!(at_head.len(), 2);
+        assert!(at_head.iter().all(|b| b.summary == "init"));
+        assert!(super::blame(r.path(), "a.cs", None, Some("--contents")).is_err());
     }
 
     #[test]

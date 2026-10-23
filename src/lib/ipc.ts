@@ -512,8 +512,9 @@ export const api = {
   gitFileAt: (root: string, rev: string, rel: string) => invoke<string | null>("git_file_at", { root, rev, rel }),
   gitBranches: (root: string) => invoke<BranchesInfo>("git_branches", { root }),
   gitStashes: (root: string) => invoke<StashEntry[]>("git_stashes", { root }),
-  gitBlame: (root: string, rel: string, contents: string | null, encoding: TextEncoding | null) =>
-    invoke<BlameLine[]>("git_blame", { root, rel, contents, encoding }),
+  /** Blame of the disk file, of `contents` (unsaved text) or, with `rev`, of the file as committed there. */
+  gitBlame: (root: string, rel: string, contents: string | null, encoding: TextEncoding | null, rev: string | null = null) =>
+    invoke<BlameLine[]>("git_blame", { root, rel, contents, encoding, rev }),
   gitRun: (root: string, args: string[]) => invoke<GitOutput>("git_run", { root, args }),
   gitAccounts: () => invoke<GitAccountsInfo>("git_accounts"),
   gitAccountLogin: (provider: GitProvider, server: string, token: string) =>

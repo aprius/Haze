@@ -404,13 +404,14 @@ async fn git_blame(
     rel: String,
     contents: Option<String>,
     encoding: Option<text::TextEncoding>,
+    rev: Option<String>,
 ) -> CmdResult<Vec<git_ops::BlameLine>> {
     blocking(move || {
         // git compares bytes: UTF-16 or BOM text sent as UTF-8 would match no line.
         let bytes = contents
             .map(|c| text::encode(&c, encoding.unwrap_or(text::TextEncoding::Utf8)))
             .transpose()?;
-        git_ops::blame(root.as_ref(), &rel, bytes.as_deref())
+        git_ops::blame(root.as_ref(), &rel, bytes.as_deref(), rev.as_deref())
     })
     .await
 }

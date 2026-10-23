@@ -9,7 +9,7 @@ import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/mon
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, isWithin, join, relative } from "../lib/path";
 import { clearUnusedMarks, findImplementations, findUsages, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
-import { lineChanges } from "../lib/lineChanges";
+import { lineChanges, lineMapper } from "../lib/lineChanges";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
 import { zedWheel } from "../lib/wheel";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
@@ -310,36 +310,71 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
   }
 }
 
-// Inline blame for the caret line: "Author, 2 days ago • summary"
-// after the line's end, the commit's details on hover. One blame per model version
-// (dirty text is blamed as is, so lines match), asked once the caret rests.
+// Inline blame for the caret line: "Author, 2 days ago • summary" after the
+// line's end, the commit's details on hover. Like Rider, the file is blamed
+// once per HEAD, as committed there, and the editor's lines are mapped onto
+// that through the changes since (lineMapper): typing never runs git, and a
+// line added or edited since HEAD is "You, uncommitted changes".
 type LineBlames = Map<number, BlameLine> | null;
-const lineBlames = new WeakMap<
-  monaco.editor.ITextModel,
-  { version: number; at: number; lines: Promise<LineBlames>; done?: Map<number, BlameLine> }
->();
+/** A file's blame at HEAD by line there, per HEAD commit (keyed like headTexts); null when it is not in HEAD. */
+const headBlames = new Map<string, Promise<Map<number, BlameLine> | null>>();
+const lineBlames = new WeakMap<monaco.editor.ITextModel, { key: string; lines: Promise<LineBlames>; done?: Map<number, BlameLine> }>();
+
+/** What a model's line blames depend on: the file, HEAD and the text. */
+function lineBlameKey(project: Project, model: monaco.editor.ITextModel): string | null {
+  const r = repo(project.id);
+  if (!r.root || !r.branches?.head || !isWithin(model.uri.fsPath, r.root)) return null;
+  return `${r.branches.head}:${r.root}:${model.uri.fsPath}:${model.getAlternativeVersionId()}`;
+}
 
 function caretLineBlames(project: Project, model: monaco.editor.ITextModel): Promise<LineBlames> {
-  const version = model.getAlternativeVersionId();
+  const key = lineBlameKey(project, model);
+  if (!key) return Promise.resolve(null);
   const cached = lineBlames.get(model);
-  // Re-asked after a while too: a commit changes the answer without changing the text.
-  if (cached && cached.version === version && Date.now() - cached.at < 15_000) return cached.lines;
-  const root = repo(project.id).root;
-  if (!root || !isWithin(model.uri.fsPath, root)) return Promise.resolve(null);
-  const lines = blameModel(root, model)
-    .then((ls) => new Map(ls.map((l) => [l.line, l])))
-    .catch(() => null); // untracked or outside git: nothing to show
-  // The old answer for the same text stays on hand while the new one comes.
-  const entry = { version, at: Date.now(), lines, done: cached?.version === version ? cached.done : undefined };
+  if (cached?.key === key) return cached.lines;
+  const r = repo(project.id);
+  const root = r.root!;
+  const head = r.branches!.head!;
+  const rel = relative(root, model.uri.fsPath);
+  const blameKey = `${head}:${root}:${rel}`;
+  let blamed = headBlames.get(blameKey);
+  if (!blamed) {
+    blamed = api
+      .gitBlame(root, rel, null, null, head)
+      .then((ls) => new Map(ls.map((l) => [l.line, l])))
+      .catch(() => null); // not in HEAD, or outside git
+    headBlames.set(blameKey, blamed);
+  }
+  // This version's text: the model moves on while HEAD's text and blame come.
+  const text = model.getValue();
+  const lines = (async (): Promise<LineBlames> => {
+    let base = await headText(root, rel, head);
+    // Added to git but not committed yet: every line is new.
+    if (base === null && r.changes.some((c) => c.rel === rel && c.status === "added")) base = "";
+    if (base === null) return null;
+    const atHead = base === "" ? new Map<number, BlameLine>() : await blamed;
+    if (!atHead) return null;
+    const toHead = lineMapper(base, text);
+    const count = text === "" ? 0 : text.split(/\r?\n/).length;
+    const now = Date.now() / 1000;
+    const out = new Map<number, BlameLine>();
+    for (let line = 1; line <= count; line++) {
+      const at = toHead(line);
+      const b = at === null ? undefined : atHead.get(at);
+      out.set(line, b ? { ...b, line } : { line, hash: UNCOMMITTED, author: "", time: now, summary: "" });
+    }
+    return out;
+  })().catch(() => null);
+  const entry: { key: string; lines: Promise<LineBlames>; done?: Map<number, BlameLine> } = { key, lines };
   void lines.then((m) => (entry.done = m ?? undefined));
   lineBlames.set(model, entry);
   return lines;
 }
 
-/** The last blame of the model's current text, if one came back: shown at once, even while re-asked. */
-function knownLineBlames(model: monaco.editor.ITextModel): Map<number, BlameLine> | undefined {
+/** The line blames of the model's current text and HEAD, if computed: shown at once. */
+function knownLineBlames(project: Project, model: monaco.editor.ITextModel): Map<number, BlameLine> | undefined {
   const cached = lineBlames.get(model);
-  return cached?.version === model.getAlternativeVersionId() ? cached.done : undefined;
+  return cached && cached.key === lineBlameKey(project, model) ? cached.done : undefined;
 }
 
 function timeAgo(t: number): string {
@@ -424,11 +459,14 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
     shown.clear();
     shownKey = "";
   };
+  // A commit or checkout changes the answer without changing the text.
+  const keyOf = (model: monaco.editor.ITextModel, line: number) =>
+    `${repo(project.id).branches?.head ?? ""}:${model.uri}:${model.getAlternativeVersionId()}:${line}`;
   const update = (delay: number) => {
     clearTimeout(timer);
     const model = editor.getModel();
     const line = editor.getSelection()?.positionLineNumber;
-    const key = model && line ? `${model.uri}:${model.getAlternativeVersionId()}:${line}` : "";
+    const key = model && line ? keyOf(model, line) : "";
     // Moving along the same line keeps the annotation (no flicker).
     if (key && key === shownKey) return;
     clear();
@@ -437,7 +475,7 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
       // Full Annotate is on: it already says it.
       if (!b || blameDecorations.has(model)) return;
       if (editor.getModel() !== model || editor.getSelection()?.positionLineNumber !== line || line > model.getLineCount()) return;
-      if (`${model.uri}:${model.getAlternativeVersionId()}:${line}` !== key) return;
+      if (keyOf(model, line) !== key) return;
       const summary = b.summary.length > 60 ? b.summary.slice(0, 59) + "…" : b.summary;
       const label = b.hash === UNCOMMITTED ? "You, uncommitted changes" : `${b.author}, ${timeAgo(b.time)} • ${summary}`;
       const end = model.getLineMaxColumn(line);
@@ -454,7 +492,7 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
       shownKey = key;
     };
     // This text's blame is already here: no wait. The timer still re-asks once it's due.
-    const known = knownLineBlames(model)?.get(line);
+    const known = knownLineBlames(project, model)?.get(line);
     show(known);
     timer = setTimeout(async () => {
       const b = (await caretLineBlames(project, model))?.get(line);
@@ -464,8 +502,8 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
   const subs = [
     editor.onDidChangeCursorSelection(() => update(200)),
     editor.onDidChangeModel(() => update(200)),
-    // Typing re-blames the dirty text, so wait until it pauses.
-    editor.onDidChangeModelContent(() => update(800)),
+    // Typing maps the lines again (no git), once it pauses.
+    editor.onDidChangeModelContent(() => update(300)),
     editor.onDidBlurEditorText(() => {
       clearTimeout(timer);
       clear();
@@ -473,17 +511,31 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
     editor.onDidFocusEditorText(() => update(200)),
   ];
   const unsub = useWorkspace.subscribe((s, prev) => s.lineBlame !== prev.lineBlame && update(0));
+  const unsubGit = useGit.subscribe((s, prev) => s.repos[project.id]?.branches?.head !== prev.repos[project.id]?.branches?.head && update(0));
   return {
     dispose() {
       clearTimeout(timer);
       subs.forEach((d) => d.dispose());
       unsub();
+      unsubGit();
     },
   };
 }
 
 /** HEAD's text of a file, per HEAD commit; `null` = not in HEAD. */
 const headTexts = new Map<string, Promise<string | null>>();
+
+/** `rel` as committed in `head` (a hash; "" before the first commit). */
+function headText(root: string, rel: string, head: string): Promise<string | null> {
+  const key = `${head}:${root}:${rel}`;
+  let text = headTexts.get(key);
+  if (!text) {
+    // By hash: HEAD may have moved since `head` was read.
+    text = api.gitFileAt(root, head || "HEAD", rel).catch(() => null);
+    headTexts.set(key, text);
+  }
+  return text;
+}
 
 /**
  * Change markers: a bar beside the line numbers for lines added
@@ -499,14 +551,8 @@ function installLineChanges(project: Project, editor: monaco.editor.ICodeEditor)
       const r = repo(project.id);
       if (!model || model.uri.scheme !== "file" || !r.root || !isWithin(model.uri.fsPath, r.root)) return shown.clear();
       const rel = relative(r.root, model.uri.fsPath);
-      const key = `${r.branches?.head ?? ""}:${r.root}:${rel}`;
-      let base = headTexts.get(key);
-      if (!base) {
-        base = api.gitFileAt(r.root, "HEAD", rel).catch(() => null);
-        headTexts.set(key, base);
-      }
       const version = model.getVersionId();
-      let text = await base;
+      let text = await headText(r.root, rel, r.branches?.head ?? "");
       // Not in HEAD: a new file added to git is all new; an unversioned one gets no markers.
       if (text === null && r.changes.some((c) => c.rel === rel && c.status === "added")) text = "";
       if (editor.getModel() !== model || model.getVersionId() !== version) return;
@@ -529,7 +575,10 @@ function installLineChanges(project: Project, editor: monaco.editor.ICodeEditor)
   const unsub = useGit.subscribe((s, prev) => {
     const a = s.repos[project.id];
     const b = prev.repos[project.id];
-    if (a?.branches?.head !== b?.branches?.head) headTexts.clear();
+    if (a?.branches?.head !== b?.branches?.head) {
+      headTexts.clear();
+      headBlames.clear();
+    }
     if (a?.root !== b?.root || a?.branches?.head !== b?.branches?.head || a?.changes !== b?.changes) update(100);
   });
   update(0);
