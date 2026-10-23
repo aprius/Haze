@@ -12,6 +12,8 @@ concurrency:
 
 jobs:
   build:
+    # On main only release commits ("Release vX.Y.Z") build; pull requests always do.
+    if: github.event_name != 'push' || startsWith(github.event.head_commit.message, 'Release v')
     strategy:
       fail-fast: false
       matrix:
