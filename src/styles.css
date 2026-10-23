@@ -1782,7 +1782,7 @@ kbd {
   user-select: text;
 }
 
-.toggle {
+button.toggle {
   min-width: 30px;
   border: 1px solid transparent;
   background: transparent;
@@ -1793,11 +1793,11 @@ kbd {
   cursor: pointer;
 }
 
-.toggle:hover {
+button.toggle:hover {
   background: var(--hover);
 }
 
-.toggle.on {
+button.toggle.on {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--selected);
@@ -2997,6 +2997,18 @@ kbd {
    over the button itself; clicks pass through them to the button underneath. */
 .context-view:has(.workbench-hover) {
   pointer-events: none;
+}
+
+/* The Find widget's Replace toggle (the chevron on its left edge): Monaco makes
+   it 18px wide, 5px in from the edge; narrower, with a smaller chevron, it
+   leaves more room before the find and replace fields. */
+.monaco-editor .find-widget > .button.toggle.left {
+  left: 4px;
+  width: 14px;
+  margin: 4px 0;
+}
+.monaco-editor .find-widget > .button.toggle.left.codicon::before {
+  font-size: 12px;
 }
 
 /* Code Vision above declarations: quiet until hovered, like Rider's. */
