@@ -1,11 +1,12 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Box, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
+import { AlertCircle, Box, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
 import { useRef } from "react";
 import { useBuffers } from "../lib/buffers";
-import { api, type TextEncoding } from "../lib/ipc";
+import { api, type BuildDiagnostic, type TextEncoding } from "../lib/ipc";
 import { toggleThemeMode, useTheme } from "../lib/theme";
+import { useDotnet } from "../store/dotnet";
 import { useGit } from "../store/git";
 import { useTasks } from "../store/tasks";
 import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
@@ -283,6 +284,42 @@ function BackgroundTasks({ projectId }: { projectId: string | null }) {
   );
 }
 
+const normPath = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+// Plain code-unit order, the same order next-error's `<`/`>` walks; localeCompare would disagree on punctuation.
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Errors from the last build that point at a line, in file then line order. */
+function locatedErrors(diags: BuildDiagnostic[] | undefined): BuildDiagnostic[] {
+  return (diags ?? [])
+    .filter((d) => d.severity === "error" && d.file && d.line)
+    .sort((a, b) => cmp(normPath(a.file!), normPath(b.file!)) || a.line! - b.line! || (a.column ?? 1) - (b.column ?? 1));
+}
+
+/** Rider's "N errors in M files": each click jumps to the next error after the caret, wrapping around. */
+function ErrorsIndicator({ project, activeTab }: { project: Project; activeTab: string | null | undefined }) {
+  const diags = useDotnet((s) => s.builds[project.id]?.diagnostics);
+  const errors = locatedErrors(diags);
+  if (errors.length === 0) return null;
+  const files = new Set(errors.map((d) => normPath(d.file!))).size;
+  const next = () => {
+    const { line, column } = useCursor.getState();
+    const here = activeTab ? normPath(activeTab) : null;
+    const target =
+      errors.find((d) => {
+        const f = normPath(d.file!);
+        if (here === null || f < here) return false;
+        return f > here || d.line! > line || (d.line === line && (d.column ?? 1) > column);
+      }) ?? errors[0];
+    useWorkspace.getState().openFile(project.id, target.file!, { line: target.line!, column: target.column ?? 1 });
+  };
+  return (
+    <button className="status-item status-btn" onClick={next} title="Go to next error">
+      <AlertCircle size={14} className="sev-error" />
+      {errors.length} {errors.length === 1 ? "error" : "errors"} in {files} {files === 1 ? "file" : "files"}
+    </button>
+  );
+}
+
 export function StatusBar({ project }: { project: Project | null }) {
   const git = useTree((s) => (project ? s.git[project.id] : undefined));
   const operation = useGit((s) => (project ? s.repos[project.id]?.branches?.operation : null));
@@ -329,6 +366,7 @@ export function StatusBar({ project }: { project: Project | null }) {
       )}
       <span className="status-spacer" />
       <BackgroundTasks projectId={project?.id ?? null} />
+      {project && <ErrorsIndicator project={project} activeTab={ui?.activeTab} />}
       {meta?.status === "text" && (
         <>
           <span className="status-item">
