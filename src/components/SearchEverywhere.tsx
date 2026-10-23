@@ -339,8 +339,9 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
                 {header && <div className="se-group">{header}</div>}
                 <div
                   className={"se-item" + (i === selected ? " selected" : "")}
-                  onMouseMove={() => setSelected(i)}
-                  onClick={() => activate(item)}
+                  // Like Rider: a click selects (and previews), a double-click opens.
+                  onClick={() => setSelected(i)}
+                  onDoubleClick={() => activate(item)}
                 >
                   {item.kind === "file" && (
                     <>

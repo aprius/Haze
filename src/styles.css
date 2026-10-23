@@ -1480,6 +1480,10 @@ kbd {
   border-radius: 5px;
 }
 
+.se-main .se-item:hover:not(.selected) {
+  background: var(--hover);
+}
+
 .se-main .se-name {
   flex: none;
   max-width: 60%;
