@@ -2,6 +2,7 @@
 // host events to the xterm views.
 import { create } from "zustand";
 import { api, errorMessage, onPtyEvent, type AgentStatus, type PtyEvent, type SessionInfo } from "../lib/ipc";
+import { useTheme } from "../lib/theme";
 import { projectForPath, useWorkspace } from "./workspace";
 
 interface TerminalsState {
@@ -156,7 +157,10 @@ export async function newTerminal(
       rows: 30,
       title: opts.title ?? null,
       command: opts.command ?? null,
-      env: [],
+      // Programs that pick their colours by the terminal's background (Claude
+      // Code's "auto" theme) read it here; without it they assume dark and
+      // draw dark blocks on the light theme. Only new sessions see a change.
+      env: [["COLORFGBG", useTheme.getState().mode === "light" ? "0;15" : "15;0"]],
     });
     useTerminals.setState((s) => ({ sessions: { ...s.sessions, [info.id]: info }, connected: true, error: null }));
     useWorkspace.getState().updateUi(projectId, (ui) => ({
