@@ -179,9 +179,7 @@ fn watch_project(
     let index = index.inner().clone();
     let unity = unity.inner().clone();
     let sink: watcher::ChangeSink = Arc::new(move |change: watcher::FsChange| {
-        if change.overflow || !change.dirs.is_empty() {
-            index.invalidate(&change.root);
-        }
+        index.changed(&change);
         unity.changed(&change);
         let _ = app.emit("fs://changed", change);
     });

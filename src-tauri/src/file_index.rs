@@ -1,8 +1,8 @@
 //! File list per project for "Go to File" / Search Everywhere, fuzzy-matched
 //! with nucleo (the matcher behind Helix). The list is rebuilt lazily after
-//! the watcher reports structural changes.
+//! the watcher reports structural changes in the directories it lists.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -12,18 +12,36 @@ use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::search::walker;
+use crate::watcher::FsChange;
 
 const MAX_FILES: usize = 300_000;
 
 /// Root, and whether ignored files (bin/, .gitignore'd, …) are in.
 type CacheKey = (String, bool);
 
+struct Listing {
+    files: Arc<Vec<String>>,
+    /// Directories the walk went into, relative and `/`-separated (`""` is
+    /// the root). Changes elsewhere (Unity's `Library/`, `bin/`, `obj/`)
+    /// cannot change the list.
+    dirs: HashSet<String>,
+}
+
+/// Directories changed while a walk runs, checked before its list is kept.
+enum Missed {
+    Dirs(Vec<String>),
+    All,
+}
+
+#[derive(Default)]
+struct State {
+    lists: HashMap<CacheKey, Listing>,
+    walking: HashMap<CacheKey, Missed>,
+}
+
 #[derive(Default)]
 pub struct FileIndex {
-    cache: Mutex<HashMap<CacheKey, Arc<Vec<String>>>>,
-    /// Bumped per root by `invalidate`: a list whose walk started before
-    /// then may miss the change and is not cached.
-    generations: Mutex<HashMap<String, u64>>,
+    state: Mutex<State>,
     /// One walk per key at a time: each keystroke of Go to File asks, and
     /// on a cold index every one of them walked the whole tree.
     building: Mutex<HashMap<CacheKey, Arc<Mutex<()>>>>,
@@ -40,51 +58,100 @@ pub struct FileHit {
     pub name_indices: Vec<u32>,
 }
 
-fn build(root: &Path, include_ignored: bool) -> Vec<String> {
-    let mut out = Vec::new();
+fn rel_of(root: &Path, path: &Path) -> Option<String> {
+    let rel = path.strip_prefix(root).ok()?;
+    Some(rel.to_string_lossy().replace('\\', "/"))
+}
+
+fn build(root: &Path, include_ignored: bool) -> Listing {
+    let mut files = Vec::new();
+    let mut dirs = HashSet::new();
     for entry in walker(root, include_ignored).build().flatten() {
-        if !entry.file_type().is_some_and(|t| t.is_file()) {
+        let Some(t) = entry.file_type() else { continue };
+        let Some(rel) = rel_of(root, entry.path()) else {
             continue;
-        }
-        if let Ok(rel) = entry.path().strip_prefix(root) {
-            out.push(rel.to_string_lossy().replace('\\', "/"));
-        }
-        if out.len() >= MAX_FILES {
-            break;
+        };
+        if t.is_dir() {
+            dirs.insert(rel);
+        } else if t.is_file() {
+            files.push(rel);
+            if files.len() >= MAX_FILES {
+                break;
+            }
         }
     }
-    out
+    Listing {
+        files: Arc::new(files),
+        dirs,
+    }
+}
+
+/// Whether a change in `dir` (absolute) can change `listing`. Paths the
+/// root does not prefix count, to be safe.
+fn affects(root: &Path, listing: &Listing, dir: &str) -> bool {
+    rel_of(root, Path::new(dir)).is_none_or(|rel| listing.dirs.contains(&rel))
+}
+
+/// Edits to these change what the walk skips, without changing a listing.
+fn is_ignore_file(path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    name == ".gitignore" || name == ".ignore"
 }
 
 impl FileIndex {
     fn files(&self, root: &str, include_ignored: bool) -> Arc<Vec<String>> {
         let key = (root.to_string(), include_ignored);
-        if let Some(f) = self.cache.lock().get(&key) {
-            return f.clone();
+        if let Some(l) = self.state.lock().lists.get(&key) {
+            return l.files.clone();
         }
         let gate = self.building.lock().entry(key.clone()).or_default().clone();
         let _building = gate.lock();
         // Built by the query this one waited for.
-        if let Some(f) = self.cache.lock().get(&key) {
-            return f.clone();
+        {
+            let mut state = self.state.lock();
+            if let Some(l) = state.lists.get(&key) {
+                return l.files.clone();
+            }
+            state.walking.insert(key.clone(), Missed::Dirs(Vec::new()));
         }
-        let generation = self.generation(root);
-        let files = Arc::new(build(Path::new(root), include_ignored));
-        if self.generation(root) == generation {
-            self.cache.lock().insert(key, files.clone());
+        let root_path = Path::new(root);
+        let listing = build(root_path, include_ignored);
+        let files = listing.files.clone();
+        let mut state = self.state.lock();
+        // A change during the walk may have come after it passed that directory.
+        let stale = match state.walking.remove(&key) {
+            Some(Missed::Dirs(dirs)) => dirs.iter().any(|d| affects(root_path, &listing, d)),
+            Some(Missed::All) | None => true,
+        };
+        if !stale {
+            state.lists.insert(key, listing);
         }
         files
     }
 
-    fn generation(&self, root: &str) -> u64 {
-        self.generations.lock().get(root).copied().unwrap_or(0)
-    }
-
-    pub fn invalidate(&self, root: &str) {
-        *self.generations.lock().entry(root.to_string()).or_default() += 1;
-        let mut cache = self.cache.lock();
-        cache.remove(&(root.to_string(), false));
-        cache.remove(&(root.to_string(), true));
+    /// Drops the lists `change` can make out of date.
+    pub fn changed(&self, change: &FsChange) {
+        let all = change.overflow || change.files.iter().any(|f| is_ignore_file(f));
+        if !all && change.dirs.is_empty() {
+            return;
+        }
+        let root = Path::new(&change.root);
+        let mut state = self.state.lock();
+        for include_ignored in [false, true] {
+            let key = (change.root.clone(), include_ignored);
+            // The list with ignored files has every directory in it.
+            let all = all || include_ignored;
+            if let Some(l) = state.lists.get(&key) {
+                if all || change.dirs.iter().any(|d| affects(root, l, d)) {
+                    state.lists.remove(&key);
+                }
+            }
+            match state.walking.get_mut(&key) {
+                Some(missed) if all => *missed = Missed::All,
+                Some(Missed::Dirs(dirs)) => dirs.extend(change.dirs.iter().cloned()),
+                _ => {}
+            }
+        }
     }
 
     pub fn find(
@@ -264,5 +331,54 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].rel, "A.cs");
         assert_eq!(idx.find(&root, "cs", 10, true).len(), 2);
+    }
+
+    fn change(root: &Path, dirs: &[&Path], files: &[&Path]) -> FsChange {
+        let s = |p: &&Path| p.to_string_lossy().into_owned();
+        FsChange {
+            root: root.to_string_lossy().into_owned(),
+            dirs: dirs.iter().map(s).collect(),
+            files: files.iter().map(s).collect(),
+            created: vec![],
+            removed: vec![],
+            overflow: false,
+            lost: false,
+            git: false,
+        }
+    }
+
+    #[test]
+    fn only_changes_in_listed_directories_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let (src, lib) = (root.join("src"), root.join("Library"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(lib.join("Bee")).unwrap();
+        std::fs::write(root.join(".ignore"), "Library/\n").unwrap();
+        std::fs::write(src.join("A.cs"), "").unwrap();
+        let idx = FileIndex::default();
+        let r = root.to_string_lossy().into_owned();
+        let names = |idx: &FileIndex| -> Vec<String> {
+            idx.find(&r, "cs", 10, false)
+                .into_iter()
+                .map(|h| h.rel)
+                .collect()
+        };
+        assert_eq!(names(&idx), ["src/A.cs"]);
+
+        // Unity writing its cache leaves the list as it was.
+        std::fs::write(lib.join("Bee/x.cs"), "").unwrap();
+        std::fs::write(src.join("B.cs"), "").unwrap();
+        idx.changed(&change(root, &[&lib.join("Bee")], &[&lib.join("Bee/x.cs")]));
+        assert_eq!(names(&idx), ["src/A.cs"]);
+
+        // A listed directory changing rebuilds it.
+        idx.changed(&change(root, &[&src], &[&src.join("B.cs")]));
+        assert_eq!(names(&idx), ["src/A.cs", "src/B.cs"]);
+
+        // So does a change to what is ignored.
+        std::fs::write(root.join(".ignore"), "").unwrap();
+        idx.changed(&change(root, &[], &[&root.join(".ignore")]));
+        assert_eq!(names(&idx).len(), 3);
     }
 }
