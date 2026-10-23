@@ -29,6 +29,65 @@ When an AI agent writes most of the code, a full IDE becomes heavy and noisy, wh
 
 > Status: early development (v0.2.0).
 
+## Haze vs Rider
+
+Haze is not a Rider replacement: it keeps the Rider workflow for reviewing and steering agents, and leaves out what an agent-driven workflow rarely needs (debugger, profiler, deep inspections).
+
+### Features
+
+✅ yes · ⚠️ partial · ❌ no
+
+| Area | Feature | Haze | Rider |
+|---|---|:-:|:-:|
+| Project | Project view, file nesting, Git status colors | ✅ | ✅ |
+| | Unity view (Assets and packages, `.meta` hidden) | ✅ | ✅ |
+| | Full session restore (tabs, terminals, layout) | ✅ | ⚠️ |
+| Editor | Rider keymap, Search Everywhere, Find/Replace in Files | ✅ | ✅ |
+| | Change markers, inline blame, rainbow brackets | ✅ | ✅ (blame via plugin) |
+| | Never silently overwrites files the agent changed on disk | ✅ | ⚠️ |
+| | Copy Context (`path:line` + code fence for agents) | ✅ | ❌ |
+| C# | Go to Definition, Find Usages, Rename, quick fixes | ✅ (Roslyn) | ✅ (ReSharper) |
+| | Code Vision, inline completion | ✅ | ✅ |
+| | Live code inspections | ❌ (errors from `dotnet build` only) | ✅ |
+| | Advanced refactorings (Extract, Move, Change Signature…) | ⚠️ (what Roslyn offers) | ✅ |
+| | Decompiled DLL sources | ⚠️ (with `csharp-ls`) | ✅ |
+| Run and debug | Run configurations from `launchSettings.json` | ✅ | ✅ |
+| | Debugger | ❌ | ✅ |
+| | Profiler (dotTrace, dotMemory) | ❌ | ✅ |
+| | .NET test runner | ⚠️ (`dotnet test` in a terminal) | ✅ |
+| Unity | Editor link: compile, Console, Play/Pause, asset usages | ✅ | ✅ |
+| | Unity tests | ✅ | ✅ |
+| | Unity Editor/Player debugging | ❌ | ✅ |
+| Git | Commit window, log graph, diff, 3-way merge | ✅ | ✅ |
+| | Interactive rebase, stashes, cherry-pick | ✅ | ✅ |
+| | GitHub/GitLab accounts | ✅ | ✅ |
+| | Pull request review | ❌ | ✅ |
+| AI agents | Terminals survive closing or updating the app | ✅ | ❌ |
+| | Agent status badges and notifications (Claude Code, Codex, Gemini, OpenCode) | ✅ | ❌ |
+| | AI checkpoints, per-file reviewed marks | ✅ | ❌ |
+| | One worktree per agent, `haze agent/send/wait/read` CLI | ✅ | ❌ |
+| | Built-in AI assistant | ❌ (uses external agents) | ✅ (JetBrains AI) |
+| Other | NuGet manager, database tools, HTTP client | ❌ | ✅ |
+| | Price | Free, MIT | Paid (free for non-commercial use) |
+
+### Performance
+
+Measured on an Apple M4 MacBook (24 GB RAM, macOS) with a Unity project (`WorldEngine.sln`), Haze 0.1.0 vs Rider 2026.2, warm caches, each app running alone.
+
+| | Haze | Rider |
+|---|---:|---:|
+| Install size | **40 MB** | 6.3 GB |
+| Window shown | **0.3 s** | 2.5 s |
+| Solution loaded (C# navigation ready) | **~3.9 s** | 19.8 s |
+| Memory, idle with the solution loaded | **~1.9 GB** | ~4.1 GB |
+| - UI | 0.85 GB | 1.77 GB |
+| - C# analysis | 1.08 GB (Roslyn) | 1.78 GB (ReSharper, Roslyn worker) |
+| - MSBuild kept running | – | 0.44 GB |
+
+- Memory is the macOS physical footprint (`footprint`) of every process of each app, including Haze's WebKit processes and both C# servers. Haze had been in use for about 15 minutes; Rider had just finished loading.
+- Rider's times come from its `idea.log` (`Project frame set`, `Full warm solution load`). Haze's solution time is the time to start Roslyn plus the time until Roslyn reports `workspace/projectInitializationComplete`, the signal Haze waits for.
+- Rider does more work while loading (inspections, caches), so this compares when C# becomes usable, not equal workloads. Numbers vary with the project and machine.
+
 ## Features
 
 ### Projects and file tree
