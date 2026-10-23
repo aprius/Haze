@@ -4,8 +4,8 @@
 // editor are searched from their (possibly unsaved) buffer and replaced inside
 // the buffer, so the edit shows up in the editor's undo history.
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, History, Pin } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { EyeOff, FolderOpen, History, Pin, Replace } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
 import { getModel, metaDirty, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type FileMatches, type ReplaceTarget, type SearchContext, type SearchMatch, type SearchQuery, type SearchResults } from "../lib/ipc";
@@ -167,7 +167,8 @@ function drag(e: React.PointerEvent, onMove: (dx: number, dy: number) => void) {
   window.addEventListener("pointerup", up);
 }
 
-type Row = { kind: "file"; file: FileMatches; fileIndex: number } | { kind: "match"; file: FileMatches; match: SearchMatch; fileIndex: number };
+// One row per match, the file named on the right, as in Rider's list.
+type Row = { kind: "match"; file: FileMatches; match: SearchMatch; fileIndex: number };
 
 const matchKey = (path: string, m: SearchMatch) => `${path}\u0000${m.start}`;
 
@@ -183,7 +184,7 @@ function toQuery(o: FindOptions, replace: boolean): SearchQuery {
   };
 }
 
-function Toggle({ on, title, label, onClick }: { on: boolean; title: string; label: string; onClick: () => void }) {
+function Toggle({ on, title, label, onClick }: { on: boolean; title: string; label: ReactNode; onClick: () => void }) {
   return (
     // Out of the tab order so Tab goes from the search field to the replace field.
     <button className={"toggle" + (on ? " on" : "")} title={title} tabIndex={-1} onClick={onClick}>
@@ -383,7 +384,6 @@ export function FindInFiles({ project }: { project: Project | null }) {
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     results?.files.forEach((file, fileIndex) => {
-      out.push({ kind: "file", file, fileIndex });
       for (const match of file.matches) out.push({ kind: "match", file, match, fileIndex });
     });
     return out;
@@ -442,16 +442,6 @@ export function FindInFiles({ project }: { project: Project | null }) {
       else next.add(k);
       return next;
     });
-  const toggleFile = (file: FileMatches) =>
-    setExcluded((ex) => {
-      const next = new Set(ex);
-      const allOff = next.has(file.path) || file.matches.every((m) => next.has(matchKey(file.path, m)));
-      file.matches.forEach((m) => next.delete(matchKey(file.path, m)));
-      if (allOff) next.delete(file.path);
-      else next.add(file.path);
-      return next;
-    });
-
   const close = () => {
     if (opts.query) rememberSearch();
     closeFindInFiles();
@@ -602,7 +592,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
   const bounds = layout.bounds;
 
   const moveBy = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest("button, input")) return;
+    if ((e.target as HTMLElement).closest("button, input, select, label")) return;
     const r = popupRef.current!.getBoundingClientRect();
     drag(e, (dx, dy) => useLayout.setState({ bounds: clampBounds({ x: r.left + dx, y: r.top + dy, w: r.width, h: r.height }) }));
   };
@@ -642,11 +632,44 @@ export function FindInFiles({ project }: { project: Project | null }) {
         onMouseDown={keepSearchFocus}
         style={bounds ? { left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h } : undefined}
       >
-        <div className="find-header" onPointerDown={moveBy} onDoubleClick={(e) => !(e.target as HTMLElement).closest("button") && useLayout.setState({ bounds: null })}>
+        <div className="find-header" onPointerDown={moveBy} onDoubleClick={(e) => !(e.target as HTMLElement).closest("button, input, select, label") && useLayout.setState({ bounds: null })}>
           <span className="find-title">{replace ? "Replace in Files" : "Find in Files"}</span>
           <span className="find-status">{status}</span>
-          <button className="btn small" onClick={() => setReplace((r) => !r)}>
-            {replace ? "Find only" : "Replace…"}
+          <label className="find-check" title="Search only files matching the mask">
+            <input type="checkbox" checked={opts.fileMaskOn} onChange={(e) => set({ fileMaskOn: e.target.checked })} />
+            File mask:
+          </label>
+          <input
+            className="find-input small mask"
+            value={opts.fileMask}
+            placeholder="*.cs, !*.Designer.cs"
+            list="find-mask-history"
+            spellCheck={false}
+            disabled={!opts.fileMaskOn}
+            onChange={(e) => set({ fileMask: e.target.value })}
+          />
+          <datalist id="find-mask-history">
+            {[...new Set([...history.masks, ...MASK_PRESETS])].map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+          <select
+            className="find-select"
+            value={opts.context}
+            onChange={(e) => {
+              set({ context: e.target.value as SearchContext });
+              queryRef.current?.focus();
+            }}
+            title="Context (C# files)"
+          >
+            {CONTEXTS.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+          <button className={"find-pin" + (replace ? " on" : "")} title={replace ? "Find only" : "Replace in Files"} onClick={() => setReplace((r) => !r)}>
+            <Replace size={14} />
           </button>
           <button
             className={"find-pin" + (layout.pinned ? " on" : "")}
@@ -657,33 +680,35 @@ export function FindInFiles({ project }: { project: Project | null }) {
           </button>
         </div>
         <div className="find-row find-query">
-          <button
-            className="find-history-btn"
-            title="Recent searches (Alt+↓)"
-            tabIndex={-1}
-            disabled={!history.queries.length}
-            // Keeps focus in the field, whose blur would close the list before the click toggles it.
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => {
-              setHistoryIndex(0);
-              setHistoryOpen((o) => !o);
-              queryRef.current?.focus();
-            }}
-          >
-            <History size={14} />
-          </button>
-          <input
-            ref={queryRef}
-            className={"find-input" + (error ? " invalid" : "")}
-            value={opts.query}
-            placeholder="Search"
-            spellCheck={false}
-            onChange={(e) => set({ query: e.target.value })}
-            onBlur={() => setHistoryOpen(false)}
-          />
-          <Toggle on={opts.matchCase} title="Match case (Alt+C)" label="Cc" onClick={() => set({ matchCase: !opts.matchCase })} />
-          <Toggle on={opts.wholeWord} title="Words (Alt+O)" label="W" onClick={() => set({ wholeWord: !opts.wholeWord })} />
-          <Toggle on={opts.isRegex} title="Regex (Alt+X)" label=".*" onClick={() => set({ isRegex: !opts.isRegex })} />
+          <div className={"find-field" + (error ? " invalid" : "")}>
+            <button
+              className="find-history-btn"
+              title="Recent searches (Alt+↓)"
+              tabIndex={-1}
+              disabled={!history.queries.length}
+              // Keeps focus in the field, whose blur would close the list before the click toggles it.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setHistoryIndex(0);
+                setHistoryOpen((o) => !o);
+                queryRef.current?.focus();
+              }}
+            >
+              <History size={14} />
+            </button>
+            <input
+              ref={queryRef}
+              className="find-field-input"
+              value={opts.query}
+              placeholder="Search"
+              spellCheck={false}
+              onChange={(e) => set({ query: e.target.value })}
+              onBlur={() => setHistoryOpen(false)}
+            />
+            <Toggle on={opts.matchCase} title="Match case (Alt+C)" label="Cc" onClick={() => set({ matchCase: !opts.matchCase })} />
+            <Toggle on={opts.wholeWord} title="Words (Alt+O)" label="W" onClick={() => set({ wholeWord: !opts.wholeWord })} />
+            <Toggle on={opts.isRegex} title="Regex (Alt+X)" label=".*" onClick={() => set({ isRegex: !opts.isRegex })} />
+          </div>
           {historyOpen && (
             <div className="find-history">
               {history.queries.map((q, i) => (
@@ -705,34 +730,26 @@ export function FindInFiles({ project }: { project: Project | null }) {
         </div>
         {replace && (
           <div className="find-row">
-            <input
-              className="find-input"
-              value={opts.replacement}
-              placeholder={opts.isRegex ? "Replace with ($1, ${name})" : "Replace with"}
-              spellCheck={false}
-              onChange={(e) => set({ replacement: e.target.value })}
-            />
-            <Toggle on={opts.preserveCase} title="Preserve case" label="Aa" onClick={() => set({ preserveCase: !opts.preserveCase })} />
+            <div className="find-field">
+              <Replace size={14} className="ico find-field-ico" />
+              <input
+                className="find-field-input"
+                value={opts.replacement}
+                placeholder={opts.isRegex ? "Replace with ($1, ${name})" : "Replace with"}
+                spellCheck={false}
+                onChange={(e) => set({ replacement: e.target.value })}
+              />
+              <Toggle on={opts.preserveCase} title="Preserve case" label="Aa" onClick={() => set({ preserveCase: !opts.preserveCase })} />
+            </div>
           </div>
         )}
         {error && <div className="find-error">{error}</div>}
-        <div className="find-options">
-          <div className="seg">
-            {((hasSolution ? ["solution", "csproj"] : ["folder"]).concat(["directory", "openFiles"]) as ScopeKind[]).map((s) => (
-              <button key={s} className={"seg-btn" + (shownScope === s ? " on" : "")} onClick={() => set({ scope: s })}>
-                {SCOPE_LABELS[s]}
-              </button>
-            ))}
-          </div>
-          {shownScope === "solution" && (
-            <button
-              className={"seg-toggle" + (opts.nonSolution ? " on" : "")}
-              title="Also search files no project lists: Unity's assets, scenes and .meta files"
-              onClick={() => set({ nonSolution: !opts.nonSolution })}
-            >
-              Include non-solution items
+        <div className="find-scopes">
+          {((hasSolution ? ["solution", "csproj"] : ["folder"]).concat(["directory", "openFiles"]) as ScopeKind[]).map((s) => (
+            <button key={s} className={"find-scope" + (shownScope === s ? " on" : "")} onClick={() => set({ scope: s })}>
+              {SCOPE_LABELS[s]}
             </button>
-          )}
+          ))}
           {shownScope === "csproj" && (
             <select
               className="find-select"
@@ -750,7 +767,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
               ))}
             </select>
           )}
-          {opts.scope === "directory" && (
+          {shownScope === "directory" && (
             <span className="find-dir">
               <input
                 className="find-input small dir"
@@ -764,38 +781,22 @@ export function FindInFiles({ project }: { project: Project | null }) {
               </button>
             </span>
           )}
-          <select className="find-select" value={opts.context} onChange={(e) => {
-              set({ context: e.target.value as SearchContext });
-              queryRef.current?.focus();
-            }} title="Context (C# files)">
-            {CONTEXTS.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-          <label className="find-check" title="Search only files matching the mask">
-            <input type="checkbox" checked={opts.fileMaskOn} onChange={(e) => set({ fileMaskOn: e.target.checked })} />
-            File mask
-          </label>
-          <input
-            className="find-input small"
-            value={opts.fileMask}
-            placeholder="*.cs, !*.Designer.cs"
-            list="find-mask-history"
-            spellCheck={false}
-            disabled={!opts.fileMaskOn}
-            onChange={(e) => set({ fileMask: e.target.value })}
-          />
-          <datalist id="find-mask-history">
-            {[...new Set([...history.masks, ...MASK_PRESETS])].map((m) => (
-              <option key={m} value={m} />
-            ))}
-          </datalist>
-          <label className="find-check" title="Also search bin/, obj/, node_modules/ and .gitignore'd files">
-            <input type="checkbox" checked={opts.includeIgnored} onChange={(e) => set({ includeIgnored: e.target.checked })} />
-            Include ignored
-          </label>
+          <span className="find-scopes-end">
+            {/* Search Everywhere's checkbox, for "In Solution". */}
+            <label
+              className={"se-include" + (shownScope === "solution" ? "" : " disabled")}
+              title={shownScope === "solution" ? "Also search files no project lists: Unity's assets, scenes and .meta files" : "Applies to In Solution"}
+            >
+              <input type="checkbox" checked={opts.nonSolution} disabled={shownScope !== "solution"} onChange={(e) => set({ nonSolution: e.target.checked })} />
+              Include non-solution items
+            </label>
+            <Toggle
+              on={opts.includeIgnored}
+              title="Include ignored: bin/, obj/, node_modules/ and .gitignore'd files"
+              label={<EyeOff size={14} />}
+              onClick={() => set({ includeIgnored: !opts.includeIgnored })}
+            />
+          </span>
         </div>
         <div ref={bodyRef} className="find-body">
           <div
@@ -808,33 +809,6 @@ export function FindInFiles({ project }: { project: Project | null }) {
             <div style={{ height: rows.length * ROW_H, position: "relative" }}>
               {rows.slice(first, last).map((row, i) => {
                 const index = first + i;
-                if (row.kind === "file") {
-                  const on = row.file.matches.filter((m) => !isExcluded(row.file.path, m)).length;
-                  return (
-                    <div
-                      key={"f" + row.file.path}
-                      className="find-file"
-                      style={{ top: index * ROW_H, height: ROW_H }}
-                      onDoubleClick={() => row.file.matches[0] && openMatch(row.file.path, row.file.matches[0])}
-                    >
-                      {replace && (
-                        <input
-                          type="checkbox"
-                          checked={on > 0}
-                          ref={(el) => {
-                            if (el) el.indeterminate = on > 0 && on < row.file.matches.length;
-                          }}
-                          onChange={() => toggleFile(row.file)}
-                        />
-                      )}
-                      <FileIcon name={basename(row.file.path)} />
-                      <span className="find-file-name">{basename(row.file.path)}</span>
-                      <span className="find-file-dir">{relative(project.path, dirname(row.file.path))}</span>
-                      <span className="find-count">{row.file.matches.length}</span>
-                      {row.file.fromBuffer && <span className="tag">unsaved</span>}
-                    </div>
-                  );
-                }
                 const m = row.match;
                 const off = isExcluded(row.file.path, m);
                 return (
@@ -846,12 +820,15 @@ export function FindInFiles({ project }: { project: Project | null }) {
                     onDoubleClick={() => openMatch(row.file.path, m)}
                   >
                     {replace && <input type="checkbox" checked={!off} onChange={() => toggleMatch(row.file.path, m)} onClick={(e) => e.stopPropagation()} />}
-                    <span className="find-lineno">{m.line}</span>
                     <span className="find-text">
                       {m.lineText.slice(0, m.previewStart).trimStart()}
                       <span className={replace ? "find-old" : "find-hl"}>{m.lineText.slice(m.previewStart, m.previewEnd)}</span>
                       {replace && <span className="find-new">{m.replacement}</span>}
                       {m.lineText.slice(m.previewEnd)}
+                    </span>
+                    <span className="find-where">
+                      {row.file.fromBuffer && <span className="tag">unsaved</span>}
+                      {basename(row.file.path)} {m.line}
                     </span>
                   </div>
                 );

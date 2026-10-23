@@ -1758,13 +1758,98 @@ kbd {
   background: var(--selected);
 }
 
-.find-options {
+/* Rider's layout: a boxed query field with its toggles inside, then the
+   scopes as plain tabs, the list one row per match with the file on the right. */
+.find-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  background: var(--editor-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.find-field:focus-within {
+  border-color: var(--accent);
+}
+
+.find-field.invalid {
+  border-color: var(--danger);
+}
+
+.find-field-ico {
+  margin: 0 6px;
+}
+
+.find-field-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 4px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--ui-font-size);
+  user-select: text;
+}
+
+.find-field .toggle {
+  height: 22px;
+}
+
+.find-scopes {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 4px 10px 6px;
   border-bottom: 1px solid var(--border);
+}
+
+.find-scope {
+  border: 0;
+  background: transparent;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.find-scope:hover {
+  color: var(--fg);
+}
+
+.find-scope.on {
+  background: var(--selected);
+  color: var(--fg);
+}
+
+.find-scopes .toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+}
+
+.find-scopes-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.se-include.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.find-input.mask {
+  flex: 0 1 180px;
 }
 
 .seg {
@@ -1786,23 +1871,6 @@ kbd {
 
 .seg-btn.on {
   background: var(--selected);
-  color: var(--fg);
-}
-
-/* An on/off option beside the scopes: "Include non-solution items". */
-.seg-toggle {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  padding: 2px 10px;
-  font-size: calc(var(--ui-font-size) * 12 / 13);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.seg-toggle.on {
-  background: var(--selected);
-  border-color: var(--accent);
   color: var(--fg);
 }
 
@@ -1842,7 +1910,6 @@ kbd {
   position: relative;
 }
 
-.find-file,
 .find-match {
   position: absolute;
   left: 0;
@@ -1853,10 +1920,6 @@ kbd {
   padding: 0 10px;
   white-space: nowrap;
   overflow: hidden;
-}
-
-.find-file {
-  font-weight: 600;
 }
 
 .find-file-dir {
@@ -1874,8 +1937,18 @@ kbd {
 }
 
 .find-match {
-  padding-left: 28px;
   cursor: default;
+}
+
+.find-where {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: calc(var(--ui-font-size) * 12 / 13);
 }
 
 .find-match:hover {
@@ -1899,6 +1972,8 @@ kbd {
 }
 
 .find-text {
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: calc(var(--ui-font-size) * 12 / 13);
   overflow: hidden;
