@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
@@ -25,7 +26,8 @@ namespace Haze.Ide.Editor
     /// Library/Haze/EditorInstance.json; Haze connects. One JSON object per line.
     ///
     /// Unity → Haze: state (play mode), compileStarted, compileFinished (the
-    /// compiler's messages), log (Console messages).
+    /// compiler's messages), log (Console messages), clear (Unity's Console
+    /// was cleared, on Play or on recompile as its settings say).
     /// Haze → Unity: hello (token), refresh, compile, play, pause, step, show
     /// (select an asset or the component in it), runTests.
     ///
@@ -88,7 +90,7 @@ namespace Haze.Ide.Editor
             AssemblyReloadEvents.beforeAssemblyReload += Stop;
             EditorApplication.quitting += Quit;
             EditorApplication.update += Update;
-            EditorApplication.playModeStateChanged += _ => SendState();
+            EditorApplication.playModeStateChanged += OnPlayModeChanged;
             EditorApplication.pauseStateChanged += _ => SendState();
             CompilationPipeline.compilationStarted += OnCompilationStarted;
             CompilationPipeline.assemblyCompilationFinished += OnAssemblyCompiled;
@@ -312,8 +314,15 @@ namespace Haze.Ide.Editor
                  "}");
         }
 
+        static void OnPlayModeChanged(PlayModeStateChange change)
+        {
+            if (change == PlayModeStateChange.ExitingEditMode && ConsoleFlag("ClearOnPlay")) ClearLogs();
+            SendState();
+        }
+
         static void OnCompilationStarted(object _)
         {
+            if (ConsoleFlag("ClearOnRecompile")) ClearLogs();
             s_CompileSeen = true;
             s_Messages = new List<string>();
             Send("{\"t\":\"compileStarted\"}");
@@ -364,6 +373,37 @@ namespace Haze.Ide.Editor
                    $"\"message\":{Json.Str(message)}," +
                    $"\"stack\":{Json.Str(stack)}" +
                    "}";
+        }
+
+        /// <summary>
+        /// Unity's Console clears itself: so does Haze's. Messages not sent
+        /// yet are dropped, they would be cleared too.
+        /// </summary>
+        static void ClearLogs()
+        {
+            while (s_Logs.TryDequeue(out _)) { }
+            Post("{\"t\":\"clear\"}");
+        }
+
+        /// <summary>
+        /// A flag of Unity's Console window (ConsoleWindow.ConsoleFlags:
+        /// ClearOnPlay, ClearOnRecompile…). Internal, so read by reflection;
+        /// true when this Unity has no such flag, as Unity's defaults.
+        /// </summary>
+        static bool ConsoleFlag(string name)
+        {
+            try
+            {
+                var editor = typeof(EditorWindow).Assembly;
+                var flags = editor.GetType("UnityEditor.ConsoleWindow+ConsoleFlags");
+                var property = editor.GetType("UnityEditor.LogEntries")?.GetProperty("consoleFlags", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                if (flags == null || property == null || !Enum.IsDefined(flags, name)) return true;
+                return (Convert.ToInt32(property.GetValue(null)) & Convert.ToInt32(Enum.Parse(flags, name))) != 0;
+            }
+            catch (Exception)
+            {
+                return true;
+            }
         }
 
         /// <summary>Sends messages (lines), or keeps them for when Haze connects again (after a domain reload, say). Main thread.</summary>

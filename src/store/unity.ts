@@ -101,15 +101,16 @@ function handle(projectId: string, e: UnityMessage) {
       patch(projectId, () => (e.connected ? { connected: true } : { connected: false, playing: false, paused: false, compiling: false }));
       break;
     case "state":
-      patch(projectId, (u) => ({
+      patch(projectId, () => ({
         version: e.unity,
         playing: e.playing,
         paused: e.paused,
         compiling: e.compiling,
-        // Clear on Play, as Unity's Console does by default.
-        logs: e.playing && !u.playing ? [] : u.logs,
       }));
-      if (e.playing) pendingLogs.delete(projectId);
+      break;
+    case "clear":
+      // Unity's Console cleared itself (Clear on Play, Clear on Recompile).
+      clearUnityLogs(projectId);
       break;
     case "compileStarted":
       answered(projectId);

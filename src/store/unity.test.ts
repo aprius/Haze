@@ -71,13 +71,15 @@ describe("Unity link", () => {
     expect(build.lines[1]).toBe("/u/Game/Assets/A.cs(3,5): error CS1002: ; expected");
   });
 
-  it("batches Console messages and clears them on Play", () => {
+  it("batches Console messages and clears them when Unity's Console clears", () => {
     emit({ t: "log", type: "log", message: "a", stack: null });
     emit({ t: "log", type: "error", message: "b", stack: "Foo () (at Assets/Foo.cs:1)" });
     expect(useUnity.getState().projects.p.logs).toHaveLength(0);
     vi.advanceTimersByTime(100);
     expect(useUnity.getState().projects.p.logs.map((l) => l.message)).toEqual(["a", "b"]);
-    emit({ t: "state", unity: "6000.0.1f1", playing: true, paused: false, compiling: false });
+    emit({ t: "log", type: "log", message: "c", stack: null });
+    emit({ t: "clear" });
+    vi.advanceTimersByTime(100);
     expect(useUnity.getState().projects.p.logs).toHaveLength(0);
   });
 

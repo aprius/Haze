@@ -251,6 +251,7 @@ export type UnityMessage =
   | { t: "compileStarted" }
   | { t: "compileFinished"; messages: UnityDiagnostic[] }
   | { t: "log"; type: UnityLogType; message: string; stack: string | null }
+  | { t: "clear" }
   | { t: "testRunStarted"; pattern: string }
   | { t: "testStarted"; fullName: string }
   | {
