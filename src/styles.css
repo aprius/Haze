@@ -3004,7 +3004,7 @@ button.toggle.on {
    leaves more room before the find and replace fields. */
 .monaco-editor .find-widget > .button.toggle.left {
   left: 4px;
-  width: 14px;
+  width: 18px;
   margin: 4px 0;
 }
 .monaco-editor .find-widget > .button.toggle.left.codicon::before {
