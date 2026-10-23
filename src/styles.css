@@ -848,12 +848,18 @@ kbd {
   justify-content: center;
   color: var(--muted);
   background: var(--editor-bg);
+  /* Its own size, divided by the webview zoom so Ctrl+wheel leaves it unchanged. */
+  font-size: calc(16px / var(--zoom, 1));
+}
+
+.editor-empty kbd {
+  font-size: 0.92em;
 }
 
 .hint-grid {
   display: grid;
   grid-template-columns: auto auto;
-  gap: 10px 24px;
+  gap: 0.77em 1.85em;
 }
 
 /* ------------------------------------------------------------ terminal */

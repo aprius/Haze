@@ -24,13 +24,18 @@ function initial(): number {
 
 export const useZoom = create<{ zoom: number }>(() => ({ zoom: initial() }));
 
+// For the few places that keep their screen size whatever the zoom.
+const setCssZoom = (zoom: number) => document.documentElement.style.setProperty("--zoom", String(zoom));
+
 function apply(zoom: number): void {
+  setCssZoom(zoom);
   void getCurrentWebview()
     .setZoom(zoom)
     .catch((e) => console.warn("zoom failed", e));
 }
 
 if (useZoom.getState().zoom !== DEFAULT_ZOOM) apply(useZoom.getState().zoom);
+else setCssZoom(DEFAULT_ZOOM);
 
 export function setZoom(zoom: number): void {
   zoom = clamp(zoom);
