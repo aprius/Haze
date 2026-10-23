@@ -623,14 +623,14 @@ export function FindInFiles({ project }: { project: Project | null }) {
             ))}
           </select>
           <button className={"find-pin" + (replace ? " on" : "")} title={replace ? "Find only" : "Replace in Files"} onClick={() => setReplace((r) => !r)}>
-            <Replace size={14} />
+            <Replace size={16} />
           </button>
           <button
             className={"find-pin" + (layout.pinned ? " on" : "")}
             title={layout.pinned ? "Unpin: close when a match is opened" : "Pin: keep open when a match is opened"}
             onClick={() => useLayout.setState({ pinned: !layout.pinned })}
           >
-            <Pin size={14} />
+            <Pin size={16} />
           </button>
         </div>
         <div className="find-row find-query">
