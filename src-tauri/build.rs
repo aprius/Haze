@@ -1,9 +1,9 @@
 use std::process::Command;
 
 fn main() {
-    // The commit shown in the About panel; empty outside a git checkout.
+    // The commit shown in the About window; empty outside a git checkout.
     let commit = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
+        .args(["rev-parse", "HEAD"])
         .output()
         .ok()
         .filter(|o| o.status.success())

@@ -560,6 +560,11 @@ export const api = {
   ptyClose: (id: string) => invoke<void>("pty_close", { id }),
 };
 
+/** Haze › Check for Updates… in the app menu (macOS). */
+export function onCheckUpdatesMenu(cb: () => void): Promise<UnlistenFn> {
+  return listen("app://check-updates", () => cb());
+}
+
 export function onOpenRequest(cb: () => void): Promise<UnlistenFn> {
   return listen("app://open", () => cb());
 }

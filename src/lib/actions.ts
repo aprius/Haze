@@ -4,6 +4,7 @@ import { openSettings } from "../components/SettingsDialog";
 import { toggleTerminal } from "../components/TerminalPanel";
 import { openFolder } from "../components/Shell";
 import { newTerminal } from "../store/terminals";
+import { checkForUpdates } from "../store/updates";
 import { useTree } from "../store/tree";
 import { openFindInFiles, openSearchEverywhere } from "../store/ui";
 import type { Command } from "./keymap";
@@ -46,6 +47,7 @@ export const actions: Action[] = [
   { id: "zoomOut", label: "Zoom Out", command: "zoomOut", run: zoomOut },
   { id: "resetZoom", label: "Reset Zoom", command: "resetZoom", run: resetZoom },
   { id: "settings", label: "Settings (AI agent hooks, notifications)", command: "settings", run: () => openSettings() },
+  { id: "checkUpdates", label: "Check for Updates…", run: () => void checkForUpdates(true) },
   {
     id: "closeTab",
     label: "Close Tab",

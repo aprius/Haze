@@ -827,26 +827,77 @@ fn float_position(handle: &AppHandle, size: Option<tauri::LogicalSize<f64>>) -> 
     Some((x, y))
 }
 
-/// Tauri's default menu with a fuller About panel: the app icon, the version
-/// with the commit it was built from ("Version 0.1.0 (0c8dca6)"), a tagline.
+/// Menu item id of "Check for Updates…"; the page runs the check.
+const CHECK_UPDATES_MENU: &str = "check-updates";
+
+/// Menu item id of "About Haze"; it opens Haze's own About window, as the
+/// native panel is small and fixed (its icon, its text size).
+const ABOUT_MENU_ID: &str = "haze-about";
+
+/// Tauri's default menu with Haze's About window and "Check for Updates…"
+/// under it.
 fn app_menu(handle: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    use tauri::menu::{AboutMetadata, Menu, PredefinedMenuItem};
+    use tauri::menu::{Menu, MenuItem};
     let menu = Menu::default(handle)?;
     #[cfg(target_os = "macos")]
     if let Some(app) = menu.items()?.first().and_then(|i| i.as_submenu().cloned()) {
-        let commit = env!("HAZE_COMMIT");
-        let about = AboutMetadata {
-            name: Some("Haze".into()),
-            version: Some(handle.package_info().version.to_string()),
-            short_version: (!commit.is_empty()).then(|| commit.to_owned()),
-            copyright: Some("A lightweight AI-first workspace\nMIT License".into()),
-            icon: handle.default_window_icon().cloned(),
-            ..Default::default()
-        };
         app.remove_at(0)?;
-        app.insert(&PredefinedMenuItem::about(handle, Some("About Haze"), Some(about))?, 0)?;
+        app.insert(&MenuItem::with_id(handle, ABOUT_MENU_ID, "About Haze", true, None::<&str>)?, 0)?;
+        let check = MenuItem::with_id(handle, CHECK_UPDATES_MENU, "Check for Updates…", true, None::<&str>)?;
+        app.insert(&check, 1)?;
     }
     Ok(menu)
+}
+
+/// Opens the About window (public/about.html), or brings it forward. It
+/// starts hidden and shows itself once drawn (`about_ready`).
+fn open_about(handle: &AppHandle) -> tauri::Result<()> {
+    use base64::Engine;
+    if let Some(w) = handle.get_webview_window("about") {
+        return w.set_focus();
+    }
+    let info = serde_json::json!({
+        "version": handle.package_info().version.to_string(),
+        "commit": env!("HAZE_COMMIT"),
+        "icon": format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(include_bytes!("../icons/128x128@2x.png"))
+        ),
+    });
+    let size = tauri::LogicalSize::new(440.0, 300.0);
+    let mut builder = tauri::WebviewWindowBuilder::new(handle, "about", tauri::WebviewUrl::App("about.html".into()))
+        .title("")
+        .inner_size(size.width, size.height)
+        .resizable(false)
+        .minimizable(false)
+        .maximizable(false)
+        .visible(false)
+        .initialization_script(format!("window.__HAZE_ABOUT__ = {info};"));
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+    }
+    builder = match float_position(handle, Some(size)) {
+        Some((x, y)) => builder.position(x, y),
+        None => builder.center(),
+    };
+    builder.build()?;
+    Ok(())
+}
+
+#[tauri::command]
+fn about_ready(window: tauri::WebviewWindow) {
+    if window.label() == "about" {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+fn about_close(window: tauri::WebviewWindow) {
+    if window.label() == "about" {
+        let _ = window.close();
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -872,6 +923,14 @@ pub fn run() {
         }))
         .manage(pending)
         .menu(app_menu)
+        .on_menu_event(|app, event| {
+            // One handler: a second on_menu_event would replace this one.
+            if event.id() == ABOUT_MENU_ID {
+                let _ = open_about(app);
+            } else if event.id() == CHECK_UPDATES_MENU {
+                let _ = app.emit("app://check-updates", ());
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -973,6 +1032,8 @@ pub fn run() {
             pty_write,
             pty_resize,
             pty_close,
+            about_ready,
+            about_close,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Haze")

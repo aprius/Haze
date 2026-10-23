@@ -26,13 +26,13 @@ import { buildProject, startUnityLink, stopUnityLink, unityFilesChanged, useUnit
 import { unityFilesChangedForCode, warmUnityIndex } from "./lib/unity/scripts";
 import { handleDiskChanges } from "./lib/buffers";
 import { isRecordingKeys, matches, type Command } from "./lib/keymap";
-import { api, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
+import { api, onCheckUpdatesMenu, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
 import { basename, dirname } from "./lib/path";
 import { resetZoom, zoomIn, zoomOut } from "./lib/zoom";
 import { restore } from "./store/persist";
 import { startTerminals, syncSessions } from "./store/terminals";
 import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
-import { startUpdateChecks } from "./store/updates";
+import { checkForUpdates, startUpdateChecks } from "./store/updates";
 import { openCommitWindow, openFindInFiles, openSearchEverywhere, toggleCommitWindow, toggleSeIncludeAll, useUi } from "./store/ui";
 import { projectForPath, useWorkspace, type BottomTab, type Project } from "./store/workspace";
 
@@ -258,6 +258,11 @@ export default function App() {
   }, []);
 
   useEffect(() => (loaded ? startUpdateChecks() : undefined), [loaded]);
+
+  useEffect(() => {
+    const un = onCheckUpdatesMenu(() => void checkForUpdates(true));
+    return () => void un.then((f) => f());
+  }, []);
 
   // `haze <project> [<file>] --line N` (e.g. from Unity), at launch or from a second launch.
   useEffect(() => {
