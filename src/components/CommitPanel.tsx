@@ -20,7 +20,9 @@ import { openMerge } from "./MergeView";
 import { choose, FloatWindow, openMenu, toast } from "./Overlays";
 import { openPushDialog } from "./GitDialogs";
 
-const indent = (depth: number) => ({ paddingLeft: 26 + depth * 20 });
+// One tree level is a chevron plus the gap (20px), starting under the group's
+// checkbox; files keep an empty chevron slot so they line up with sibling folders.
+const indent = (depth: number, dir = false) => ({ paddingLeft: 28 + depth * 20 + (dir ? 0 : 20) });
 
 /** Ctrl+D: the diff in its own floating window; a conflict opens the merge tool instead. */
 export function showChangeDiff(project: Project, root: string, c: GitChange): void {
@@ -389,7 +391,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                   if (row.kind === "dir") {
                     const n = row.files.filter((c) => checked.has(c.rel)).length;
                     return (
-                      <div key={row.key} className="change-row change-dir" style={{ paddingLeft: 6 + row.depth * 20 }} title={row.name}>
+                      <div key={row.key} className="change-row change-dir" style={indent(row.depth, true)} title={row.name}>
                         <span className="chevron" onClick={() => setCollapsed((c) => ({ ...c, [row.key]: !c[row.key] }))}>
                           {collapsed[row.key] ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                         </span>
