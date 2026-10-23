@@ -14,7 +14,7 @@ import { findTextUsages, registerTextNavigation } from "../lib/textNav";
 import { zedWheel } from "../lib/wheel";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
-import { setSelection } from "../store/tree";
+import { loadDir, setSelection, useTree } from "../store/tree";
 import { activeProject, projectForPath, useWorkspace, type Project } from "../store/workspace";
 import { absPath, repo, useGit } from "../store/git";
 import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
@@ -868,6 +868,20 @@ export function revealInTree(project: Project, path: string, { show = true } = {
   }
   ws.updateUi(project.id, (u) => ({ expanded: [...new Set([...u.expanded, ...dirs])], ...(show && { sidebarVisible: true }) }));
   setSelection(project.id, [path], path);
+  // A nested file (appsettings.Development.json) shows once the files it is under are open too.
+  const parent = dirname(path);
+  void loadDir(parent, ws.nestFiles).then(() => {
+    const st = useTree.getState().dirs[parent];
+    if (!st || !("entries" in st)) return;
+    const byName = new Map(st.entries.map((e) => [e.name, e]));
+    const files: string[] = [];
+    // Paths as listed, which the tree's expanded set is compared with.
+    for (let e = byName.get(basename(path)); e?.nestedUnder && files.length < st.entries.length; ) {
+      e = byName.get(e.nestedUnder);
+      if (e) files.push(e.path);
+    }
+    if (files.length) useWorkspace.getState().updateUi(project.id, (u) => ({ expanded: [...new Set([...u.expanded, ...files])] }));
+  });
 }
 
 /** Lists `dir` in a menu at `at`; folders drill down in place, files open. */

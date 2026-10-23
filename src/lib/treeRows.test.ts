@@ -18,7 +18,7 @@ const dirs: Record<string, DirState> = {
 };
 const expanded = new Set(["/u", "/u/Assets"]);
 const names = (view: "unity" | "files", showAll = false) =>
-  buildRows(project, dirs, expanded, { view, showAll }).map((r) => "  ".repeat(r.depth) + r.entry.name);
+  buildRows(project, dirs, expanded, { view, showAll, unityProject: true }).map((r) => "  ".repeat(r.depth) + r.entry.name);
 
 describe("project view modes", () => {
   it("detects Unity projects and defaults to the Unity view", () => {
@@ -98,5 +98,27 @@ describe("project view modes", () => {
       "  Assets.meta",
       "  u.sln",
     ]);
+  });
+});
+
+describe("file nesting", () => {
+  const web: Project = { ...project, path: "/w", name: "w" };
+  const webDirs: Record<string, DirState> = {
+    "/w": {
+      entries: [dir("/w/Pages"), file("/w/appsettings.Development.json", "appsettings.json"), file("/w/appsettings.json"), file("/w/Program.cs")],
+    },
+  };
+  const rows = (open: string[], opts: { unityProject?: boolean } = {}) =>
+    buildRows(web, webDirs, new Set(["/w", ...open]), { view: "files", showAll: false, ...opts }).map(
+      (r) => "  ".repeat(r.depth) + r.entry.name + (r.expandable && !r.entry.isDir ? (r.expanded ? " -" : " +") : ""),
+    );
+
+  it("nests companion files in projects that are not Unity", () => {
+    expect(rows([])).toEqual(["w", "  Pages", "  appsettings.json +", "  Program.cs"]);
+    expect(rows(["/w/appsettings.json"])).toEqual(["w", "  Pages", "  appsettings.json -", "    appsettings.Development.json", "  Program.cs"]);
+  });
+
+  it("lists a Unity project's File System view flat", () => {
+    expect(rows([], { unityProject: true })).toEqual(["w", "  Pages", "  appsettings.Development.json", "  appsettings.json", "  Program.cs"]);
   });
 });

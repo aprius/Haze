@@ -28,6 +28,8 @@ export interface TreeOptions {
   view: TreeView;
   showAll: boolean;
   packages?: UnityPackage[];
+  /** A Unity project: its File System view is flat, like Rider's. Other projects only have that view, nested. */
+  unityProject?: boolean;
 }
 
 /** `rel` against the directory `base`, `..` resolved; absolute `rel` is kept. */
@@ -117,7 +119,7 @@ export function buildRows(
       entries = n < 0 ? [...entries, ...refs] : [...entries.slice(0, n), ...refs, ...entries.slice(n)];
     }
     // `.meta` files sit next to their asset, not under it.
-    const flat = (e: DirEntry) => opts.view === "files" || e.name.endsWith(".meta");
+    const flat = (e: DirEntry) => (opts.view === "files" && !!opts.unityProject) || e.name.endsWith(".meta");
     entries = entries.map((e) => (e.nestedUnder && flat(e) ? { ...e, nestedUnder: null } : e));
     const names = new Set(entries.map((e) => e.name));
     const kids = new Map<string, DirEntry[]>();

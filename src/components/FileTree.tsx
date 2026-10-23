@@ -66,8 +66,8 @@ export function FileTree({ project }: { project: Project }) {
   const showAll = !!ui?.treeShowAll;
   const packages = useTree((s) => s.packages[project.path]);
   const rows = useMemo(
-    () => buildRows(project, dirs, expanded, { view, showAll, packages }),
-    [project, dirs, expanded, view, showAll, packages],
+    () => buildRows(project, dirs, expanded, { view, showAll, packages, unityProject: unity }),
+    [project, dirs, expanded, view, showAll, packages, unity],
   );
   const selected = useMemo(() => new Set(selection), [selection]);
   // Scrolls a newly selected row into view once it is listed (Select Opened File expands its folders first).
