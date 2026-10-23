@@ -1,9 +1,8 @@
-//! GitHub and GitLab accounts, like Rider's Settings | Version Control |
-//! GitHub / GitLab. The account list lives in `git-accounts.json` (no
-//! secrets); tokens live in the OS keychain (Keychain, Credential Manager,
-//! Secret Service), the way Rider keeps them in its Password Safe.
+//! GitHub and GitLab accounts (Settings › Version Control). The account list
+//! lives in `git-accounts.json` (no secrets); tokens live in the OS keychain
+//! (Keychain, Credential Manager, Secret Service).
 //!
-//! Git gets the token from Haze itself, as Rider's built-in helper does it:
+//! Git gets the token from Haze itself, through a built-in helper:
 //! for every account's host, git commands Haze runs replace that host's
 //! credential helpers with `haze --haze-git-credential` (see
 //! `run_credential_helper`), so a stale stored password cannot win over the
@@ -27,7 +26,7 @@ const KEYCHAIN_SERVICE: &str = "dev.haze.app.git";
 /// OAuth app for "Log In via GitHub…" (device flow, no client secret). Set
 /// at build time; without it only token login is offered.
 const GITHUB_CLIENT_ID: Option<&str> = option_env!("HAZE_GITHUB_CLIENT_ID");
-/// Scopes Rider asks for: push/pull private repos, Actions workflows, orgs, gists.
+/// Scopes requested: push/pull private repos, Actions workflows, orgs, gists.
 const GITHUB_SCOPES: &str = "repo workflow read:org gist";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -109,7 +109,7 @@ fn kind_bonus(name: &str) -> u32 {
 
 pub fn rank(root: &str, files: &[String], query: &str, limit: usize) -> Vec<FileHit> {
     let path_query = query.contains('/') || query.contains('\\');
-    // Unity's `.meta` sidecars (one per folder too) only when asked for, as in Rider.
+    // Unity's `.meta` sidecars (one per folder too) only when asked for.
     let want_meta = query.to_ascii_lowercase().contains(".meta");
     let query = query.replace('\\', "/");
     let pattern = Pattern::parse(&query, CaseMatching::Smart, Normalization::Smart);
@@ -121,7 +121,7 @@ pub fn rank(root: &str, files: &[String], query: &str, limit: usize) -> Vec<File
         if !want_meta && name.ends_with(".meta") {
             continue;
         }
-        // Like Rider's Go to File: the file name only, unless the query has a
+        // Go to File matches the file name only, unless the query has a
         // `/` — a folder's name alone doesn't list everything inside it.
         let score = if path_query {
             pattern.score(Utf32Str::new(rel, &mut buf), &mut matcher)

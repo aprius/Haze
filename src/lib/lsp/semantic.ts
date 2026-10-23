@@ -1,4 +1,4 @@
-// Semantic tokens from the C# server, cut down to what Rider colours by
+// Semantic tokens from the C# server, cut down to what is coloured by
 // meaning. Monaco paints a semantic token even when no theme rule names it
 // (in the default colour), so only identifiers are kept: keywords, strings,
 // comments and punctuation stay as the grammar (csharpGrammar.ts) coloured them.
@@ -24,7 +24,7 @@ kind("class struct interface enum delegate typeparameter recordclass recordstruc
 kind("method function extensionmethod localfunction label", METHOD);
 kind("parameter", PARAMETER);
 kind("enummember constant", CONSTANT);
-// Static members turn purple, like Rider; namespaces are plain there too.
+// Static members turn purple; namespaces stay plain.
 kind("field property event variable local namespace", VARIABLE);
 const MEMBERS = new Set(["field", "property", "event"]);
 

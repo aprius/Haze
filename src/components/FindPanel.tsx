@@ -1,4 +1,4 @@
-// Rider's Find tool window in the bottom panel: usages moved there from the
+// The Find tool window in the bottom panel: usages moved there from the
 // usages popup stay listed, one tab per search, as a tree of files and lines.
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Pin, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,7 +16,7 @@ interface FindTab {
   items: Usage[];
   loading: boolean;
   error: string | null;
-  /** Pinned tabs are kept; new results replace the unpinned one, like Rider. */
+  /** Pinned tabs are kept; new results replace the unpinned one. */
   pinned: boolean;
   rerun: (() => Promise<Usage[]>) | null;
 }
@@ -132,7 +132,7 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
     if (!collapsed.has(path)) for (const i of indexes) rows.push({ kind: "usage", usage: tab.items[i], index: i });
   }
 
-  // Start on the first usage, as Rider does, and again after a rerun. The tree
+  // Start on the first usage, and again after a rerun. The tree
   // takes focus so the popup closing does not hand it back to the editor.
   useEffect(() => {
     setSelected(tab.items.length ? "u:0" : null);
@@ -157,7 +157,7 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
       return next;
     });
 
-  /** Previous / next usage, expanding its file, and shown in the editor like Rider's Ctrl+Alt+Up/Down. */
+  /** Previous / next usage, expanding its file, and shown in the editor (Ctrl+Alt+Up/Down). */
   const step = (delta: 1 | -1) => {
     const n = tab.items.length;
     if (!n) return;

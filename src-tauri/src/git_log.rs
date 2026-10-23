@@ -1,4 +1,4 @@
-//! Git log with a commit graph, like the Log tab of Rider / Rebased.
+//! Git log with a commit graph.
 //!
 //! Lanes are computed over everything loaded so far, so connections stay
 //! right when more history is loaded or the list is scrolled.

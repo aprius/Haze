@@ -265,7 +265,7 @@ export function toggleBottom(projectId: string, tab: BottomTab): void {
   ws.updateUi(projectId, { bottomVisible: !showing, bottomTab: tab });
 }
 
-/** Rider's background-process indicator: the latest task, how many more, and a list on click. */
+/** Background-process indicator: the latest task, how many more, and a list on click. */
 function BackgroundTasks({ projectId }: { projectId: string | null }) {
   const all = useTasks((s) => s.tasks);
   const tasks = all.filter((t) => t.projectId === null || t.projectId === projectId);
@@ -299,7 +299,7 @@ function locatedErrors(diags: BuildDiagnostic[] | undefined): BuildDiagnostic[] 
     .sort((a, b) => cmp(normPath(a.file!), normPath(b.file!)) || a.line! - b.line! || (a.column ?? 1) - (b.column ?? 1));
 }
 
-/** Rider's "N errors in M files": each click jumps to the next error after the caret, wrapping around. */
+/** "N errors in M files": each click jumps to the next error after the caret, wrapping around. */
 function ErrorsIndicator({ project, activeTab }: { project: Project; activeTab: string | null | undefined }) {
   const diags = useDotnet((s) => s.builds[project.id]?.diagnostics);
   const errors = locatedErrors(diags);

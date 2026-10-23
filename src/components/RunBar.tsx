@@ -271,7 +271,7 @@ function RunControls({ project }: { project: Project }) {
   );
 }
 
-/** Rider's Unity toolbar: the link to the Unity Editor, and its Play / Pause / Step. */
+/** Unity toolbar: the link to the Unity Editor, and its Play / Pause / Step. */
 function UnityControls({ project }: { project: Project }) {
   const unity = useUnity((s) => s.projects[project.id]);
   if (!unity) return null;

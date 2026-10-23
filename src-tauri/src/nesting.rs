@@ -1,4 +1,4 @@
-//! Rider-style file nesting: companion files are shown under their parent,
+//! File nesting: companion files are shown under their parent,
 //! e.g. `appsettings.Development.json` under `appsettings.json` and
 //! `Index.razor.cs` under `Index.razor`.
 

@@ -1,5 +1,5 @@
-// Search popups keep the caret in their search field, like Rider's Search
-// Everywhere and Find in Files: clicking a tab, a toggle, a checkbox or a
+// Search popups keep the caret in their search field (Search
+// Everywhere and Find in Files): clicking a tab, a toggle, a checkbox or a
 // result row acts without taking focus, so typing goes on refining the query.
 import type React from "react";
 

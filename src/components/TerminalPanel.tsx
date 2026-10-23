@@ -295,7 +295,7 @@ function createView(id: string, project: Project): View {
 }
 
 /**
- * Alt+F12, like Rider: shows the Terminal tool window and focuses it; pressed
+ * Alt+F12: shows the Terminal tool window and focuses it; pressed
  * inside the terminal it hides it. `hideOnlyWhenFocused: false` (the status
  * bar button) hides it whenever it is showing.
  */

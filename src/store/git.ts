@@ -102,7 +102,7 @@ onGitStatus((projectId, status) => {
   showChanges(projectId);
 });
 
-// Like Rider, a file counts as changed as soon as it is edited, saved or not.
+// A file counts as changed as soon as it is edited, saved or not.
 let dirtyKey = "";
 useBuffers.subscribe(() => {
   const key = dirtyPaths().sort().join("\n");
@@ -111,7 +111,7 @@ useBuffers.subscribe(() => {
   gitChanges.forEach((_, projectId) => showChanges(projectId));
 });
 
-/** Git commands that read or write the working tree: unsaved edits are saved first, as Rider does. */
+/** Git commands that read or write the working tree: unsaved edits are saved first. */
 const touchesFiles = new Set(["stash", "checkout", "switch", "merge", "rebase", "cherry-pick", "revert", "reset", "pull", "add", "rm", "restore"]);
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -203,11 +203,11 @@ export async function runGit(projectId: string, args: string[], opts: { label?: 
     const out = await withTask(projectId, label, () => api.gitRun(r.root!, args));
     entry.output = out;
     if (/^CONFLICT|Merge conflict in|could not apply/m.test(out.stdout + out.stderr)) {
-      // Rider opens the conflicts list; ours is the Commit window's "Merge Conflicts" group.
+      // Open the conflicts list: the Commit window's "Merge Conflicts" group.
       openCommitWindow(projectId);
       toast("Conflicts need to be resolved — see Merge Conflicts in the Commit window (double-click to merge).", "error");
     } else if (!out.ok && isAuthFailure(out.stderr + out.stdout))
-      // Rider asks to log in when the remote rejects the credentials.
+      // Offer to log in when the remote rejects the credentials.
       toast(`${opts.label ?? "git " + args[0]} failed: the remote needs you to log in. Add a GitHub/GitLab account in Settings.`, "error", {
         label: "Log In…",
         run: openSettings,

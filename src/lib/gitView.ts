@@ -63,7 +63,7 @@ export function shownFiles(changes: GitChange[], byDir: boolean, collapsed: Reco
 }
 
 /**
- * Git's changes plus files edited but not saved yet, which Rider lists as
+ * Git's changes plus files edited but not saved yet, listed as
  * modified right away. `unsaved` are repository-relative paths.
  */
 export function withUnsaved(changes: GitChange[], unsaved: readonly string[]): GitChange[] {
@@ -78,7 +78,7 @@ export function changeDiffSpec(root: string, c: GitChange): DiffSpec {
   return { root, rel: c.rel, oldRel: c.oldRel, left: created ? null : "HEAD", right: "working" };
 }
 
-/** Default ticks like Rider: tracked changes on, unversioned files and conflicts off. */
+/** Default ticks: tracked changes on, unversioned files and conflicts off. */
 export function checkedPaths(r: { checked: string[] | null; changes: GitChange[] }): Set<string> {
   if (r.checked) return new Set(r.checked.filter((p) => r.changes.some((c) => c.rel === p)));
   return new Set(r.changes.filter((c) => c.status !== "untracked" && c.status !== "conflict").map((c) => c.rel));

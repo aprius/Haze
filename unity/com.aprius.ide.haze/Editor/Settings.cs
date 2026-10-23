@@ -4,7 +4,7 @@ using PackageSource = UnityEditor.PackageManager.PackageSource;
 
 namespace Haze.Ide.Editor
 {
-    /// <summary>What the generated projects cover, as in Rider's External Tools page.</summary>
+    /// <summary>What the generated projects cover, as set on the External Tools page.</summary>
     [Flags]
     enum GenerationFlags
     {

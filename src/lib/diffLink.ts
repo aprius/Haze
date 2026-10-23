@@ -1,4 +1,4 @@
-// Geometry for the Rider-style side-by-side diff: changed blocks on each side,
+// Geometry for the side-by-side diff: changed blocks on each side,
 // the curved connectors drawn between them, and the scroll mapping that keeps
 // both sides aligned without padding either editor.
 

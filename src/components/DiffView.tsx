@@ -1,5 +1,5 @@
 // Side-by-side diff as an editor tab. The right side of a "working" diff is
-// the file's real buffer, so it can be edited in place like in Rider.
+// the file's real buffer, so it can be edited in place.
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ensureBuffer, getModel } from "../lib/buffers";
@@ -30,7 +30,7 @@ interface Sides {
 // IntelliJ's `diff.divider.width`.
 const GAP = 24;
 // The left editor's share of the two editors' width; dragging the gap sets it
-// for every diff after, as in Rider.
+// for every diff after.
 let lastSplit = 0.5;
 const ICON = 16;
 const ARROW =
@@ -59,7 +59,7 @@ async function diffModels(spec: DiffSpec, owned: monaco.editor.ITextModel[]) {
 }
 
 /**
- * Rider-style diff: two plain editors (no filler lines), curved connectors
+ * Side-by-side diff: two plain editors (no filler lines), curved connectors
  * between matching blocks in the gap, scrolling kept in step block by block.
  * As in IntelliJ, the left editor is mirrored: its gutter (`>>` icons, then
  * line numbers) sits against the gap. Monaco cannot mirror a gutter, so that
@@ -452,7 +452,7 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
 }
 
 /**
- * The Commit window's preview, like Rider's: one editor (IntelliJ's unified
+ * The Commit window's preview: one editor (IntelliJ's unified
  * viewer), the file as it is now with the removed lines shown between its
  * own. Ctrl+D opens the side-by-side diff.
  */

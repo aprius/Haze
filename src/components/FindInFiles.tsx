@@ -20,7 +20,7 @@ import { useWorkspace, type Project } from "../store/workspace";
 import { FileIcon } from "./FileIcon";
 import { toast } from "./Overlays";
 
-// Rider's scopes: the solution, one of its projects (a `.csproj`), a directory.
+// Scopes: the solution, one of its projects (a `.csproj`), a directory.
 // Without a solution, "In Project" is the opened folder.
 type ScopeKind = "solution" | "csproj" | "folder" | "directory" | "openFiles";
 
@@ -45,11 +45,11 @@ interface FindOptions {
   csproj: string;
   directory: string;
   includeIgnored: boolean;
-  /** "Solution": also files no project lists (Unity's assets and `.meta`s), like Rider. */
+  /** "Solution": also files no project lists (Unity's assets and `.meta`s). */
   nonSolution: boolean;
 }
 
-// Options survive closing the popup, like Rider.
+// Options survive closing the popup.
 const useFindOptions = create<FindOptions>(() => ({
   query: "",
   replacement: "",
@@ -167,7 +167,7 @@ function drag(e: React.PointerEvent, onMove: (dx: number, dy: number) => void) {
   window.addEventListener("pointerup", up);
 }
 
-// One row per match, the file named on the right, as in Rider's list.
+// One row per match, the file named on the right.
 type Row = { kind: "match"; file: FileMatches; match: SearchMatch; fileIndex: number };
 
 const matchKey = (path: string, m: SearchMatch) => `${path}\u0000${m.start}`;
@@ -231,7 +231,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
-  // Rows in the editor's font, a little taller than its lines, like Rider's.
+  // Rows in the editor's font, a little taller than its lines.
   const ROW_H = codeLineHeight(useFonts((f) => f.codeSize)) + 4;
   const [listHeight, setListHeight] = useState(300);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -401,7 +401,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
     closeFindInFiles();
   };
 
-  // A pinned popup stays open, like Rider's, so one match after another can be visited.
+  // A pinned popup stays open, so one match after another can be visited.
   const openMatch = (path: string, m: SearchMatch) => {
     if (layout.pinned) rememberSearch();
     else close();

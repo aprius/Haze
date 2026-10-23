@@ -112,7 +112,7 @@ pub fn changes(root: &Path) -> Result<Vec<Change>> {
     Ok(parse_changes(&out))
 }
 
-/// Commits exactly `paths` (relative), like Rider's checkbox commit: no need
+/// Commits exactly `paths` (relative), the checkbox commit: no need
 /// to stage first. Untracked paths among them are added.
 pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Result<GitOutput> {
     if paths.is_empty() && !amend {

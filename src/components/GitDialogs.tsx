@@ -1,5 +1,5 @@
 // Git popups: Branches (status bar / Ctrl+Shift+`), Push (Ctrl+Shift+K),
-// Pull (Rider's "Pull to <branch>"), Update Project (Ctrl+T), plus branch actions shared with the Log.
+// Pull ("Pull to <branch>"), Update Project (Ctrl+T), plus branch actions shared with the Log.
 import { GitBranch, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
@@ -369,7 +369,7 @@ export function PushDialog({ project }: { project: Project | null }) {
   const branchName = requested ?? r?.branches?.current ?? null;
   const branch = r?.branches?.branches.find((b) => b.kind === "local" && b.name === branchName);
   const remotes = r?.branches?.remotes ?? [];
-  // Rider tags a target that doesn't exist on the remote yet as "New".
+  // A target that doesn't exist on the remote yet is tagged "New".
   const isNew = !r?.branches?.branches.some((b) => b.kind === "remote" && b.name === `${remote}/${target}`);
 
   useEffect(() => {
@@ -540,7 +540,7 @@ export function PullDialog({ project }: { project: Project | null }) {
     [r?.branches, remote],
   );
 
-  // Rider fetches the remote's branches when the dialog opens.
+  // The remote's branches are fetched when the dialog opens.
   useEffect(() => {
     if (!open || !r?.root || !project) return;
     const upstream = cur?.upstream ?? null;

@@ -61,7 +61,7 @@ export function closeFindInFiles(): void {
 
 export function openCommitWindow(projectId: string): void {
   useUi.setState({ commitWindow: projectId });
-  // Like Rider's commit dialog: type the message straight away.
+  // Commit window: type the message straight away.
   requestAnimationFrame(() => (document.querySelector(".commit-window .commit-message") as HTMLElement | null)?.focus());
 }
 

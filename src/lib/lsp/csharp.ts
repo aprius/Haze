@@ -592,7 +592,7 @@ function declarationLine(model: monaco.editor.ITextModel, range: monaco.IRange, 
   return line;
 }
 
-/** Whether a member with no usages is dead, as Rider greys it: private, no attribute, not called by name by Unity or an interface. */
+/** Whether a member with no usages is dead, and so greyed: private, no attribute, not called by name by Unity or an interface. */
 function deadWhenUnused(model: monaco.editor.ITextModel, kind: number, name: string, declStart: number, nameLine: number, nameColumn: number): boolean {
   if (!GREY_WHEN_UNUSED.has(kind) || name.includes(".") || UNITY_MESSAGES.has(name)) return false;
   const head = model.getValueInRange(new monaco.Range(declStart, 1, nameLine, nameColumn));
@@ -699,8 +699,8 @@ export function registerProviders(): void {
   });
 
   // Ctrl+Click on a declaration falls back to Go to References (Monaco's
-  // alternativeDefinitionCommand), which lists the usages like Rider (see
-  // installRiderResultLists in EditorArea).
+  // alternativeDefinitionCommand), which lists the usages in a popup (see
+  // installResultLists in EditorArea).
   L.registerReferenceProvider("csharp", {
     async provideReferences(model, position, context, token) {
       const s = ready(model);
@@ -761,7 +761,7 @@ export function registerProviders(): void {
     },
   });
 
-  // Code Vision, like Rider: "3 usages | aprius +1" above types and members. Lenses are
+  // Code Vision: "3 usages | aprius +1" above types and members. Lenses are
   // resolved only when scrolled into view, so a long file asks only for what is shown.
   // In Unity projects also "Event function", "2 asset usages" and "Run" for tests (see unityLenses).
   // Types and members come from Haze's own parse (syntax.rs), so lenses show as a file opens:
@@ -969,7 +969,7 @@ export function registerProviders(): void {
     return { title: hits.some((r) => r.status === "skipped") ? "skipped" : "inconclusive", tooltip: hits[0].message ?? "" };
   }
 
-  /** Rider's Unity Code Vision for a type or member of a Unity script. */
+  /** Unity Code Vision for a type or member of a Unity script. */
   function unityLenses(
     model: monaco.editor.ITextModel,
     u: UnityContext,
@@ -1145,7 +1145,7 @@ export function registerProviders(): void {
       );
       const actions: monaco.languages.CodeAction[] = (res ?? []).map((a) => ({
         title: a.title,
-        // Everything is offered as a quick fix so Alt+Enter lists all of it, like Rider.
+        // Everything is offered as a quick fix so Alt+Enter lists all of it.
         kind: "quickfix",
         isPreferred: a.isPreferred,
         command: { id: "haze.applyCodeAction", title: a.title, arguments: [model.uri.fsPath, a] },
@@ -1154,7 +1154,7 @@ export function registerProviders(): void {
     },
   });
 
-  // Rider-like colours by meaning, once the projects are loaded (before
+  // Colours by meaning, once the projects are loaded (before
   // that Roslyn knows no symbols and would undo the grammar's guesses).
   const semanticSession = (model: monaco.editor.ITextModel) => {
     const s = ready(model);

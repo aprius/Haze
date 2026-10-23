@@ -1355,7 +1355,7 @@ kbd {
   text-align: center;
 }
 
-/* Search Everywhere itself, laid out like Rider's: tabs, a borderless field
+/* Search Everywhere itself: tabs, a borderless field
    with a magnifier, icon rows with the path dimmed, a hint line at the bottom.
    A fixed height, so the popup doesn't jump while results arrive. */
 .se-main {
@@ -1372,7 +1372,7 @@ kbd {
   padding: 3px 10px;
 }
 
-/* Rider's preview pane: the popup grows and the list shares it with the code. */
+/* Preview pane: the popup grows and the list shares it with the code. */
 .se-main.with-preview {
   height: min(760px, 85vh);
 }
@@ -1500,7 +1500,7 @@ kbd {
   font-size: calc(var(--ui-font-size) * 12 / 13);
 }
 
-/* Matched characters, Rider-style: a soft rounded marker behind the letters. */
+/* Matched characters: a soft rounded marker behind the letters. */
 .se-main mark {
   color: inherit;
   background: color-mix(in srgb, var(--find-match) 35%, transparent);
@@ -1803,7 +1803,7 @@ button.toggle.on {
   background: var(--selected);
 }
 
-/* Rider's layout: a boxed query field with its toggles inside, then the
+/* Layout: a boxed query field with its toggles inside, then the
    scopes as plain tabs, the list one row per match with the file on the right. */
 .find-field {
   flex: 1;
@@ -2017,7 +2017,7 @@ button.toggle.on {
   font-family: var(--font-mono);
 }
 
-/* The editor's font and size, as Rider draws these rows. */
+/* These rows in the editor's font and size. */
 .find-text {
   flex: 0 1 auto;
   min-width: 0;
@@ -2398,7 +2398,7 @@ button.toggle.on {
   outline: none;
 }
 
-/* Go to Declaration with several results: Rider's "Declarations of class 'Foo'" list. */
+/* Go to Declaration with several results: the "Declarations of class 'Foo'" list. */
 .se-backdrop.anchored .decls-popup {
   width: min(600px, calc(100% - 16px));
 }
@@ -2430,7 +2430,7 @@ button.toggle.on {
   min-width: 0;
 }
 
-/* Find Usages: Rider's flat list, the code line with the file and line on the right. */
+/* Find Usages: a flat list, the code line with the file and line on the right. */
 .se-item.usage-row {
   align-items: center;
   gap: 6px;
@@ -2452,7 +2452,7 @@ button.toggle.on {
   margin-left: auto;
   align-self: center;
 }
-/* The usage in bold, as Rider: no background, the line keeps its colours. */
+/* The usage in bold: no background, the line keeps its colours. */
 .usage-hl {
   font-weight: 700;
 }
@@ -3151,7 +3151,7 @@ button.toggle.on {
   font-size: 12px;
 }
 
-/* Code Vision above declarations: quiet until hovered, like Rider's. */
+/* Code Vision above declarations: quiet until hovered. */
 .monaco-editor .codelens-decoration,
 .monaco-editor .codelens-decoration a {
   color: var(--muted);
@@ -3160,7 +3160,7 @@ button.toggle.on {
   color: var(--accent);
 }
 
-/* Rider's change markers beside the line numbers (EditorArea installLineChanges). */
+/* Change markers beside the line numbers (EditorArea installLineChanges). */
 .monaco-editor .line-change {
   margin-left: 3px;
   width: 3px !important;

@@ -1,7 +1,7 @@
 // Results popup for Find Usages (Alt+F7), Go to Implementation (Ctrl+Alt+B)
 // and Go to Declaration (Ctrl+B, Ctrl+Click) when there is more than one, and
 // for a Unity script's asset usages (scenes, prefabs, assets). Usages move to
-// the Find tool window (FindPanel) to keep them, like Rider's "Open in Find Window".
+// the Find tool window (FindPanel) to keep them ("Open in Find Window").
 import { PanelBottom } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
@@ -26,7 +26,7 @@ export interface Usage extends FoundLocation {
 
 interface UsagesState {
   open: boolean;
-  /** Declarations are listed one row per place, like Rider's "Declarations of …" list. */
+  /** Declarations are listed one row per place ("Declarations of …"). */
   kind: "usages" | "declarations" | "assets";
   title: string;
   loading: boolean;
@@ -178,7 +178,7 @@ export function UsagesPopup({ project }: { project: Project | null }) {
           else if (e.key === "ArrowDown") setSelected((s) => Math.min(items.length - 1, s + 1));
           else if (e.key === "ArrowUp") setSelected((s) => Math.max(0, s - 1));
           else if (e.key === "Enter") go(items[selected], e.ctrlKey || e.metaKey);
-          // Rider: Find Usages again in the popup moves the results to the Find window.
+          // Find Usages again in the popup moves the results to the Find window.
           else if (e.key === "F7" && e.altKey && kind === "usages" && !loading) toFindWindow();
           else return;
           e.preventDefault();

@@ -1,4 +1,4 @@
-// GitHub / GitLab accounts in Settings, like Rider's Settings | Version Control | GitHub / GitLab.
+// GitHub / GitLab accounts in Settings › Version Control.
 // Git commands Haze runs (push, pull, fetch…) use them for their servers; tokens stay in the OS keychain.
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useState } from "react";

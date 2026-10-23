@@ -1,6 +1,6 @@
-// App-wide shortcuts. On macOS they follow the "ReSharper (macOS)" Rider keymap
+// App-wide shortcuts. On macOS they follow the "ReSharper (macOS)" keymap
 // as customised by the user (Alt+1, Alt+9, Alt+P, Cmd+. …); elsewhere the
-// Windows Rider defaults Haze always had. A Haze key Rider leaves free is kept.
+// Windows defaults Haze always had. A Haze key the keymap leaves free is kept.
 // Settings › Keymap overrides any command's shortcuts; overrides are kept in
 // localStorage, like fonts, so the first keystroke already uses them.
 import { create } from "zustand";
@@ -24,7 +24,7 @@ const app = {
   nextTab: { mac: ["ctrl TAB", "meta shift CLOSE_BRACKET"], other: ["ctrl TAB"] },
   previousTab: { mac: ["ctrl shift TAB", "meta shift OPEN_BRACKET"], other: ["ctrl shift TAB"] },
   selectInProject: { mac: ["alt F1"], other: ["alt F1"] },
-  // Cmd+J like VS Code; Rider's "Open Claude in Terminal" (Alt+2, Cmd+Esc) also shows Haze's terminal, where agents run.
+  // Cmd+J like VS Code; "Open Claude in Terminal" (Alt+2, Cmd+Esc) also shows Haze's terminal, where agents run.
   terminal: { mac: ["meta J", "meta ctrl 1", "alt 2", "meta ESCAPE", "alt F12", "ctrl BACK_QUOTE"], other: ["alt F12", "ctrl BACK_QUOTE"] },
   projectView: { mac: ["alt 1"], other: ["alt 1"] },
   commitView: { mac: ["alt 0"], other: ["alt 0"] },
@@ -37,7 +37,7 @@ const app = {
   build: { mac: ["meta shift B"], other: ["ctrl shift B"] },
   run: { mac: ["ctrl F5", "shift F10"], other: ["shift F10"] },
   rename: { mac: ["F2", "shift F6"], other: ["shift F6", "F2"] },
-  // Project view. Most Mac keyboards have no forward Delete: Cmd+Backspace, as in Rider.
+  // Project view. Most Mac keyboards have no forward Delete: Cmd+Backspace.
   delete: { mac: ["meta BACK_SPACE", "DELETE"], other: ["DELETE"] },
   copyContext: { mac: ["meta shift C"], other: ["ctrl shift C"] },
   zoomIn: { mac: ["meta EQUALS", "meta shift EQUALS", "meta NUMPAD_ADD"], other: ["ctrl EQUALS", "ctrl shift EQUALS", "ctrl NUMPAD_ADD"] },

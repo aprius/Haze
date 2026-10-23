@@ -9,7 +9,7 @@ export type DirState = { entries: DirEntry[] } | { loading: true } | { error: st
 
 export interface GitView {
   status: GitStatus;
-  /** Directories containing changes, colored like Rider does. */
+  /** Directories containing changes, colored like their files. */
   changedDirs: Set<string>;
   /** Ignored paths, `/`-separated without a trailing slash. */
   ignored: string[];

@@ -1,5 +1,5 @@
 // Background tasks in progress (git commands, builds, the C# server loading…),
-// listed in the status bar like Rider's background-process indicator.
+// listed in the status bar's background-process indicator.
 import { create } from "zustand";
 
 export interface Task {

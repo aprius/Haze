@@ -1,4 +1,4 @@
-// Changed-line markers for the editor gutter (Rider's "VCS markers"): which
+// Changed-line markers for the editor gutter ("VCS markers"): which
 // lines of the buffer differ from the committed file.
 import { diffIndices } from "node-diff3";
 

@@ -20,7 +20,7 @@ import { useWorkspace } from "../store/workspace";
 // emits coarse token classes, so these map the filter's palette onto them.
 const MONOKAI = {
   dark: {
-    // Text toned down from the filter's #fcfcfa, which glares (Rider's is #bcbec4).
+    // Text toned down from the filter's #fcfcfa, which glares.
     bg: "#2d2a2e", fg: "#d3d1cf", dim: "#939293", comment: "#727072", red: "#ff6188", orange: "#fc9867",
     yellow: "#ffd866", green: "#a9dc76", blue: "#78dce8", purple: "#ab9df2",
     gutter: "#5b595c", gutterActive: "#c1c0c0", widget: "#403e41", border: "#221f22",
@@ -73,7 +73,7 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
       { token: "attribute.value", foreground: strip(c.yellow) },
       { token: "key", foreground: strip(c.fg) },
       { token: "namespace", foreground: strip(c.fg) },
-      // What Rider's Monokai Pro colours by meaning: C# (csharpGrammar.ts and
+      // What Monokai Pro colours by meaning: C# (csharpGrammar.ts and
       // Roslyn's semantic tokens, lsp/csharp.ts) emits these.
       { token: "type.cs", foreground: strip(c.blue), fontStyle: "" },
       { token: "method", foreground: strip(c.green) },
@@ -173,7 +173,7 @@ useFonts.subscribe((f, prev) => {
 });
 
 /**
- * Rider's Rainbow Brackets plugin: brackets coloured by depth (theme colours
+ * Rainbow brackets: brackets coloured by depth (theme colours
  * above) and, with guides on, a line per pair in the same colour in place of
  * the plain indent guides; the pair around the caret is drawn brighter.
  */

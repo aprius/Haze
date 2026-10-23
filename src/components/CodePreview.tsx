@@ -1,5 +1,5 @@
 // Read-only code preview under a results list: Find in Files and Search
-// Everywhere, like Rider's preview pane.
+// Everywhere.
 import { useEffect, useRef, useState } from "react";
 import { getModel } from "../lib/buffers";
 import { api } from "../lib/ipc";

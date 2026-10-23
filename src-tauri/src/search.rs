@@ -24,7 +24,7 @@ use crate::text::{self, Decoded};
 const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 const PREVIEW_CHARS: usize = 240;
 
-/// Directories skipped unless "include ignored" is on, like Rider's excluded folders.
+/// Directories skipped unless "include ignored" is on.
 pub const SKIPPED_DIRS: &[&str] = &[".git", "bin", "obj", "node_modules", ".vs", ".idea"];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -226,7 +226,7 @@ fn is_word_char(c: char) -> bool {
     WORD.is_match(c.encode_utf8(&mut [0; 4]))
 }
 
-/// Applies the case shape of `matched` to `replacement` (Rider's "Preserve case").
+/// Applies the case shape of `matched` to `replacement` ("Preserve case").
 pub fn preserve_case(matched: &str, replacement: &str) -> String {
     let letters: Vec<char> = matched.chars().filter(|c| c.is_alphabetic()).collect();
     if letters.is_empty() {

@@ -20,7 +20,7 @@ pub struct DirEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_symlink: bool,
-    /// Name of the sibling file this one is nested under (Rider-style nesting).
+    /// Name of the sibling file this one is nested under (see nesting.rs).
     pub nested_under: Option<String>,
 }
 
@@ -252,7 +252,7 @@ pub fn create_file(dir: &Path, name: &str) -> Result<String> {
 }
 
 pub fn create_dir(dir: &Path, name: &str) -> Result<String> {
-    // Allows `a/b/c` to create nested folders, like Rider's "New Directory".
+    // Allows `a/b/c` to create nested folders in one go.
     if name.split(['/', '\\']).any(|p| validate_name(p).is_err()) {
         bail!("invalid name: {name:?}");
     }

@@ -1,4 +1,4 @@
-// C# highlighting closer to Rider than Monaco's grammar: methods, types,
+// C# highlighting richer than Monaco's grammar: methods, types,
 // attributes, doc comments and directives get their own colours. Without
 // symbols this guesses from the shape of the code (a Unity script reads well:
 // `Debug.Log`, `Vector3 pos`, `[SerializeField]`); once Roslyn has loaded the
@@ -145,7 +145,7 @@ export const csharpLanguage: languages.IMonarchLanguage = {
       ["\\*/", "comment", "@pop"],
       [/[\/*]/, "comment"],
     ],
-    // `/// <summary>` … : tags and their attribute values stand out, like Rider.
+    // `/// <summary>` … : tags and their attribute values stand out.
     docComment: [
       [/^/, "", "@pop"],
       [/(<\/?)([\w:]+)/, ["comment.doc.tag", "comment.doc.tag"]],

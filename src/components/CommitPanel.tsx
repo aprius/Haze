@@ -1,4 +1,4 @@
-// Commit window (Ctrl+K / Alt+0), like Rider's commit dialog: a floating window
+// Commit window (Ctrl+K / Alt+0): a floating window
 // with the changes and message on the left and the selected file's diff on the
 // right. Tick files, write a message, Commit or Commit and Push — no staging
 // area to manage. Ctrl+D opens the diff in a floating window of its own.
@@ -462,7 +462,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
               checked={r.amend}
               onChange={async (e) => {
                 const amend = e.target.checked;
-                // Like Rider: amending pre-fills the last commit's message.
+                // Amending pre-fills the last commit's message.
                 let message = r.message;
                 if (amend && !message.trim()) {
                   message = await api.gitCommitDetails(root, "HEAD").then((d) => d.message).catch(() => "");

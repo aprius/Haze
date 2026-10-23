@@ -432,7 +432,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
 }
 
 /**
- * Rider's commit and diff dialogs: a window of its own that can leave Haze's
+ * Commit and diff dialogs: a window of its own that can leave Haze's
  * window (another screen, behind the editor). Outside Tauri, or if the window
  * cannot be opened, a panel over the app moved by its title bar instead.
  */

@@ -20,7 +20,7 @@ export interface EditorTab {
   preview: boolean;
 }
 
-/** Project view modes, as in Rider: Unity (Assets and Packages, no .meta) and File System (everything, flat). */
+/** Project view modes: Unity (Assets and Packages, no .meta) and File System (everything, flat). */
 export type TreeView = "unity" | "files";
 
 /** Tool windows of the bottom dock; Unity and Tests only in Unity projects. */
@@ -103,15 +103,15 @@ interface WorkspaceState {
   ui: Record<string, ProjectUi>;
   reveal: Reveal | null;
   nestFiles: boolean;
-  /** Rider's "Always Select Opened File": the Project view follows the active editor tab. */
+  /** "Always Select Opened File": the Project view follows the active editor tab. */
   selectOpenedFile: boolean;
   /** Pins the enclosing class/method lines at the top of the editor while scrolling. */
   stickyScroll: boolean;
   /** Shows the caret line's author, date and commit at the end of the line. */
   lineBlame: boolean;
-  /** Rider's Code Vision: usages and author above C# types and members; unused private members greyed. */
+  /** Code Vision: usages and author above C# types and members; unused private members greyed. */
   codeVision: boolean;
-  /** Rider's Rainbow Brackets: (), [] and {} coloured by nesting depth. */
+  /** Rainbow brackets: (), [] and {} coloured by nesting depth. */
   rainbowBrackets: boolean;
   /** Vertical guides for each bracket pair in its depth's colour (needs rainbowBrackets). */
   rainbowGuides: boolean;
@@ -273,7 +273,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const tabs = ui.tabs.filter((t) => !closing.has(t.path));
       let activeTab = ui.activeTab;
       if (activeTab && closing.has(activeTab)) {
-        // Like Rider: activate the tab to the left of the closed one.
+        // Activate the tab to the left of the closed one.
         activeTab = tabs.length ? tabs[Math.max(0, Math.min(idx - 1, tabs.length - 1))].path : null;
       }
       return { tabs, activeTab };

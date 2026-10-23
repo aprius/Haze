@@ -52,7 +52,7 @@ const BY_NAME: Record<string, string> = {
   dockerfile: "docker",
 };
 
-/** Unity's special folders, as Rider marks them. */
+/** Unity's special folders, marked with their own icons. */
 const UNITY_FOLDERS: Record<string, string> = {
   Assets: "FolderAssets",
   Editor: "FolderEditor",

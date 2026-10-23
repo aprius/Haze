@@ -45,7 +45,7 @@ export function resolvePath(base: string, rel: string): string {
 }
 
 /**
- * Packages a Unity project references, as Rider's Packages node lists them:
+ * Packages a Unity project references, as the Packages node lists them:
  * registry and git packages from `Library/PackageCache` (`name@hash`), local
  * ones from their `file:` path. Embedded packages are folders of `Packages/`
  * already; built-in modules live in the Unity install.
@@ -102,7 +102,7 @@ export function buildRows(
 ): Row[] {
   const rows: Row[] = [];
   const unity = opts.view === "unity";
-  // Show All Files, as Rider's toggle, also brings back what Unity hides: `.meta` included.
+  // Show All Files also brings back what Unity hides: `.meta` included.
   const visible = (e: DirEntry) => !unity || opts.showAll || ((e.isDir || !e.name.endsWith(".meta")) && !unityHidden(e.name));
   const packagesDir = join(project.path, "Packages");
   const pkgs = new Map((unity ? opts.packages ?? [] : []).map((p) => [p.path, p]));
@@ -143,7 +143,7 @@ export function buildRows(
     }
   };
   if (unity) {
-    // Like Rider's Unity Explorer: Assets and Packages at the top, no project node.
+    // Unity view: Assets and Packages at the top, no project node.
     const rank = (e: DirEntry) => (UNITY_TOP.includes(e.name) ? UNITY_TOP.indexOf(e.name) : UNITY_TOP.length);
     walk(project.path, 0, (entries) =>
       entries

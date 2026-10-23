@@ -93,7 +93,7 @@ export function toggleThemeMode(): void {
 
 // Layout style: "classic" puts the panels edge to edge; "islands" draws each
 // one (Project, editor, terminal, Build/Git) as a rounded block with gaps
-// between them, and tabs as rounded chips, like Rider's Islands UI. Only the
+// between them, and tabs as rounded chips. Only the
 // shapes change, the colours stay Monokai Pro's.
 export type UiStyle = "classic" | "islands";
 

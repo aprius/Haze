@@ -168,7 +168,7 @@ function useGlobalShortcuts(project: Project | null) {
       if (e.key !== "Shift" || otherKey || isRecordingKeys()) return;
       const now = Date.now();
       // Double Shift: two lone Shift presses within 350 ms. Again in Search
-      // Everywhere toggles "Include non-solution items", as in Rider.
+      // Everywhere toggles "Include non-solution items".
       if (now - lastShift < 350 && useUi.getState().searchEverywhere.open) {
         lastShift = 0;
         toggleSeIncludeAll();

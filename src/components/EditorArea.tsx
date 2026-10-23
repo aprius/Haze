@@ -84,7 +84,7 @@ export function copyContext(): void {
   void navigator.clipboard.writeText(text).then(() => toast("Copied with path and line numbers"));
 }
 
-// Popups closing leave focus on <body>; give it back to the editor like Rider does.
+// Popups closing leave focus on <body>; give it back to the editor.
 window.addEventListener("haze:popup-closed", () =>
   requestAnimationFrame(() => {
     const el = document.activeElement;
@@ -95,10 +95,10 @@ window.addEventListener("haze:popup-closed", () =>
 let keymapInstalled = false;
 
 /**
- * IntelliJ/Rider keys that differ from Monaco's VS Code defaults. On macOS
- * they follow the user's "ReSharper (macOS)" Rider keymap (see lib/keymap).
+ * IntelliJ keys that differ from Monaco's VS Code defaults. On macOS
+ * they follow the user's "ReSharper (macOS)" keymap (see lib/keymap).
  */
-function installRiderKeymap() {
+function installIdeKeymap() {
   if (keymapInstalled) return;
   keymapInstalled = true;
   const { KeyMod: M, KeyCode: K } = monaco;
@@ -119,7 +119,7 @@ function installRiderKeymap() {
     { keybinding: M.CtrlCmd | K.F12, command: "-editor.action.goToImplementation" },
     { keybinding: M.CtrlCmd | K.F12, command: "editor.action.quickOutline", when: "editorTextFocus" },
   ];
-  // Rider's Windows keys; on macOS Cmd+Y is Redo and Cmd+W closes the tab.
+  // Windows keys; on macOS Cmd+Y is Redo and Cmd+W closes the tab.
   const other = [
     { keybinding: M.CtrlCmd | K.KeyY, command: "editor.action.deleteLines", when: edit },
     { keybinding: M.CtrlCmd | K.KeyW, command: "editor.action.smartSelect.expand", when: "editorTextFocus" },
@@ -157,7 +157,7 @@ function installRiderKeymap() {
     { keybinding: M.Shift | K.F12, command: "editor.action.marker.prevInFiles", when: "editorFocus" },
   ];
   monaco.editor.addKeybindingRules([...common, ...(isMac ? mac : other)]);
-  installRiderResultLists();
+  installResultLists();
   // Ctrl+Click / Ctrl+B in languages Roslyn does not cover, and in C# until it is up.
   registerTextNavigation();
   registerUnityCompletion();
@@ -193,13 +193,13 @@ function tabPath(uri: monaco.Uri): string | null {
 const REFERENCE_ACTIONS = new Set(["editor.action.goToReferences", "editor.action.referenceSearch.trigger"]);
 
 /**
- * Lists results the way Rider does instead of in Monaco's peek view: several
+ * Lists results in popups instead of in Monaco's peek view: several
  * declarations (a partial class, say) in the declarations list under the name,
  * usages in the usages list (as Alt+F7). Monaco has no public hook for this, so
  * its result handling for symbol navigation is wrapped. Open to the Side and
  * the other navigations (implementations, type definitions) keep Monaco's own.
  */
-function installRiderResultLists() {
+function installResultLists() {
   const proto = SymbolNavigationAction.prototype;
   const onResult = proto._onResult;
   proto._onResult = function (editorService, symbolNavService, editor, result, range) {
@@ -230,7 +230,7 @@ function installRiderResultLists() {
   };
 }
 
-/** Rider's Rename (Shift+F6) for C# symbols, applied across files with one Undo. */
+/** Rename (Shift+F6) for C# symbols, applied across files with one Undo. */
 async function renameAt(editor: monaco.editor.ICodeEditor) {
   const model = editor.getModel();
   const pos = editor.getPosition();
@@ -310,7 +310,7 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
   }
 }
 
-// Inline blame for the caret line, like Rider's GitToolBox: "Author, 2 days ago • summary"
+// Inline blame for the caret line: "Author, 2 days ago • summary"
 // after the line's end, the commit's details on hover. One blame per model version
 // (dirty text is blamed as is, so lines match), asked once the caret rests.
 type LineBlames = Map<number, BlameLine> | null;
@@ -358,7 +358,7 @@ function timeAgo(t: number): string {
   return "";
 }
 
-// Code Vision's author ("aprius +2", Rider style): who wrote most of the declaration's lines.
+// Code Vision's author ("aprius +2"): who wrote most of the declaration's lines.
 setCodeVisionAuthor(async (model, from, to) => {
   const project = projectForPath(model.uri.fsPath);
   const lines = project && (await caretLineBlames(project, model));
@@ -378,7 +378,7 @@ setCodeVisionAuthor(async (model, from, to) => {
   };
 });
 
-/** Viewport point just under `pos`, where Rider opens its usages list. */
+/** Viewport point just under `pos`, where the usages list opens. */
 function anchorBelow(editor: monaco.editor.ICodeEditor, pos: monaco.IPosition): { x: number; y: number } | null {
   const at = editor.getScrolledVisiblePosition(pos);
   const dom = editor.getDomNode();
@@ -486,7 +486,7 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
 const headTexts = new Map<string, Promise<string | null>>();
 
 /**
- * Rider's change markers: a bar beside the line numbers for lines added
+ * Change markers: a bar beside the line numbers for lines added
  * (green) or modified (blue) since HEAD, a notch where lines were deleted.
  */
 function installLineChanges(project: Project, editor: monaco.editor.ICodeEditor): monaco.IDisposable {
@@ -507,7 +507,7 @@ function installLineChanges(project: Project, editor: monaco.editor.ICodeEditor)
       }
       const version = model.getVersionId();
       let text = await base;
-      // Not in HEAD: a new file added to git is all new; an unversioned one gets no markers, as in Rider.
+      // Not in HEAD: a new file added to git is all new; an unversioned one gets no markers.
       if (text === null && r.changes.some((c) => c.rel === rel && c.status === "added")) text = "";
       if (editor.getModel() !== model || model.getVersionId() !== version) return;
       if (text === null) return shown.clear();
@@ -685,7 +685,7 @@ function TabBar({ project }: { project: Project }) {
     { label: "Reveal in File Manager", action: () => void revealItemInDir(path) },
   ];
 
-  // Rider's single row: tabs that don't fit are hidden behind a ▾ list instead of scrolled,
+  // A single row: tabs that don't fit are hidden behind a ▾ list instead of scrolled,
   // and the row shifts just enough to keep the active tab in it.
   const barRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
@@ -852,7 +852,7 @@ function crumbMenu(project: Project, path: string, isDir: boolean) {
   ];
 }
 
-/** The active file's path for the status bar, Rider style: a folder lists its contents, a file its siblings. */
+/** The active file's path for the status bar: a folder lists its contents, a file its siblings. */
 export function PathCrumbs({ project, path }: { project: Project; path: string }) {
   if (!isWithin(path, project.path) || path === project.path) return <span className="status-item muted">{basename(path)}</span>;
   // Built with the OS's separator, so a crumb's path matches the listing's (Windows too).
@@ -919,7 +919,7 @@ export function EditorArea({ project }: { project: Project }) {
   // One editor instance per project view; models are swapped on tab change.
   useEffect(() => {
     if (!host.current) return;
-    installRiderKeymap();
+    installIdeKeymap();
     const editor = monaco.editor.create(host.current, {
       model: null,
       automaticLayout: true,
@@ -945,7 +945,7 @@ export function EditorArea({ project }: { project: Project }) {
       });
     });
     editor.onDidChangeModelContent(() => {
-      // Editing a preview tab keeps it, like Rider; an agent changing the file on disk does not.
+      // Editing a preview tab keeps it; an agent changing the file on disk does not.
       if (reloadingFromDisk()) return;
       const path = shownPath.current;
       const ws = useWorkspace.getState();
@@ -962,7 +962,7 @@ export function EditorArea({ project }: { project: Project }) {
       editor.addAction({ id, label, keybindings: keys, contextMenuGroupId: group, run });
     const { KeyMod: M, KeyCode: K } = monaco;
     const isCs = () => editor.getModel()?.getLanguageId() === "csharp";
-    // Rider on macOS puts Previous Error on Shift+F12.
+    // On macOS Previous Error is on Shift+F12.
     codeAction("haze.findUsages", "Find Usages", isMac ? [M.Alt | K.F7] : [M.Alt | K.F7, M.Shift | K.F12], () => {
       const model = editor.getModel();
       const pos = editor.getPosition();
@@ -994,7 +994,7 @@ export function EditorArea({ project }: { project: Project }) {
     codeAction("haze.rename", "Rename Symbol…", [M.Shift | K.F6, K.F2], () => {
       if (isCs()) void renameAt(editor);
     }, "1_modification");
-    // Rider's Generate; Haze generates Unity event functions. On macOS Ctrl+Enter, IntelliJ's
+    // Generate: Haze generates Unity event functions. On macOS Ctrl+Enter, IntelliJ's
     // other Generate key: Cmd+N is Search Everywhere in Haze.
     codeAction("haze.generate", "Generate Unity Event Function…", isMac ? [M.WinCtrl | K.Enter] : [M.Alt | K.Insert], () => {
       if (!generateUnityMember(editor)) toast("Generate works in the classes of Unity scripts (MonoBehaviour, ScriptableObject, Editor…).");

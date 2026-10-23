@@ -1,4 +1,4 @@
-// Unity event functions in completion, as Rider: typing "OnTrig" in the body
+// Unity event functions in completion: typing "OnTrig" in the body
 // of a MonoBehaviour offers OnTriggerEnter(Collider other) and the rest, with
 // the right signature; Generate (Alt+Insert, Ctrl+Enter on macOS) lists all of the
 // class's event functions not declared yet.

@@ -1,4 +1,4 @@
-// Whole-window zoom, like Rider's "Zoom IDE": Ctrl/Cmd +/-/0 and Ctrl+wheel.
+// Whole-window zoom ("Zoom IDE"): Ctrl/Cmd +/-/0 and Ctrl+wheel.
 // The webview zooms natively, so the UI, editors and terminals all scale and
 // re-render crisply. Kept in localStorage like the theme, to apply before the
 // workspace state file has loaded.

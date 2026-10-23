@@ -24,13 +24,13 @@ function statusOf(view: GitView | undefined, entry: DirEntry, unsaved: boolean):
   if (isIgnored(view, entry.path)) return "ignored";
   const st = view.status.files[entry.path];
   if (st) return st;
-  // Edited but not saved: changed already, as in Rider.
+  // Edited but not saved: changed already.
   if (unsaved) return "modified";
   if (entry.isDir && view.changedDirs.has(entry.path)) return "changed-dir";
   return null;
 }
 
-/** Rider's wording: "Delete file 'Foo.cs'?", "Delete 2 files and 1 directory?". */
+/** The wording: "Delete file 'Foo.cs'?", "Delete 2 files and 1 directory?". */
 function deleteQuestion(list: DirEntry[]): string {
   if (list.length === 1) return `Delete ${list[0].isDir ? "directory" : "file"} '${list[0].name}'?`;
   const dirs = list.filter((e) => e.isDir).length;
@@ -85,7 +85,7 @@ export function FileTree({ project }: { project: Project }) {
     }
   }, [expanded, dirs, nest, project.path, packages]);
 
-  // Always Select Opened File: follow the active tab, as Rider does. A click in
+  // Always Select Opened File: follow the active tab. A click in
   // the tree already selected what it opens.
   const activeTab = ui?.activeTab;
   const followTab = useWorkspace((s) => s.selectOpenedFile);
@@ -210,11 +210,11 @@ export function FileTree({ project }: { project: Project }) {
     if (!list.length) return;
     const paths = withMeta(list.map((e) => e.path));
     const gone = (p: string) => paths.some((x) => isWithin(p, x));
-    // As in Rider, the deleted files' tabs close with them, unsaved edits included: say so first.
+    // The deleted files' tabs close with them, unsaved edits included: say so first.
     const unsaved = Object.keys(meta).filter((p) => gone(p) && metaDirty(meta[p])).length;
     const warning = unsaved ? ` ${unsaved === 1 ? "1 file has" : `${unsaved} files have`} unsaved changes that will be lost.` : "";
     if (!(await confirmAction("Delete", `${deleteQuestion(list)} It will be moved to the Trash.${warning}`, "Delete", true))) return;
-    // As in Rider, the row after the deleted ones (or before them) is selected next.
+    // The row after the deleted ones (or before them) is selected next.
     const at = rows.findIndex((r) => list.some((e) => e.path === r.entry.path));
     const rest = rows.filter((r) => !list.some((e) => isWithin(r.entry.path, e.path)));
     const next = rest.find((r) => rows.indexOf(r) > at) ?? rest.filter((r) => rows.indexOf(r) < at).pop();
@@ -494,7 +494,7 @@ export function FileTree({ project }: { project: Project }) {
 
 const VIEW_LABEL: Record<TreeView, string> = { unity: "Unity", files: "File System" };
 
-/** Header of the Project tool window: view mode switcher and tree actions, as in Rider. */
+/** Header of the Project tool window: view mode switcher and tree actions. */
 export function ProjectViewHeader({ project, onHide }: { project: Project; onHide: () => void }) {
   const ui = useWorkspace((s) => s.ui[project.id]);
   const updateUi = useWorkspace((s) => s.updateUi);

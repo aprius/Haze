@@ -1,4 +1,4 @@
-// Monaco internals Haze patches (see EditorArea's installRiderResultLists).
+// Monaco internals Haze patches (see EditorArea's installResultLists).
 declare module "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js" {
   import type * as monaco from "monaco-editor";
   interface Reference {

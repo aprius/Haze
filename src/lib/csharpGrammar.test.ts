@@ -34,7 +34,7 @@ const typeOf = (code: string, word: string) =>
     ?.slice(word.length + 1);
 
 describe("C# grammar", () => {
-  it("tells methods from types, like Rider", () => {
+  it("tells methods from types", () => {
     const code = "var rb = GetComponent<Rigidbody>();\nDebug.Log(transform.position);\nVector3 dir = Vector3.up * speed;";
     expect(typeOf(code, "GetComponent")).toBe("method");
     expect(typeOf(code, "Rigidbody")).toBe("type");

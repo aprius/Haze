@@ -1,4 +1,4 @@
-//! What Rider's Unity support knows without Unity running, from the project's
+//! What Haze knows of a Unity project without Unity running, from the project's
 //! files: the C# classes and their base classes (to tell which derive from
 //! MonoBehaviour, through user and package code), and which scenes, prefabs
 //! and assets use a script or call a method from a UnityEvent.

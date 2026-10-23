@@ -21,7 +21,7 @@ using UnityEngine.SceneManagement;
 namespace Haze.Ide.Editor
 {
     /// <summary>
-    /// The live link between this Unity Editor and Haze, as Rider's protocol:
+    /// The live link between this Unity Editor and Haze:
     /// Unity listens on 127.0.0.1 and writes the port and a token to
     /// Library/Haze/EditorInstance.json; Haze connects. One JSON object per line.
     ///

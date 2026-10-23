@@ -1,5 +1,5 @@
 // Search Everywhere (Double Shift), Go to File (Ctrl+Shift+N), Find Action
-// (Ctrl+Shift+A) and recent files (Ctrl+E) — one popup, like Rider.
+// (Ctrl+Shift+A) and recent files (Ctrl+E) — one popup.
 import { PanelBottom, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { actions, scoreLabel, type Action } from "../lib/actions";
@@ -99,7 +99,7 @@ function matchIndices(name: string, query: string): number[] {
   return out;
 }
 
-// LSP SymbolKind → the letter and colour of Rider's symbol icons.
+// LSP SymbolKind → the letter and colour of the symbol icons.
 const SYMBOL_ICONS: Record<number, [string, string]> = {
   2: ["M", "module"],
   3: ["N", "namespace"],
@@ -340,7 +340,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
                 {header && <div className="se-group">{header}</div>}
                 <div
                   className={"se-item" + (i === selected ? " selected" : "")}
-                  // Like Rider: a click selects (and previews), a double-click opens.
+                  // A click selects (and previews), a double-click opens.
                   onClick={() => setSelected(i)}
                   onDoubleClick={() => activate(item)}
                 >
