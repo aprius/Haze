@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title></title>
+    <!-- Haze's About window (opened by src-tauri/src/lib.rs, which sets window.__HAZE_ABOUT__). -->
+    <script>
+      try {
+        if (localStorage.getItem("haze.theme") === "light") document.documentElement.dataset.theme = "light";
+      } catch {}
+    </script>
+    <style>
+      :root {
+        --bg: #2d2a2e;
+        --fg: #e3e1e4;
+        --muted: #939293;
+        --btn: #363337;
+        --btn-hover: #403d41;
+        --btn-border: #19181a;
+      }
+      :root[data-theme="light"] {
+        --bg: #faf4f2;
+        --fg: #29242a;
+        --muted: #706b6e;
+        --btn: #ede7e5;
+        --btn-hover: #e0dad8;
+        --btn-border: #d3cdcc;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: default;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        box-sizing: border-box;
+        padding: 28px 18px 18px;
+        text-align: center;
+      }
+      /* The hidden title bar: dragging anywhere above the content moves the window. */
+      .drag {
+        position: fixed;
+        inset: 0 0 auto 0;
+        height: 28px;
+      }
+      img {
+        width: 64px;
+        height: 64px;
+      }
+      h1 {
+        margin: 10px 0 14px;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .label {
+        color: var(--muted);
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      .value {
+        font-size: 12.5px;
+        margin-bottom: 14px;
+        -webkit-user-select: text;
+        user-select: text;
+        cursor: text;
+      }
+      .buttons {
+        margin-top: auto;
+        display: flex;
+        gap: 6px;
+        width: 100%;
+      }
+      button {
+        flex: 1;
+        height: 26px;
+        font: inherit;
+        color: var(--fg);
+        background: var(--btn);
+        border: 1px solid var(--btn-border);
+        border-radius: 5px;
+      }
+      button:hover {
+        background: var(--btn-hover);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--muted);
+        outline-offset: -1px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="drag" data-tauri-drag-region></div>
+    <img id="icon" alt="" />
+    <h1 id="name"></h1>
+    <div id="commit-row">
+      <div class="label">Commit</div>
+      <div class="value" id="commit"></div>
+    </div>
+    <div class="label">Version</div>
+    <div class="value" id="version"></div>
+    <div class="buttons">
+      <button id="ok">OK</button>
+      <button id="copy">Copy</button>
+    </div>
+    <script>
+      const info = window.__HAZE_ABOUT__ ?? { version: "", commit: "", icon: "" };
+      const invoke = (cmd) => window.__TAURI_INTERNALS__?.invoke(cmd);
+      const full = info.commit ? `${info.version}+${info.commit.slice(0, 7)}` : info.version;
+      document.getElementById("icon").src = info.icon;
+      document.getElementById("name").textContent = `Haze ${info.version}`;
+      document.getElementById("commit").textContent = info.commit;
+      document.getElementById("commit-row").hidden = !info.commit;
+      document.getElementById("version").textContent = full;
+      const close = () => invoke("about_close");
+      document.getElementById("ok").onclick = close;
+      document.getElementById("copy").onclick = () => {
+        const text = info.commit ? `Haze ${full}\nCommit ${info.commit}` : `Haze ${full}`;
+        void navigator.clipboard.writeText(text).finally(close);
+      };
+      addEventListener("keydown", (e) => {
+        if (e.key === "Escape" || (e.key === "Enter" && e.target.tagName !== "BUTTON")) close();
+      });
+      document.getElementById("ok").focus();
+      // Shown once drawn, or it flashes white first.
+      requestAnimationFrame(() => invoke("about_ready"));
+    </script>
+  </body>
+</html>
