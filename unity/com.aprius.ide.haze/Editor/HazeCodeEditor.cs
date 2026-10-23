@@ -108,6 +108,9 @@ namespace Haze.Ide.Editor
 
         public bool OpenProject(string filePath = "", int line = -1, int column = -1)
         {
+            // Unity asks the code editor first for every asset opened; false
+            // lets it open the rest itself (a .prefab in Prefab Mode, a scene...).
+            if (!string.IsNullOrEmpty(filePath) && !IsHandled(filePath)) return false;
             var exe = Discovery.Executable(CodeEditor.CurrentEditorInstallation);
             if (exe == null) return false;
             if (!File.Exists(ProjectGeneration.SolutionPath)) ProjectGeneration.Sync();
@@ -128,6 +131,17 @@ namespace Haze.Ide.Editor
                 CreateNoWindow = true,
             });
             return true;
+        }
+
+        static readonly string[] k_Always = { "asmdef", "asmref", "rsp", "additionalfile" };
+
+        /// <summary>Unity's built-in script extensions, those added in Project Settings | Editor, and the files that shape compilation.</summary>
+        static bool IsHandled(string path)
+        {
+            var ext = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
+            return ext.Length > 0 && (k_Always.Contains(ext)
+                || EditorSettings.projectGenerationBuiltinExtensions.Any(e => e.TrimStart('.').ToLowerInvariant() == ext)
+                || EditorSettings.projectGenerationUserExtensions.Any(e => e.TrimStart('.').ToLowerInvariant() == ext));
         }
 
         static string Quote(string arg) => "\"" + arg.Replace("\"", "\\\"") + "\"";
