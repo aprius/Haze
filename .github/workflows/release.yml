@@ -98,11 +98,11 @@ jobs:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName: Haze ${{ github.ref_name }}
           releaseBody: |
-            **macOS (Homebrew)**
+            **macOS**
             ```
-            brew tap aprius/haze https://github.com/aprius/Haze
-            brew install --cask haze
+            curl -fsSL https://raw.githubusercontent.com/aprius/Haze/main/install.sh | bash
             ```
+            Or with Homebrew: `brew tap aprius/haze https://github.com/aprius/Haze && brew install --cask haze`
             Or download an installer below: `.dmg` (macOS, Intel + Apple Silicon), `-setup.exe` / `.msi` (Windows), `.deb` / `.rpm` / `.AppImage` (Linux).
           releaseDraft: false
           prerelease: false
@@ -115,7 +115,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          exe="$RUNNER_TEMP/Haze_${GITHUB_REF_NAME#v}_x64.exe"
+          exe="Haze_${GITHUB_REF_NAME#v}_x64.exe"
           cp src-tauri/target/release/haze.exe "$exe"
           gh release upload "$GITHUB_REF_NAME" "$exe" --clobber
 

@@ -128,15 +128,28 @@ Works with any CLI agent: if it runs in a terminal, it runs in Haze. Status badg
 
 ## Install
 
-**macOS (Homebrew)**: one universal build for Apple Silicon and Intel.
+**macOS**: one universal build for Apple Silicon and Intel.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aprius/Haze/main/install.sh | bash
+```
+
+Or with Homebrew:
 
 ```bash
 brew tap aprius/haze https://github.com/aprius/Haze
 brew install --cask haze
-haze update                # update (restarts Haze if it is open)
+```
+
+**Update** (Homebrew):
+
+```bash
+haze update
 ```
 
 **Windows / Linux**: download from [Releases](https://github.com/aprius/Haze/releases): `-setup.exe` or `.msi` (Windows), `.deb`, `.rpm` or `.AppImage` (Linux).
+
+**Updating**: when a new version is out, click **Update Now** (the arrow above Settings). Haze downloads it, installs it and restarts; terminals keep running. A Homebrew install updates through Homebrew in Terminal. A `.deb`/`.rpm` install, or an `.msi` one under Program Files, opens the release page instead.
 
 **For C#**: if the Roslyn Language Server (or the .NET SDK) is missing, Haze offers a one-click install.
 
