@@ -1157,7 +1157,8 @@ export function EditorArea({ project }: { project: Project }) {
       )}
       {active && meta?.status === "text" && meta.diskChanged && <DiskBanner path={active} />}
       <div className="editor-stack">
-        <div ref={host} className="monaco-host" style={{ visibility: ready && !image && !special ? "visible" : "hidden" }} />
+        {/* Hidden under the preview too: over a background image the preview is glass, and the source would show through. */}
+        <div ref={host} className="monaco-host" style={{ visibility: ready && !image && !special && !showMd ? "visible" : "hidden" }} />
         {diff && <DiffView key={active} spec={diff} />}
         {merge && <MergeView key={active} project={project} spec={merge} />}
         {showMd && <MarkdownPreview path={active!} />}

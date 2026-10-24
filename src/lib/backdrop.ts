@@ -4,7 +4,7 @@
 // terminals draw with a transparent background (useGlass, read by monaco.ts
 // and TerminalPanel). Popups show the same image, fixed to the window, under
 // their own tint. The settings are in localStorage like the theme, the image in
-// IndexedDB (see readBase); it fades in once loaded. A GIF or video plays
+// IndexedDB (see readBase); it fades in once loaded. A video plays
 // (backdropLive.ts), its first frame standing in where it does not.
 import { create } from "zustand";
 import { api, errorMessage } from "./ipc";
@@ -25,21 +25,21 @@ export interface BackdropSettings {
   ambient: number;
   /** The terminal island glows in its agents' state instead: working, waiting for you, done, failed. */
   agentGlow: boolean;
-  /** A GIF or video stops while no Haze window has focus. */
+  /** A video stops while no Haze window has focus. */
   pauseInBackground: boolean;
 }
 
 const KEY = "haze.backdrop";
 export const DEFAULT_BACKDROP: BackdropSettings = { path: null, blur: 12, dim: 30, opacity: 82, popupOpacity: 80, ambient: 40, agentGlow: true, pauseInBackground: false };
 export const BACKDROP_LIMITS = { blur: [0, 40], dim: [0, 90], opacity: [40, 100], popupOpacity: [50, 100], ambient: [0, 100] } as const;
-export const BACKDROP_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "webm", "mov", "m4v"];
+// No GIFs: playing one cost three to seven times what a video does (docs/BACKGROUND.md).
+export const BACKDROP_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "bmp", "mp4", "webm", "mov", "m4v"];
 
 const MIME: Record<string, string> = {
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
   webp: "image/webp",
-  gif: "image/gif",
   bmp: "image/bmp",
   mp4: "video/mp4",
   m4v: "video/mp4",
@@ -47,9 +47,9 @@ const MIME: Record<string, string> = {
   webm: "video/webm",
 };
 
-/** What moves: a GIF or a video plays (src/lib/backdropLive.ts); an image is still. */
-export type MediaKind = "image" | "gif" | "video";
-export const mediaKind = (type: string): MediaKind => (type === "image/gif" ? "gif" : type.startsWith("video/") ? "video" : "image");
+/** What moves: a video plays (src/lib/backdropLive.ts); an image is still. */
+export type MediaKind = "image" | "video";
+export const mediaKind = (type: string): MediaKind => (type.startsWith("video/") ? "video" : "image");
 
 const clamp = (n: unknown, [lo, hi]: readonly [number, number], fallback: number) =>
   Number.isFinite(Number(n)) ? Math.round(Math.min(hi, Math.max(lo, Number(n)))) : fallback;
@@ -80,10 +80,10 @@ export const useBackdrop = create<BackdropSettings>(() => initial());
 
 /**
  * The image as shown, already blurred (an object URL), or why it could not be
- * read. For a GIF or video, `url` is its first frame (popups and windows of
- * their own show that), and `live` the file itself, which the frame plays.
+ * read. For a video, `url` is its first frame (popups and windows of their own
+ * show that), and `live` the URL the frame plays it from.
  */
-export const useBackdropImage = create<{ url: string | null; error: string | null; live: { url: string; kind: "gif" | "video" } | null }>(
+export const useBackdropImage = create<{ url: string | null; error: string | null; live: string | null }>(
   () => ({ url: null, error: null, live: null }),
 );
 
@@ -171,7 +171,8 @@ async function videoFrame(url: string): Promise<{ src: HTMLVideoElement; w: numb
   // Served from loopback: drawn onto a canvas, it must not taint it.
   video.crossOrigin = "anonymous";
   video.src = url;
-  const done = () => video.removeAttribute("src");
+  // Without load(), the element keeps its decoder and connection until collected.
+  const done = () => (video.removeAttribute("src"), video.load());
   try {
     await new Promise<void>((resolve, reject) => {
       video.onloadeddata = () => resolve();
@@ -187,16 +188,16 @@ async function videoFrame(url: string): Promise<{ src: HTMLVideoElement; w: numb
 // The image is read and decoded once, when chosen: kept in IndexedDB at the
 // screen's size (`base`), and blurred as last shown (`shown`), so a start shows
 // the latter at once, with no IPC or decoding, and the background survives the
-// file moving. Nothing keeps the full-size image in memory. A GIF is kept as
-// it is, to play; a video is copied into the app's cache instead, and played
-// from there over loopback HTTP (src-tauri/src/media.rs), which WebKit plays
-// with half the CPU a blob: URL takes.
+// file moving. Nothing keeps the full-size image in memory. A video is copied
+// into the app's cache instead, and played from there over loopback HTTP
+// (src-tauri/src/media.rs), which WebKit plays with half the CPU a blob: URL
+// takes.
 const DB = "haze-backdrop";
 const STORE = "images";
 interface Stored {
   path: string;
   blur?: number;
-  /** The image at the screen's size, the GIF, or the still as shown. */
+  /** The image at the screen's size, or the still as shown. */
   blob?: Blob;
   /** A video's copy in the app's cache. */
   video?: string;
@@ -233,16 +234,25 @@ const toBlob = (canvas: HTMLCanvasElement) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("could not process the image"))), "image/jpeg", 0.9),
   );
 
+// One at a time: emptying the cache after copying a video would drop the copy.
+let caching: Promise<unknown> = Promise.resolve();
+function cacheVideo(path: string | null): Promise<string | null> {
+  const next = caching.then(() => api.cacheBackdrop(path));
+  caching = next.catch(() => {});
+  return next;
+}
+
 /**
  * The file at the screen's size (device pixels, so unblurred it stays sharp);
- * a GIF as it is, to play; a video copied into the app's cache.
+ * a video copied into the app's cache.
  */
 async function readBase(path: string): Promise<Stored> {
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   const type = MIME[ext] ?? "application/octet-stream";
-  if (mediaKind(type) === "video") return { path, video: (await api.cacheBackdrop(path))! };
+  if (mediaKind(type) === "video") return { path, video: (await cacheVideo(path))! };
+  // The copy of a video shown before.
+  void cacheVideo(null).catch(() => {});
   const blob = new Blob([await api.readMedia(path)], { type });
-  if (mediaKind(type) !== "image") return { path, blob };
   const img = await createImageBitmap(blob);
   try {
     const dpr = window.devicePixelRatio || 1;
@@ -263,7 +273,7 @@ async function readBase(path: string): Promise<Stored> {
 let base: Stored | null = null;
 let token = 0;
 
-/** What `b` is: a video, a GIF, or a still image. */
+/** What `b` is: a video or a still image. */
 const kindOf = (b: Stored): MediaKind => (b.video ? "video" : mediaKind(b.blob?.type ?? ""));
 
 /** A base read back from IndexedDB, as this version keeps it: a video by its copy, not its bytes. */
@@ -272,14 +282,10 @@ const usable = (b: Stored | undefined, path: string): b is Stored => b?.path ===
 let liveToken = 0;
 async function setLive(b: Stored | null): Promise<void> {
   const t = ++liveToken;
-  const prev = useBackdropImage.getState().live;
-  if (prev?.url.startsWith("blob:")) URL.revokeObjectURL(prev.url);
-  if (prev) useBackdropImage.setState({ live: null });
-  const kind = b ? kindOf(b) : "image";
-  if (!b || kind === "image") return;
-  const url = b.video ? await api.mediaUrl(b.video) : URL.createObjectURL(b.blob!);
-  if (t !== liveToken) return void (url.startsWith("blob:") && URL.revokeObjectURL(url));
-  useBackdropImage.setState({ live: { url, kind } });
+  if (useBackdropImage.getState().live) useBackdropImage.setState({ live: null });
+  if (!b?.video) return;
+  const url = await api.mediaUrl(b.video);
+  if (t === liveToken) useBackdropImage.setState({ live: url });
 }
 
 async function render(): Promise<void> {
@@ -296,7 +302,7 @@ async function render(): Promise<void> {
     let out = base.blob;
     if (kind === "video") {
       // From the URL the background plays from: asking for another would end it.
-      const url = useBackdropImage.getState().live?.url;
+      const url = useBackdropImage.getState().live;
       if (!url) throw new Error("cannot play this video");
       const f = await videoFrame(url);
       try {
@@ -304,8 +310,7 @@ async function render(): Promise<void> {
       } finally {
         f.done();
       }
-    } else if (blur > 0 || kind === "gif") {
-      // A GIF's first frame: what plays is drawn by backdropLive.ts.
+    } else if (blur > 0) {
       const img = await createImageBitmap(base.blob!);
       try {
         out = await blurred(img, img.width, img.height, blur);
@@ -327,7 +332,7 @@ async function load(path: string | null, start = false): Promise<void> {
   void setLive(null);
   if (!path) {
     clearStored();
-    void api.cacheBackdrop(null).catch(() => {});
+    void cacheVideo(null).catch(() => {});
     return show(null, null);
   }
   try {

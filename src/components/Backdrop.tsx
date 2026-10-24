@@ -3,7 +3,7 @@
 import { useBackdropImage } from "../lib/backdrop";
 import { liveRef } from "../lib/backdropLive";
 
-/** `live`: in the main window, where a GIF or video plays; elsewhere its first frame. */
+/** `live`: in the main window, where a video plays; elsewhere its first frame. */
 export function Backdrop({ live }: { live?: boolean }) {
   const url = useBackdropImage((s) => s.url);
   if (!url) return null;

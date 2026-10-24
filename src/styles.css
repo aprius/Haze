@@ -313,10 +313,9 @@ kbd {
   animation: backdrop-image-in 0.3s ease-out;
 }
 
-/* A GIF or video playing (src/lib/backdropLive.ts), dimmed like the still. A
-   blurred video overflows the window by twice the radius, so its edges blur
-   into the picture rather than into the frame colour; the window clips it. A
-   GIF comes blurred on a canvas. */
+/* A video playing (src/lib/backdropLive.ts), dimmed like the still. Blurred,
+   it overflows the window by twice the radius, so its edges blur into the
+   picture rather than into the frame colour; the window clips it. */
 .backdrop-live,
 .backdrop-media {
   position: absolute;
@@ -440,6 +439,11 @@ kbd {
   --bg: color-mix(in srgb, var(--bg-solid) 45%, transparent);
   --editor-bg: color-mix(in srgb, var(--editor-bg-solid) 60%, transparent);
   background: color-mix(in srgb, var(--panel-solid) var(--popup-glass), transparent);
+}
+
+/* Code in a Markdown preview keeps a tint: --panel is clear glass here. */
+:root[data-ui="islands"][data-backdrop] .markdown-body :is(code, pre) {
+  background: color-mix(in srgb, var(--panel-solid) 60%, transparent);
 }
 
 /* Code in the frosted surfaces (Search Everywhere's and Find's previews, diffs in

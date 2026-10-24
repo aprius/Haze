@@ -305,13 +305,13 @@ function BackdropSection() {
     <div className="settings-card">
       <div className="settings-row static">
         <div className="settings-row-text">
-          <div>Background image</div>
+          <div>Background</div>
           {path ? (
             <div className="muted small settings-path" title={path}>
               {path}
             </div>
           ) : (
-            <div className="muted small">An image, GIF or video (MP4, WebM, MOV) behind the panels, which turn to tinted glass over it.</div>
+            <div className="muted small">An image or video (MP4, WebM, MOV) behind the panels, which turn to tinted glass over it.</div>
           )}
         </div>
         {path && (
@@ -353,7 +353,7 @@ function BackdropSection() {
             <label className="settings-row settings-backdrop-switch">
               <div className="settings-row-text">
                 <div>Pause in background</div>
-                <div className="muted small">The GIF or video stops while another app has focus, and plays on when you come back.</div>
+                <div className="muted small">The video stops while another app has focus, and plays on when you come back.</div>
               </div>
               <span className="switch">
                 <input type="checkbox" role="switch" checked={pauseInBackground} onChange={(e) => setBackdrop({ pauseInBackground: e.target.checked })} />

@@ -18,7 +18,7 @@
 import { useTerminals } from "../store/terminals";
 import { useWorkspace } from "../store/workspace";
 import { useBackdrop, useBackdropImage } from "./backdrop";
-import { useTheme } from "./theme";
+import { useGlass, useTheme } from "./theme";
 
 const GW = 48;
 const GH = 30;
@@ -81,7 +81,7 @@ function toGrid(src: CanvasImageSource, sw: number, sh: number): Uint8ClampedArr
 let gridCtx: CanvasRenderingContext2D | null = null;
 
 /**
- * A frame of a playing GIF or video (backdropLive.ts), or null once it stops:
+ * A frame of a playing video (backdropLive.ts), or null once it stops:
  * the light eases towards its colours rather than jumping to them.
  */
 export function sampleLive(src: CanvasImageSource | null, sw = 0, sh = 0): void {
@@ -192,9 +192,10 @@ async function update(): Promise<void> {
   const url = useBackdropImage.getState().url;
   const strength = useBackdrop.getState().ambient;
   const agent = (lastAgent = agentLight());
-  if (!url || (strength <= 0 && !agent)) return setOn(false);
+  // Not shown outside the islands layout: not drawn either.
+  if (!url || !useGlass.getState().on || (strength <= 0 && !agent)) return setOn(false);
   if (strength > 0) await sample(url);
-  if (!grid && !agent) return;
+  if (!grid && !agent) return setOn(false);
   const agentFill = agent && agentColour(agent);
   const w = Math.max(1, Math.round(innerWidth * SCALE));
   const h = Math.max(1, Math.round(innerHeight * SCALE));
@@ -244,6 +245,7 @@ async function update(): Promise<void> {
 }
 
 useBackdropImage.subscribe(schedule);
+useGlass.subscribe(schedule);
 useBackdrop.subscribe((s, prev) => (s.ambient !== prev.ambient || s.agentGlow !== prev.agentGlow) && schedule());
 // Agents report on every tool they use: drawn again only when the light changes.
 let lastAgent: AgentLight | null = null;
