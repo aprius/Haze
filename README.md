@@ -108,6 +108,33 @@ Rider's shortcuts out of the box (the ReSharper keymap on macOS), fully remappab
 </td>
 <td width="50%"><img src="docs/keymap.png" alt="Keymap settings" width="100%"></td>
 </tr>
+<tr>
+<td width="50%" valign="middle">
+
+### Glass view
+
+Put an image or a video behind the Islands layout: the panels and popups turn into frosted glass over it, lit in its colours by an ambient glow. Blur, dim and opacity are adjustable, and a 1080p video costs about 4 % of one core (Apple M4).
+
+[Docs →](docs/BACKGROUND.md)
+
+</td>
+<td width="50%"><img src="docs/glass-view.png" alt="Glass view over a background image" width="100%"></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="50%"><img src="docs/glass-popup.png" alt="Search Everywhere as frosted glass" width="100%"></td>
+<td width="50%"><img src="docs/glass-video.webp" alt="Glass view over a video background" width="100%"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/glass-video-fire.webp" alt="Ambient glow over a video background" width="100%"></td>
+<td width="50%" valign="middle">
+
+Shown with blur 10, dim 40 %, panel opacity 65 %, popup opacity 65 % and ambient glow 55 %.
+
+</td>
+</tr>
 </table>
 
 **Also in the box:**
