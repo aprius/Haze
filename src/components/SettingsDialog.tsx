@@ -333,7 +333,7 @@ function BackdropSection() {
           <BackdropSlider field="opacity" label="Panel opacity" unit="%" />
           <BackdropSlider field="popupOpacity" label="Popup opacity" unit="%" />
           {!isDefault && (
-            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop({ ...DEFAULT_BACKDROP, path })}>
+            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop({ blur: DEFAULT_BACKDROP.blur, dim: DEFAULT_BACKDROP.dim, opacity: DEFAULT_BACKDROP.opacity, popupOpacity: DEFAULT_BACKDROP.popupOpacity })}>
               Reset
             </button>
           )}

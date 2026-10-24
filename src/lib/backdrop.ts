@@ -3,8 +3,8 @@
 // theme's frame colour, and each island is tinted glass over it: editors and
 // terminals draw with a transparent background (useGlass, read by monaco.ts
 // and TerminalPanel). Popups show the same image, fixed to the window, under
-// their own tint. The settings are in localStorage like the theme; the image is
-// read from its path at startup, so it fades in once loaded.
+// their own tint. The settings are in localStorage like the theme, the image in
+// IndexedDB (see readBase); it fades in once loaded.
 import { create } from "zustand";
 import { api, errorMessage } from "./ipc";
 import { useGlass, useUiStyle } from "./theme";
@@ -116,33 +116,130 @@ async function blurred(img: ImageBitmap, blur: number): Promise<Blob> {
   );
 }
 
-let source: { blob: Blob; img: ImageBitmap } | null = null;
+// The image is read and decoded once, when chosen: kept in IndexedDB at the
+// screen's size (`base`), and blurred as last shown (`shown`), so a start only
+// reads the latter, with no IPC or decoding, and the background survives the
+// file moving. Nothing keeps the full-size image in memory.
+const DB = "haze-backdrop";
+const STORE = "images";
+interface Stored {
+  path: string;
+  blur?: number;
+  blob: Blob;
+}
+
+function idb<T>(mode: IDBTransactionMode, op: (s: IDBObjectStore) => IDBRequest<T>): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    try {
+      const open = indexedDB.open(DB, 1);
+      open.onupgradeneeded = () => open.result.createObjectStore(STORE);
+      open.onerror = () => resolve(undefined);
+      open.onsuccess = () => {
+        const db = open.result;
+        try {
+          const req = op(db.transaction(STORE, mode).objectStore(STORE));
+          req.onsuccess = () => (db.close(), resolve(req.result));
+          req.onerror = () => (db.close(), resolve(undefined));
+        } catch {
+          db.close();
+          resolve(undefined);
+        }
+      };
+    } catch {
+      resolve(undefined);
+    }
+  });
+}
+const getStored = (key: "base" | "shown") => idb<Stored>("readonly", (s) => s.get(key));
+const putStored = (key: "base" | "shown", v: Stored) => void idb("readwrite", (s) => s.put(v, key));
+const clearStored = () => void idb("readwrite", (s) => s.clear());
+
+const toBlob = (canvas: HTMLCanvasElement) =>
+  new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("could not process the image"))), "image/jpeg", 0.9),
+  );
+
+/** The file at the screen's size (device pixels, so unblurred it stays sharp); a GIF as it is, to keep playing. */
+async function readBase(path: string): Promise<Blob> {
+  const data = await api.readImage(path);
+  const blob = await (await fetch(`data:${data.mime};base64,${data.base64}`)).blob();
+  if (data.mime === "image/gif") return blob;
+  const img = await createImageBitmap(blob);
+  try {
+    const dpr = window.devicePixelRatio || 1;
+    const k = Math.max((screen.width * dpr) / img.width, (screen.height * dpr) / img.height);
+    if (k >= 1) return blob;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.width * k);
+    canvas.height = Math.round(img.height * k);
+    const ctx = canvas.getContext("2d")!;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return await toBlob(canvas);
+  } finally {
+    img.close();
+  }
+}
+
+let base: Stored | null = null;
 let token = 0;
 
 async function render(): Promise<void> {
   const t = ++token;
-  if (!source) return show(null, null);
+  if (!base) {
+    // The slider moved before the start read the image back.
+    const path = useBackdrop.getState().path;
+    return path ? load(path, true) : show(null, null);
+  }
+  const { path, blob } = base;
   const blur = useBackdrop.getState().blur;
   try {
-    // Unblurred, the file as it is: full resolution, and a GIF still plays.
-    const blob = blur > 0 ? await blurred(source.img, blur) : source.blob;
-    if (t === token) show(URL.createObjectURL(blob), null);
+    let out = blob;
+    if (blur > 0) {
+      const img = await createImageBitmap(blob);
+      try {
+        out = await blurred(img, blur);
+      } finally {
+        img.close();
+      }
+    }
+    if (t !== token) return;
+    show(URL.createObjectURL(out), null);
+    putStored("shown", { path, blur, blob: out });
   } catch (e) {
     if (t === token) show(null, errorMessage(e));
   }
 }
 
-async function load(path: string | null): Promise<void> {
+async function load(path: string | null, start = false): Promise<void> {
   const t = ++token;
-  source?.img.close();
-  source = null;
-  if (!path) return show(null, null);
+  base = null;
+  if (!path) {
+    clearStored();
+    return show(null, null);
+  }
   try {
-    const data = await api.readImage(path);
-    const blob = await (await fetch(`data:${data.mime};base64,${data.base64}`)).blob();
-    const img = await createImageBitmap(blob);
-    if (t !== token) return img.close();
-    source = { blob, img };
+    if (start) {
+      const shown = await getStored("shown");
+      if (t !== token) return;
+      if (shown?.path === path && shown.blur === useBackdrop.getState().blur) {
+        show(URL.createObjectURL(shown.blob), null);
+        // For blurring again when the slider moves.
+        const stored = await getStored("base");
+        if (t === token && stored?.path === path) base = stored;
+        return;
+      }
+      const stored = await getStored("base");
+      if (t !== token) return;
+      if (stored?.path === path) {
+        base = stored;
+        return await render();
+      }
+    }
+    const blob = await readBase(path);
+    if (t !== token) return;
+    base = { path, blob };
+    putStored("base", base);
     await render();
   } catch (e) {
     if (t === token) show(null, errorMessage(e));
@@ -150,7 +247,7 @@ async function load(path: string | null): Promise<void> {
 }
 
 applyVars(useBackdrop.getState());
-void load(useBackdrop.getState().path);
+void load(useBackdrop.getState().path, true);
 useUiStyle.subscribe(applyGlass);
 
 // The blur slider re-blurs once it rests, not on every step of a drag.
@@ -164,7 +261,8 @@ export function setBackdrop(patch: Partial<BackdropSettings>): void {
   } catch {}
   applyVars(next);
   useBackdrop.setState(next);
-  if (next.path !== prev.path) void load(next.path);
+  // Choosing the same file again reads it again: it may have changed.
+  if (patch.path !== undefined) void load(next.path);
   else if (next.blur !== prev.blur) {
     clearTimeout(reblur);
     reblur = setTimeout(() => void render(), 150);
