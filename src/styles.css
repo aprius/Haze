@@ -337,6 +337,16 @@ kbd {
   background: color-mix(in srgb, var(--editor-bg-solid) var(--glass), transparent);
 }
 
+/* Ambient glow (src/lib/ambient.ts sets data-ambient and each island's colours):
+   light cast from each edge, in the colours of the image behind it. */
+:root[data-ui="islands"][data-backdrop][data-ambient] :is(.sidebar, .center, .side-dock, .bottom) {
+  box-shadow:
+    0 -6px 22px -6px var(--glow-t, transparent),
+    6px 0 22px -6px var(--glow-r, transparent),
+    0 6px 22px -6px var(--glow-b, transparent),
+    -6px 0 22px -6px var(--glow-l, transparent);
+}
+
 /* xterm.css paints the viewport black; xterm 6 no longer covers it with the
    theme's background, which is transparent here (terminalTheme in theme.ts). */
 :root[data-ui="islands"][data-backdrop] .xterm .xterm-viewport {

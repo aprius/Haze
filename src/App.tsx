@@ -5,6 +5,7 @@ import { FileTree, ProjectViewHeader } from "./components/FileTree";
 import { FindInFiles } from "./components/FindInFiles";
 import { SearchEverywhere } from "./components/SearchEverywhere";
 import { Backdrop } from "./components/Backdrop";
+import { glowRef } from "./lib/ambient";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, toggleBottom, UpdateProgressCard, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
@@ -46,14 +47,14 @@ function ProjectView({ project }: { project: Project }) {
       <div className="main-row">
         {ui.sidebarVisible && (
           <>
-            <div className="sidebar" style={{ width: ui.sidebarWidth }}>
+            <div ref={glowRef} className="sidebar" style={{ width: ui.sidebarWidth }}>
               <ProjectViewHeader project={project} onHide={() => updateUi(project.id, { sidebarVisible: false })} />
               <FileTree project={project} />
             </div>
             <Splitter vertical value={ui.sidebarWidth} min={160} max={800} onChange={(v) => updateUi(project.id, { sidebarWidth: v })} />
           </>
         )}
-        <div className="center">
+        <div ref={glowRef} className="center">
           <EditorArea project={project} />
         </div>
         {ui.terminalVisible && (
@@ -66,7 +67,7 @@ function ProjectView({ project }: { project: Project }) {
               invert
               onChange={(v) => updateUi(project.id, { terminalWidth: v })}
             />
-            <div className="side-dock" style={{ width: ui.terminalWidth }}>
+            <div ref={glowRef} className="side-dock" style={{ width: ui.terminalWidth }}>
               <TerminalPanel project={project} />
             </div>
           </>
@@ -82,7 +83,7 @@ function ProjectView({ project }: { project: Project }) {
             invert
             onChange={(v) => updateUi(project.id, { bottomHeight: v })}
           />
-          <div className="bottom" style={{ height: ui.bottomHeight }}>
+          <div ref={glowRef} className="bottom" style={{ height: ui.bottomHeight }}>
             <BottomPanel project={project} tab={ui.bottomTab} />
           </div>
         </>

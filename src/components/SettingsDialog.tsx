@@ -292,7 +292,7 @@ function BackdropSlider({ field, label, unit }: { field: Exclude<keyof BackdropS
 /** Background image, islands layout only (src/lib/backdrop.ts). */
 function BackdropSection() {
   const path = useBackdrop((s) => s.path);
-  const isDefault = useBackdrop((s) => (["blur", "dim", "opacity", "popupOpacity"] as const).every((k) => s[k] === DEFAULT_BACKDROP[k]));
+  const isDefault = useBackdrop((s) => (["blur", "dim", "opacity", "popupOpacity", "ambient"] as const).every((k) => s[k] === DEFAULT_BACKDROP[k]));
   const error = useBackdropImage((s) => s.error);
   const islands = useUiStyle((s) => s.style === "islands");
   return (
@@ -332,8 +332,9 @@ function BackdropSection() {
           <BackdropSlider field="dim" label="Dim" unit="%" />
           <BackdropSlider field="opacity" label="Panel opacity" unit="%" />
           <BackdropSlider field="popupOpacity" label="Popup opacity" unit="%" />
+          <BackdropSlider field="ambient" label="Ambient glow" unit="%" />
           {!isDefault && (
-            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop({ blur: DEFAULT_BACKDROP.blur, dim: DEFAULT_BACKDROP.dim, opacity: DEFAULT_BACKDROP.opacity, popupOpacity: DEFAULT_BACKDROP.popupOpacity })}>
+            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop({ blur: DEFAULT_BACKDROP.blur, dim: DEFAULT_BACKDROP.dim, opacity: DEFAULT_BACKDROP.opacity, popupOpacity: DEFAULT_BACKDROP.popupOpacity, ambient: DEFAULT_BACKDROP.ambient })}>
               Reset
             </button>
           )}

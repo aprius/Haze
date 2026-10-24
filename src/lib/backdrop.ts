@@ -20,11 +20,13 @@ export interface BackdropSettings {
   opacity: number;
   /** How opaque the frosted popups (menus, Search Everywhere, Find…) are, 50–100 %. */
   popupOpacity: number;
+  /** How strongly each island glows in the image's colours (src/lib/ambient.ts), 0 (off)–100 %. */
+  ambient: number;
 }
 
 const KEY = "haze.backdrop";
-export const DEFAULT_BACKDROP: BackdropSettings = { path: null, blur: 12, dim: 30, opacity: 82, popupOpacity: 80 };
-export const BACKDROP_LIMITS = { blur: [0, 40], dim: [0, 90], opacity: [40, 100], popupOpacity: [50, 100] } as const;
+export const DEFAULT_BACKDROP: BackdropSettings = { path: null, blur: 12, dim: 30, opacity: 82, popupOpacity: 80, ambient: 40 };
+export const BACKDROP_LIMITS = { blur: [0, 40], dim: [0, 90], opacity: [40, 100], popupOpacity: [50, 100], ambient: [0, 100] } as const;
 export const BACKDROP_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif", "bmp"];
 
 const clamp = (n: unknown, [lo, hi]: readonly [number, number], fallback: number) =>
@@ -38,6 +40,7 @@ function sanitize(s: Partial<BackdropSettings>): BackdropSettings {
     dim: clamp(s.dim, BACKDROP_LIMITS.dim, d.dim),
     opacity: clamp(s.opacity, BACKDROP_LIMITS.opacity, d.opacity),
     popupOpacity: clamp(s.popupOpacity, BACKDROP_LIMITS.popupOpacity, d.popupOpacity),
+    ambient: clamp(s.ambient, BACKDROP_LIMITS.ambient, d.ambient),
   };
 }
 
