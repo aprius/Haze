@@ -289,12 +289,17 @@ function BackdropSlider({ field, label, unit }: { field: keyof typeof BACKDROP_L
   );
 }
 
+/** What Reset puts back: everything but the file. */
+const BACKDROP_TUNING = ["blur", "dim", "opacity", "popupOpacity", "ambient", "agentGlow", "pauseInBackground"] as const;
+
 /** Background image, islands layout only (src/lib/backdrop.ts). */
 function BackdropSection() {
   const path = useBackdrop((s) => s.path);
-  const isDefault = useBackdrop((s) => (["blur", "dim", "opacity", "popupOpacity", "ambient", "agentGlow"] as const).every((k) => s[k] === DEFAULT_BACKDROP[k]));
+  const isDefault = useBackdrop((s) => BACKDROP_TUNING.every((k) => s[k] === DEFAULT_BACKDROP[k]));
   const error = useBackdropImage((s) => s.error);
+  const moving = useBackdropImage((s) => !!s.live);
   const agentGlow = useBackdrop((s) => s.agentGlow);
+  const pauseInBackground = useBackdrop((s) => s.pauseInBackground);
   const islands = useUiStyle((s) => s.style === "islands");
   return (
     <div className="settings-card">
@@ -344,8 +349,20 @@ function BackdropSection() {
               <span />
             </span>
           </label>
+          {moving && (
+            <label className="settings-row settings-backdrop-switch">
+              <div className="settings-row-text">
+                <div>Pause in background</div>
+                <div className="muted small">The GIF or video stops while another app has focus, and plays on when you come back.</div>
+              </div>
+              <span className="switch">
+                <input type="checkbox" role="switch" checked={pauseInBackground} onChange={(e) => setBackdrop({ pauseInBackground: e.target.checked })} />
+                <span />
+              </span>
+            </label>
+          )}
           {!isDefault && (
-            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop({ blur: DEFAULT_BACKDROP.blur, dim: DEFAULT_BACKDROP.dim, opacity: DEFAULT_BACKDROP.opacity, popupOpacity: DEFAULT_BACKDROP.popupOpacity, ambient: DEFAULT_BACKDROP.ambient, agentGlow: DEFAULT_BACKDROP.agentGlow })}>
+            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop(Object.fromEntries(BACKDROP_TUNING.map((k) => [k, DEFAULT_BACKDROP[k]])))}>
               Reset
             </button>
           )}

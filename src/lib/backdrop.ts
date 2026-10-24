@@ -25,10 +25,12 @@ export interface BackdropSettings {
   ambient: number;
   /** The terminal island glows in its agents' state instead: working, waiting for you, done, failed. */
   agentGlow: boolean;
+  /** A GIF or video stops while no Haze window has focus. */
+  pauseInBackground: boolean;
 }
 
 const KEY = "haze.backdrop";
-export const DEFAULT_BACKDROP: BackdropSettings = { path: null, blur: 12, dim: 30, opacity: 82, popupOpacity: 80, ambient: 40, agentGlow: true };
+export const DEFAULT_BACKDROP: BackdropSettings = { path: null, blur: 12, dim: 30, opacity: 82, popupOpacity: 80, ambient: 40, agentGlow: true, pauseInBackground: false };
 export const BACKDROP_LIMITS = { blur: [0, 40], dim: [0, 90], opacity: [40, 100], popupOpacity: [50, 100], ambient: [0, 100] } as const;
 export const BACKDROP_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "mp4", "webm", "mov", "m4v"];
 
@@ -62,6 +64,7 @@ function sanitize(s: Partial<BackdropSettings>): BackdropSettings {
     popupOpacity: clamp(s.popupOpacity, BACKDROP_LIMITS.popupOpacity, d.popupOpacity),
     ambient: clamp(s.ambient, BACKDROP_LIMITS.ambient, d.ambient),
     agentGlow: typeof s.agentGlow === "boolean" ? s.agentGlow : d.agentGlow,
+    pauseInBackground: typeof s.pauseInBackground === "boolean" ? s.pauseInBackground : d.pauseInBackground,
   };
 }
 
@@ -160,36 +163,43 @@ async function blurred(src: CanvasImageSource, sw: number, sh: number, blur: num
 }
 
 /** A video's first frame, as a source to draw. */
-async function videoFrame(blob: Blob): Promise<{ src: HTMLVideoElement; w: number; h: number; done: () => void }> {
-  const url = URL.createObjectURL(blob);
+async function videoFrame(url: string): Promise<{ src: HTMLVideoElement; w: number; h: number; done: () => void }> {
   const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
   video.preload = "auto";
+  // Served from loopback: drawn onto a canvas, it must not taint it.
+  video.crossOrigin = "anonymous";
   video.src = url;
+  const done = () => video.removeAttribute("src");
   try {
     await new Promise<void>((resolve, reject) => {
       video.onloadeddata = () => resolve();
       video.onerror = () => reject(new Error("cannot play this video"));
     });
   } catch (e) {
-    URL.revokeObjectURL(url);
+    done();
     throw e;
   }
-  return { src: video, w: video.videoWidth, h: video.videoHeight, done: () => (video.removeAttribute("src"), URL.revokeObjectURL(url)) };
+  return { src: video, w: video.videoWidth, h: video.videoHeight, done };
 }
 
 // The image is read and decoded once, when chosen: kept in IndexedDB at the
 // screen's size (`base`), and blurred as last shown (`shown`), so a start shows
 // the latter at once, with no IPC or decoding, and the background survives the
-// file moving. Nothing keeps the full-size image in memory. A GIF or video is
-// kept as it is, to play.
+// file moving. Nothing keeps the full-size image in memory. A GIF is kept as
+// it is, to play; a video is copied into the app's cache instead, and played
+// from there over loopback HTTP (src-tauri/src/media.rs), which WebKit plays
+// with half the CPU a blob: URL takes.
 const DB = "haze-backdrop";
 const STORE = "images";
 interface Stored {
   path: string;
   blur?: number;
-  blob: Blob;
+  /** The image at the screen's size, the GIF, or the still as shown. */
+  blob?: Blob;
+  /** A video's copy in the app's cache. */
+  video?: string;
 }
 
 function idb<T>(mode: IDBTransactionMode, op: (s: IDBObjectStore) => IDBRequest<T>): Promise<T | undefined> {
@@ -223,23 +233,28 @@ const toBlob = (canvas: HTMLCanvasElement) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("could not process the image"))), "image/jpeg", 0.9),
   );
 
-/** The file at the screen's size (device pixels, so unblurred it stays sharp); a GIF or video as it is, to play. */
-async function readBase(path: string): Promise<Blob> {
+/**
+ * The file at the screen's size (device pixels, so unblurred it stays sharp);
+ * a GIF as it is, to play; a video copied into the app's cache.
+ */
+async function readBase(path: string): Promise<Stored> {
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-  const blob = new Blob([await api.readMedia(path)], { type: MIME[ext] ?? "application/octet-stream" });
-  if (mediaKind(blob.type) !== "image") return blob;
+  const type = MIME[ext] ?? "application/octet-stream";
+  if (mediaKind(type) === "video") return { path, video: (await api.cacheBackdrop(path))! };
+  const blob = new Blob([await api.readMedia(path)], { type });
+  if (mediaKind(type) !== "image") return { path, blob };
   const img = await createImageBitmap(blob);
   try {
     const dpr = window.devicePixelRatio || 1;
     const k = Math.max((screen.width * dpr) / img.width, (screen.height * dpr) / img.height);
-    if (k >= 1) return blob;
+    if (k >= 1) return { path, blob };
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(img.width * k);
     canvas.height = Math.round(img.height * k);
     const ctx = canvas.getContext("2d")!;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return await toBlob(canvas);
+    return { path, blob: await toBlob(canvas) };
   } finally {
     img.close();
   }
@@ -248,11 +263,23 @@ async function readBase(path: string): Promise<Blob> {
 let base: Stored | null = null;
 let token = 0;
 
-function setLive(b: Stored | null): void {
+/** What `b` is: a video, a GIF, or a still image. */
+const kindOf = (b: Stored): MediaKind => (b.video ? "video" : mediaKind(b.blob?.type ?? ""));
+
+/** A base read back from IndexedDB, as this version keeps it: a video by its copy, not its bytes. */
+const usable = (b: Stored | undefined, path: string): b is Stored => b?.path === path && (!!b.video || (!!b.blob && kindOf(b) !== "video"));
+
+let liveToken = 0;
+async function setLive(b: Stored | null): Promise<void> {
+  const t = ++liveToken;
   const prev = useBackdropImage.getState().live;
-  const kind = b ? mediaKind(b.blob.type) : "image";
-  if (prev) URL.revokeObjectURL(prev.url);
-  useBackdropImage.setState({ live: b && kind !== "image" ? { url: URL.createObjectURL(b.blob), kind } : null });
+  if (prev?.url.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+  if (prev) useBackdropImage.setState({ live: null });
+  const kind = b ? kindOf(b) : "image";
+  if (!b || kind === "image") return;
+  const url = b.video ? await api.mediaUrl(b.video) : URL.createObjectURL(b.blob!);
+  if (t !== liveToken) return void (url.startsWith("blob:") && URL.revokeObjectURL(url));
+  useBackdropImage.setState({ live: { url, kind } });
 }
 
 async function render(): Promise<void> {
@@ -262,13 +289,16 @@ async function render(): Promise<void> {
     const path = useBackdrop.getState().path;
     return path ? load(path, true) : show(null, null);
   }
-  const { path, blob } = base;
+  const { path } = base;
   const blur = useBackdrop.getState().blur;
-  const kind = mediaKind(blob.type);
+  const kind = kindOf(base);
   try {
-    let out = blob;
+    let out = base.blob;
     if (kind === "video") {
-      const f = await videoFrame(blob);
+      // From the URL the background plays from: asking for another would end it.
+      const url = useBackdropImage.getState().live?.url;
+      if (!url) throw new Error("cannot play this video");
+      const f = await videoFrame(url);
       try {
         out = await blurred(f.src, f.w, f.h, blur);
       } finally {
@@ -276,14 +306,14 @@ async function render(): Promise<void> {
       }
     } else if (blur > 0 || kind === "gif") {
       // A GIF's first frame: what plays is drawn by backdropLive.ts.
-      const img = await createImageBitmap(blob);
+      const img = await createImageBitmap(base.blob!);
       try {
         out = await blurred(img, img.width, img.height, blur);
       } finally {
         img.close();
       }
     }
-    if (t !== token) return;
+    if (t !== token || !out) return;
     show(URL.createObjectURL(out), null);
     putStored("shown", { path, blur, blob: out });
   } catch (e) {
@@ -294,9 +324,10 @@ async function render(): Promise<void> {
 async function load(path: string | null, start = false): Promise<void> {
   const t = ++token;
   base = null;
-  setLive(null);
+  void setLive(null);
   if (!path) {
     clearStored();
+    void api.cacheBackdrop(null).catch(() => {});
     return show(null, null);
   }
   try {
@@ -304,21 +335,30 @@ async function load(path: string | null, start = false): Promise<void> {
     if (start) {
       const last = await getStored("shown");
       if (t !== token) return;
-      if (last?.path === path && last.blur === useBackdrop.getState().blur) {
+      if (last?.path === path && last.blur === useBackdrop.getState().blur && last.blob) {
         show(URL.createObjectURL(last.blob), null);
         shown = true;
       }
       const stored = await getStored("base");
       if (t !== token) return;
-      if (stored?.path === path) base = stored;
+      if (usable(stored, path)) {
+        try {
+          await setLive(stored);
+          base = stored;
+        } catch {
+          // The cached copy is gone: read the file again.
+        }
+        if (t !== token) return;
+      }
     }
     if (!base) {
-      const blob = await readBase(path);
+      const read = await readBase(path);
       if (t !== token) return;
-      base = { path, blob };
+      await setLive(read);
+      if (t !== token) return;
+      base = read;
       putStored("base", base);
     }
-    setLive(base);
     if (!shown) await render();
   } catch (e) {
     if (t === token) show(null, errorMessage(e));

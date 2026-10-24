@@ -1169,9 +1169,18 @@ kbd {
 .xterm-host {
   width: 100%;
   height: 100%;
+  /* Output redraws rows many times a second (an agent's spinner): what changes
+     inside lays out and paints alone, not with the window around it. */
+  contain: strict;
   /* macOS's default smoothing, as native terminals draw; the UI's antialiased
      looks thin at terminal sizes. Only the DOM renderer honours it. */
   -webkit-font-smoothing: auto;
+}
+
+/* xterm 6 draws its own scrollbar over the viewport; the viewport's native one
+   was painted again with every redraw. */
+.xterm-host .xterm-viewport {
+  scrollbar-width: none;
 }
 
 /* Code in editors and diffs draws like the terminal; icons keep Monaco's own. */

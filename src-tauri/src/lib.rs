@@ -9,6 +9,7 @@ pub mod git_auth;
 mod git_log;
 mod git_ops;
 mod lsp;
+mod media;
 mod nesting;
 mod procinfo;
 pub mod pty;
@@ -330,6 +331,24 @@ async fn read_media(path: String) -> CmdResult<tauri::ipc::Response> {
         Ok(tauri::ipc::Response::new(std::fs::read(&path)?))
     })
     .await
+}
+
+/// Keeps a copy of a background video in the app's cache (src-tauri/src/media.rs),
+/// or with no path drops the one kept; returns the copy.
+#[tauri::command]
+async fn cache_backdrop(app: AppHandle, path: Option<String>) -> CmdResult<Option<String>> {
+    blocking(move || {
+        let dir = app.path().app_cache_dir().map_err(|e| anyhow::anyhow!("no cache directory: {e}"))?.join("backdrop");
+        Ok(media::cache(&dir, path.as_deref().map(std::path::Path::new))?
+            .map(|p| p.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
+/// A loopback URL that plays a background video (src-tauri/src/media.rs).
+#[tauri::command]
+async fn media_url(path: String) -> CmdResult<String> {
+    blocking(move || media::url(std::path::Path::new(&path))).await
 }
 
 #[tauri::command]
@@ -958,6 +977,25 @@ fn about_close(window: tauri::WebviewWindow) {
     }
 }
 
+/// Whether any Haze window has focus, for what slows down or pauses while Haze
+/// is in the background (a background video): `app://active` when it changes.
+fn track_focus(window: &tauri::Window, event: &tauri::WindowEvent) {
+    static FOCUSED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let label = window.label().to_owned();
+    let mut focused = FOCUSED.lock().unwrap();
+    let was = !focused.is_empty();
+    match event {
+        tauri::WindowEvent::Focused(true) if !focused.contains(&label) => focused.push(label),
+        tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed => focused.retain(|l| *l != label),
+        _ => return,
+    }
+    let now = !focused.is_empty();
+    drop(focused);
+    if now != was {
+        let _ = window.app_handle().emit("app://active", now);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     shell_env::load_login_path();
@@ -1019,6 +1057,7 @@ pub fn run() {
             app.manage(Pty::new(client));
             Ok(())
         })
+        .on_window_event(track_focus)
         .invoke_handler(tauri::generate_handler![
             take_open_requests,
             check_update,
@@ -1051,6 +1090,8 @@ pub fn run() {
             find_files,
             read_image,
             read_media,
+            cache_backdrop,
+            media_url,
             clipboard_file_paths,
             git_log,
             git_toplevel,

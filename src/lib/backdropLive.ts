@@ -7,11 +7,14 @@
 // instead, so a GIF's frames are drawn blurred onto a small canvas
 // (drawBlurred). GIF frames move on at most 30 times a second, 10 while Haze
 // is not focused; nothing plays while the window is hidden or the background
-// is not shown. The ambient glow follows the frames twice a second. Popups and
-// windows of their own show the first frame.
+// is not shown, nor, with Pause in background, while no Haze window has
+// focus. A video plays from loopback HTTP (backdrop.ts), not a blob: URL. The
+// ambient glow follows a GIF twice a second, a video every two seconds. Popups
+// and windows of their own show the first frame.
 import { blurredSize, drawBlurred, useBackdrop, useBackdropImage } from "./backdrop";
 import { sampleLive } from "./ambient";
 import { GifPlayer, parseGif } from "./gif";
+import { onAppActive } from "./ipc";
 import { useGlass } from "./theme";
 
 const host = document.createElement("div");
@@ -40,8 +43,12 @@ function source(): [HTMLVideoElement | HTMLCanvasElement, number, number] | null
   return null;
 }
 
-const playing = () => (!!video || !!gif) && !document.hidden && useGlass.getState().on;
-const interval = () => 1000 / (document.hasFocus() ? 30 : 10);
+/** Whether a Haze window has focus: any of them, popups' windows too. */
+let active = document.hasFocus();
+
+const playing = () =>
+  (!!video || !!gif) && !document.hidden && useGlass.getState().on && (active || !useBackdrop.getState().pauseInBackground);
+const interval = () => 1000 / (active ? 30 : 10);
 
 function gifTick(): void {
   timer = undefined;
@@ -64,7 +71,9 @@ function sample(): void {
   if (!playing()) return;
   const src: [CanvasImageSource, number, number] | null = canvas ? [canvas, canvas.width, canvas.height] : source();
   if (src && useBackdrop.getState().ambient > 0) sampleLive(...src);
-  sampler = setTimeout(sample, 500);
+  // Reading a video's frame costs WebKit more than drawing it: every 500 ms,
+  // 4% CPU more (1080p).
+  sampler = setTimeout(sample, video ? 2000 : 500);
 }
 
 function stop(): void {
@@ -127,6 +136,8 @@ async function setMedia(live: { url: string; kind: "gif" | "video" } | null): Pr
     v.loop = true;
     v.playsInline = true;
     v.autoplay = true;
+    // Served from loopback: the glow reads its frames, which must not taint the canvas.
+    v.crossOrigin = "anonymous";
     v.src = live.url;
     v.className = "backdrop-media";
     host.appendChild(v);
@@ -148,7 +159,26 @@ async function setMedia(live: { url: string; kind: "gif" | "video" } | null): Pr
 }
 
 useBackdropImage.subscribe((s, prev) => s.live !== prev.live && void setMedia(s.live));
-useBackdrop.subscribe((s, prev) => s.blur !== prev.blur && layout());
+useBackdrop.subscribe((s, prev) => {
+  if (s.blur !== prev.blur) layout();
+  if (s.pauseInBackground !== prev.pauseInBackground) run();
+});
+// Focus moving from one Haze window to another blurs one before focusing the
+// other: only a blur that lasts counts.
+let inactive: ReturnType<typeof setTimeout> | undefined;
+onAppActive((on) => {
+  clearTimeout(inactive);
+  if (on === active) return;
+  if (on) {
+    active = true;
+    run();
+  } else {
+    inactive = setTimeout(() => {
+      active = false;
+      run();
+    }, 200);
+  }
+}).catch(() => {});
 useGlass.subscribe(run);
 document.addEventListener("visibilitychange", run);
 void setMedia(useBackdropImage.getState().live);
