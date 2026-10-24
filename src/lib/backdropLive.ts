@@ -1,12 +1,14 @@
 // A GIF or video background playing (src/lib/backdrop.ts reads it). A video
-// is shown as it is when unblurred; a GIF is decoded and played here
-// (src/lib/gif.ts), since a canvas draws an animated <img> as its first frame.
-// Blurred, each frame is drawn on a small canvas (drawBlurred). Frames are
-// drawn when the file moves on, at most 30 times a second, 10 while Haze is not
-// focused, and not at all while the window is hidden or the background is not
-// shown; nothing runs in between, rather than every display frame. The ambient
-// glow follows the frames twice a second. Popups and windows of their own show
-// the first frame.
+// plays in a <video>; a GIF is decoded and played on a canvas here
+// (src/lib/gif.ts), since nothing plays an animated <img> on a canvas.
+// Blurred, a video is blurred by CSS: WebKit blurs a video layer on the GPU as
+// it composites it, where drawing each frame onto a canvas to blur it took
+// about twice the CPU (1080p at 30 fps). A canvas blurred by CSS costs more
+// instead, so a GIF's frames are drawn blurred onto a small canvas
+// (drawBlurred). GIF frames move on at most 30 times a second, 10 while Haze
+// is not focused; nothing plays while the window is hidden or the background
+// is not shown. The ambient glow follows the frames twice a second. Popups and
+// windows of their own show the first frame.
 import { blurredSize, drawBlurred, useBackdrop, useBackdropImage } from "./backdrop";
 import { sampleLive } from "./ambient";
 import { GifPlayer, parseGif } from "./gif";
@@ -24,23 +26,15 @@ export function liveRef(el: HTMLElement | null): (() => void) | void {
 
 let video: HTMLVideoElement | null = null;
 let gif: GifPlayer | null = null;
+/** The GIF's frames blurred, when they are. */
 let canvas: HTMLCanvasElement | null = null;
 let last = 0;
-let lastSample = 0;
-// What wakes the next frame: a timer for a GIF, when its next frame is due; a
-// video's frame callback, when it shows a new frame (rAF, polled, without one).
+// The GIF's next frame, when it is due; the glow's next sample.
 let timer: ReturnType<typeof setTimeout> | undefined;
-let videoCb = 0;
-let raf = 0;
-let lastTime = -1;
+let sampler: ReturnType<typeof setTimeout> | undefined;
 
-type FrameVideo = HTMLVideoElement & {
-  requestVideoFrameCallback?(cb: (now: number) => void): number;
-  cancelVideoFrameCallback?(id: number): void;
-};
-
-/** What is drawn from, and its size. */
-function source(): [CanvasImageSource, number, number] | null {
+/** What plays, and its size. */
+function source(): [HTMLVideoElement | HTMLCanvasElement, number, number] | null {
   if (video) return video.videoWidth ? [video, video.videoWidth, video.videoHeight] : null;
   if (gif) return [gif.canvas, gif.gif.width, gif.gif.height];
   return null;
@@ -49,50 +43,34 @@ function source(): [CanvasImageSource, number, number] | null {
 const playing = () => (!!video || !!gif) && !document.hidden && useGlass.getState().on;
 const interval = () => 1000 / (document.hasFocus() ? 30 : 10);
 
-/** The file has moved on: draws it blurred, and has the glow follow it now and then. */
-function draw(now: number): void {
-  last = now;
-  const src = source();
-  if (!src) return;
-  if (canvas) drawBlurred(canvas.getContext("2d")!, src[0], src[1], src[2], blurredSize(useBackdrop.getState().blur).r);
-  if (now - lastSample > 500) {
-    lastSample = now;
-    if (canvas) sampleLive(canvas, canvas.width, canvas.height);
-    else sampleLive(...src);
-  }
-}
-
 function gifTick(): void {
   timer = undefined;
   if (!gif || !playing()) return;
   const now = performance.now();
-  if (now - last >= interval() - 2 && gif.advance(now)) draw(now);
+  if (now - last >= interval() - 2 && gif.advance(now)) {
+    last = now;
+    drawGif();
+  }
   const at = Math.max(gif.due, last + interval());
   if (at !== Infinity) timer = setTimeout(gifTick, Math.max(0, at - performance.now()));
 }
 
-function videoTick(now: number): void {
-  videoCb = 0;
-  raf = 0;
-  const v = video as FrameVideo | null;
-  if (!v || !playing()) return;
-  if (v.requestVideoFrameCallback) videoCb = v.requestVideoFrameCallback(videoTick);
-  else {
-    raf = requestAnimationFrame(videoTick);
-    if (v.currentTime === lastTime) return;
-  }
-  if (now - last < interval() - 2) return;
-  lastTime = v.currentTime;
-  draw(now);
+function drawGif(): void {
+  if (gif && canvas) drawBlurred(canvas.getContext("2d")!, gif.canvas, gif.gif.width, gif.gif.height, blurredSize(useBackdrop.getState().blur).r);
+}
+
+function sample(): void {
+  sampler = undefined;
+  if (!playing()) return;
+  const src: [CanvasImageSource, number, number] | null = canvas ? [canvas, canvas.width, canvas.height] : source();
+  if (src && useBackdrop.getState().ambient > 0) sampleLive(...src);
+  sampler = setTimeout(sample, 500);
 }
 
 function stop(): void {
   clearTimeout(timer);
-  timer = undefined;
-  if (videoCb) (video as FrameVideo | null)?.cancelVideoFrameCallback?.(videoCb);
-  videoCb = 0;
-  cancelAnimationFrame(raf);
-  raf = 0;
+  clearTimeout(sampler);
+  timer = sampler = undefined;
 }
 
 function run(): void {
@@ -103,37 +81,33 @@ function run(): void {
     else video.pause();
   }
   if (!on) return;
-  if (gif) gifTick();
-  else if (video) videoTick(performance.now());
+  gifTick();
+  sample();
 }
 
-/**
- * Blurred: a canvas at blurredSize over the video (which stays laid out under
- * it: WebKit pauses a video it does not show). Unblurred: the video, or the
- * GIF's own canvas.
- */
 function layout(): void {
   const blur = useBackdrop.getState().blur;
-  lastTime = -1;
-  if ((!video && !gif) || blur === 0) {
+  host.style.setProperty("--live-blur", `${blur}px`);
+  video?.classList.toggle("blurred", blur > 0);
+  if (!gif || blur === 0) {
     canvas?.remove();
     canvas = null;
     if (gif && !gif.canvas.isConnected) host.appendChild(gif.canvas);
     return;
   }
-  gif?.canvas.remove();
+  gif.canvas.remove();
   const { w, h } = blurredSize(blur);
   if (!canvas) {
     canvas = document.createElement("canvas");
+    canvas.className = "backdrop-media";
     host.appendChild(canvas);
   }
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
   }
-  // The current frame now, not when the file next moves on.
-  const src = source();
-  if (src) drawBlurred(canvas.getContext("2d")!, src[0], src[1], src[2], blurredSize(blur).r);
+  // The current frame now, not when the GIF next moves on.
+  drawGif();
 }
 
 let token = 0;
@@ -155,7 +129,7 @@ async function setMedia(live: { url: string; kind: "gif" | "video" } | null): Pr
     v.autoplay = true;
     v.src = live.url;
     v.className = "backdrop-media";
-    host.prepend(v);
+    host.appendChild(v);
     video = v;
   } else if (live?.kind === "gif") {
     try {

@@ -310,23 +310,34 @@ kbd {
   z-index: -1;
   pointer-events: none;
   background: var(--backdrop-dimmed), var(--rail-solid);
-  animation: backdrop-in 0.3s ease-out;
+  animation: backdrop-image-in 0.3s ease-out;
 }
 
-/* A GIF or video playing (src/lib/backdropLive.ts): the file as it is, or its
-   frames blurred on a canvas over it, dimmed like the still. */
+/* A GIF or video playing (src/lib/backdropLive.ts), dimmed like the still. A
+   blurred video overflows the window by twice the radius, so its edges blur
+   into the picture rather than into the frame colour; the window clips it. A
+   GIF comes blurred on a canvas. */
 .backdrop-live,
-.backdrop-media,
-.backdrop-live canvas {
+.backdrop-media {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
 
-.backdrop-media,
-.backdrop-live canvas {
+.backdrop-live {
+  overflow: hidden;
+}
+
+.backdrop-media {
   object-fit: cover;
+}
+
+.backdrop-media.blurred {
+  inset: calc(-2 * var(--live-blur));
+  width: calc(100% + 4 * var(--live-blur));
+  height: calc(100% + 4 * var(--live-blur));
+  filter: blur(var(--live-blur));
 }
 
 .backdrop-live:not(:empty)::after {
@@ -336,7 +347,7 @@ kbd {
   background: color-mix(in srgb, var(--rail-solid) var(--backdrop-dim), transparent);
 }
 
-@keyframes backdrop-in {
+@keyframes backdrop-image-in {
   from {
     opacity: 0;
   }
@@ -1353,29 +1364,6 @@ kbd {
     transform: translateY(-6px) scale(0.98);
   }
 }
-/* A GIF or video playing (src/lib/backdropLive.ts): the file as it is, or its
-   frames blurred on a canvas over it, dimmed like the still. */
-.backdrop-live,
-.backdrop-media,
-.backdrop-live canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.backdrop-media,
-.backdrop-live canvas {
-  object-fit: cover;
-}
-
-.backdrop-live:not(:empty)::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--rail-solid) var(--backdrop-dim), transparent);
-}
-
 @keyframes backdrop-in {
   from {
     background: transparent;
