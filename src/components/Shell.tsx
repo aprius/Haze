@@ -21,6 +21,7 @@ import { closeTabsWithPrompt, PathCrumbs, useCursor } from "./EditorArea";
 import { confirmAction, openMenu } from "./Overlays";
 import { disposeView, toggleTerminal } from "./TerminalPanel";
 import { shortcutLabel } from "../lib/keymap";
+import { setSplitDragging } from "../lib/splitDrag";
 import { DEFAULT_ZOOM, resetZoom, useZoom } from "../lib/zoom";
 
 export async function openFolder(): Promise<void> {
@@ -254,7 +255,24 @@ export function Splitter({
   invert?: boolean;
   onChange: (v: number) => void;
 }) {
-  const start = useRef<{ pos: number; value: number } | null>(null);
+  // While dragging, the size goes straight onto the panel (the splitter's
+  // neighbour: before it, or after it when inverted), in the property it is
+  // sized by, once a frame; the state, and everything that renders from it,
+  // gets it on the drop.
+  const drag = useRef<{ pos: number; value: number; panel: HTMLElement | null; win: Window; next: number; frame: number } | null>(null);
+  const size = (d: { panel: HTMLElement | null; next: number }) => {
+    if (!d.panel) return;
+    d.panel.style[d.panel.style.flexBasis ? "flexBasis" : vertical ? "width" : "height"] = `${d.next}px`;
+  };
+  const end = () => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    d.win.cancelAnimationFrame(d.frame);
+    size(d);
+    if (d.next !== d.value) onChange(d.next);
+    setSplitDragging(false);
+  };
   return (
     <div
       className={"splitter " + (vertical ? "vertical" : "horizontal")}
@@ -263,16 +281,27 @@ export function Splitter({
         // Without this the drag also starts a native text selection that sweeps across the editor.
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);
-        start.current = { pos: vertical ? e.clientX : e.clientY, value };
+        const panel = (invert ? e.currentTarget.nextElementSibling : e.currentTarget.previousElementSibling) as HTMLElement | null;
+        // Frames of the splitter's own window: the Commit window's may be one of its own.
+        const win = e.currentTarget.ownerDocument.defaultView ?? window;
+        drag.current = { pos: vertical ? e.clientX : e.clientY, value, panel, win, next: value, frame: 0 };
+        setSplitDragging(true);
       }}
       onPointerMove={(e) => {
-        if (!start.current) return;
-        const delta = (vertical ? e.clientX : e.clientY) - start.current.pos;
-        onChange(Math.max(min, Math.min(max, start.current.value + (invert ? -delta : delta))));
+        const d = drag.current;
+        if (!d) return;
+        const delta = (vertical ? e.clientX : e.clientY) - d.pos;
+        d.next = Math.round(Math.max(min, Math.min(max, d.value + (invert ? -delta : delta))));
+        if (!d.panel) return onChange(d.next);
+        if (d.frame) return;
+        d.frame = d.win.requestAnimationFrame(() => {
+          d.frame = 0;
+          size(d);
+        });
       }}
       onMouseDown={(e) => e.preventDefault()}
-      onPointerUp={() => (start.current = null)}
-      onLostPointerCapture={() => (start.current = null)}
+      onPointerUp={end}
+      onLostPointerCapture={end}
     />
   );
 }

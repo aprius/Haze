@@ -10,6 +10,7 @@ import { codeFontFamily, loadCodeFont, useFonts } from "../lib/fonts";
 import { api } from "../lib/ipc";
 import { matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
+import { afterSplitDrag, splitDragging } from "../lib/splitDrag";
 import { terminalTheme, useGlass, useTheme } from "../lib/theme";
 import { agentBadge, agentName, closeTerminal, newTerminal, reconcileViews, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { popupClosed } from "../store/ui";
@@ -372,6 +373,7 @@ function TerminalView({ id, project, active }: { id: string; project: Project; a
     const v = view;
     const fit = () => {
       if (!host.current || host.current.offsetParent === null) return;
+      if (splitDragging()) return afterSplitDrag(fit);
       try {
         v.fit.fit();
       } catch {
