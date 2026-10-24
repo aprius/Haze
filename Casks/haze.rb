@@ -3,8 +3,8 @@
 #   brew install --cask haze
 #   haze update
 cask "haze" do
-  version "1.0.4"
-  sha256 "dac19afae064c265fbe95d992ff19d9341e3cf6c4b775e2b6d0e2abbf9fe8fb4"
+  version "1.0.5"
+  sha256 "a0f48363706596f1312d9f81a73a38d10b286f4c51118cb076a86b0b58956d64"
 
   url "https://github.com/aprius/Haze/releases/download/v#{version}/Haze_#{version}_universal.dmg"
   name "Haze"
@@ -19,6 +19,7 @@ cask "haze" do
   depends_on :macos
 
   app "Haze.app"
+  binary "#{appdir}/Haze.app/Contents/Resources/haze"
 
   postflight_steps do
     run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Haze.app"]
