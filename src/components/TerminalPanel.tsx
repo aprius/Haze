@@ -10,7 +10,7 @@ import { codeFontFamily, loadCodeFont, useFonts } from "../lib/fonts";
 import { api } from "../lib/ipc";
 import { matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
-import { TERMINAL_THEMES, useTheme } from "../lib/theme";
+import { terminalTheme, useGlass, useTheme } from "../lib/theme";
 import { agentBadge, agentName, closeTerminal, newTerminal, reconcileViews, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
@@ -50,8 +50,21 @@ useTerminals.subscribe((s, prev) => {
 });
 
 // Recolour every terminal, including ones in hidden projects, on a mode switch.
-useTheme.subscribe((t) => {
-  for (const v of views.values()) v.term.options.theme = TERMINAL_THEMES[t.mode];
+useTheme.subscribe(() => {
+  for (const v of views.values()) v.term.options.theme = terminalTheme();
+});
+
+// Over a background image the island's glass shows through. WebGL reads
+// allowTransparency when it loads, so it loads again.
+useGlass.subscribe(({ on }) => {
+  for (const v of views.values()) {
+    v.term.options.allowTransparency = on;
+    v.term.options.theme = terminalTheme();
+    if (v.webgl) {
+      setWebgl(v, false);
+      setWebgl(v, true);
+    }
+  }
 });
 
 // The terminal uses the code font family at its own size and line height.
@@ -124,7 +137,8 @@ function createView(id: string, project: Project): View {
     scrollback: 10000,
     allowProposedApi: true,
     cursorBlink: true,
-    theme: TERMINAL_THEMES[useTheme.getState().mode],
+    theme: terminalTheme(),
+    allowTransparency: useGlass.getState().on,
   });
   const fit = new FitAddon();
   const search = new SearchAddon();

@@ -4,6 +4,7 @@ import { closeTabsWithPrompt, EditorArea, revealInTree, saveAll, selectedText, t
 import { FileTree, ProjectViewHeader } from "./components/FileTree";
 import { FindInFiles } from "./components/FindInFiles";
 import { SearchEverywhere } from "./components/SearchEverywhere";
+import { Backdrop } from "./components/Backdrop";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, toggleBottom, UpdateProgressCard, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
@@ -365,6 +366,7 @@ export default function App() {
   if (!loaded) return <div className="app loading" />;
   return (
     <div className="app">
+      <Backdrop />
       <TitleBar project={active} />
       <div className="app-body">
         <ProjectRail />

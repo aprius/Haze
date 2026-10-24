@@ -18,7 +18,14 @@ function initial(): ThemeMode {
 
 export const useTheme = create<{ mode: ThemeMode }>(() => ({ mode: initial() }));
 
-export const monacoTheme = (mode: ThemeMode = useTheme.getState().mode) => (mode === "dark" ? "haze-dark" : "haze-light");
+/**
+ * Islands over a background image (src/lib/backdrop.ts): editors and terminals
+ * draw no background of their own, their island's glass shows through.
+ */
+export const useGlass = create<{ on: boolean }>(() => ({ on: false }));
+
+export const monacoTheme = (mode: ThemeMode = useTheme.getState().mode, glass = useGlass.getState().on) =>
+  (mode === "dark" ? "haze-dark" : "haze-light") + (glass ? "-glass" : "");
 
 export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
   // Monokai Pro (Filter: Pro), as its terminal themes ship it, but for the
@@ -72,6 +79,9 @@ export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
     brightWhite: "#29242a",
   },
 };
+
+export const terminalTheme = (mode: ThemeMode = useTheme.getState().mode, glass = useGlass.getState().on): ITheme =>
+  glass ? { ...TERMINAL_THEMES[mode], background: "#00000000" } : TERMINAL_THEMES[mode];
 
 function apply(mode: ThemeMode): void {
   document.documentElement.dataset.theme = mode;

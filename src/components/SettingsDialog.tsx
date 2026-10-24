@@ -1,7 +1,9 @@
 // Settings: fonts, layout style, keymap, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting, updates.
 import { ArrowUpCircle, Bot, Box, Code, FolderTree, GitBranch, Keyboard, type LucideIcon, Plus, RotateCcw, Type, X } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
+import { BACKDROP_EXTENSIONS, BACKDROP_LIMITS, DEFAULT_BACKDROP, setBackdrop, useBackdrop, useBackdropImage, type BackdropSettings } from "../lib/backdrop";
 import {
   CODE_FONT_SUGGESTIONS,
   DEFAULT_FONTS,
@@ -244,6 +246,7 @@ function FontSettingsSection() {
           </div>
         </div>
       </div>
+      <BackdropSection />
       <div className="settings-card">
         <SwitchRow
           label="GPU-accelerated terminal"
@@ -263,6 +266,80 @@ function FontSettingsSection() {
         ))}
       </datalist>
     </>
+  );
+}
+
+async function chooseBackdrop() {
+  const path = await openDialog({ multiple: false, title: "Background Image", filters: [{ name: "Images", extensions: BACKDROP_EXTENSIONS }] });
+  if (typeof path === "string") setBackdrop({ path });
+}
+
+function BackdropSlider({ field, label, unit }: { field: Exclude<keyof BackdropSettings, "path">; label: string; unit: string }) {
+  const value = useBackdrop((s) => s[field]);
+  const [min, max] = BACKDROP_LIMITS[field];
+  return (
+    <>
+      <span>{label}</span>
+      <input type="range" className="settings-range" min={min} max={max} value={value} onChange={(e) => setBackdrop({ [field]: Number(e.target.value) })} />
+      <span className="muted small settings-range-value">
+        {value}
+        {unit}
+      </span>
+    </>
+  );
+}
+
+/** Background image, islands layout only (src/lib/backdrop.ts). */
+function BackdropSection() {
+  const path = useBackdrop((s) => s.path);
+  const isDefault = useBackdrop((s) => (["blur", "dim", "opacity", "popupOpacity"] as const).every((k) => s[k] === DEFAULT_BACKDROP[k]));
+  const error = useBackdropImage((s) => s.error);
+  const islands = useUiStyle((s) => s.style === "islands");
+  return (
+    <div className="settings-card">
+      <div className="settings-row static">
+        <div className="settings-row-text">
+          <div>Background image</div>
+          {path ? (
+            <div className="muted small settings-path" title={path}>
+              {path}
+            </div>
+          ) : (
+            <div className="muted small">An image behind the panels, which turn to tinted glass over it.</div>
+          )}
+        </div>
+        {path && (
+          <button className="btn small" onClick={() => setBackdrop({ path: null })}>
+            Remove
+          </button>
+        )}
+        <button className="btn small" onClick={() => void chooseBackdrop()}>
+          {path ? "Change…" : "Choose…"}
+        </button>
+      </div>
+      {error && <div className="modal-error">Cannot read the image: {error}</div>}
+      {path && !islands && (
+        <div className="settings-row static">
+          <div className="settings-row-text muted small">Shown with the Islands layout only.</div>
+          <button className="btn small" onClick={() => setUiStyle("islands")}>
+            Use Islands
+          </button>
+        </div>
+      )}
+      {path && (
+        <div className="settings-backdrop">
+          <BackdropSlider field="blur" label="Blur" unit="px" />
+          <BackdropSlider field="dim" label="Dim" unit="%" />
+          <BackdropSlider field="opacity" label="Panel opacity" unit="%" />
+          <BackdropSlider field="popupOpacity" label="Popup opacity" unit="%" />
+          {!isDefault && (
+            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop({ ...DEFAULT_BACKDROP, path })}>
+              Reset
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

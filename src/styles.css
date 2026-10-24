@@ -279,6 +279,125 @@ kbd {
   border-color: transparent;
 }
 
+/* Background image (Settings > Appearance, src/lib/backdrop.ts sets data-backdrop
+   and the variables), islands only: the frame shows the image and each island is
+   tinted glass over it. The image comes blurred: no filter or backdrop-filter
+   here, which would blur again on every repaint of an editor or terminal.
+   Inside the app the surface colours turn transparent so nothing stacks on the
+   glass; floating surfaces (menus, popups, dialogs) get them back. */
+.backdrop {
+  display: none;
+}
+
+:root[data-ui="islands"][data-backdrop] {
+  --bg-solid: var(--bg);
+  --panel-solid: var(--panel);
+  --editor-bg-solid: var(--editor-bg);
+  --term-bg-solid: var(--term-bg);
+  --rail-solid: var(--rail);
+  /* The image dimmed towards the frame colour, as the frame shows it. */
+  --backdrop-dimmed: linear-gradient(
+      color-mix(in srgb, var(--rail-solid) var(--backdrop-dim), transparent),
+      color-mix(in srgb, var(--rail-solid) var(--backdrop-dim), transparent)
+    ),
+    var(--backdrop-url) center / cover no-repeat;
+}
+
+:root[data-ui="islands"][data-backdrop] .backdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--backdrop-dimmed), var(--rail-solid);
+  animation: backdrop-in 0.3s ease-out;
+}
+
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+:root[data-ui="islands"][data-backdrop] .app {
+  --bg: transparent;
+  --panel: transparent;
+  --editor-bg: transparent;
+  --term-bg: transparent;
+  --rail: transparent;
+}
+
+:root[data-ui="islands"][data-backdrop] .sidebar,
+:root[data-ui="islands"][data-backdrop] .side-dock,
+:root[data-ui="islands"][data-backdrop] .bottom {
+  background: color-mix(in srgb, var(--panel-solid) var(--glass), transparent);
+}
+
+:root[data-ui="islands"][data-backdrop] .center {
+  background: color-mix(in srgb, var(--editor-bg-solid) var(--glass), transparent);
+}
+
+/* xterm.css paints the viewport black; xterm 6 no longer covers it with the
+   theme's background, which is transparent here (terminalTheme in theme.ts). */
+:root[data-ui="islands"][data-backdrop] .xterm .xterm-viewport {
+  background-color: transparent;
+}
+
+:root[data-ui="islands"][data-backdrop] :is(
+    .context-menu,
+    .modal,
+    .toast,
+    .se-popup,
+    .usages-popup,
+    .find-popup,
+    .find-history,
+    .tree-drag-ghost,
+    .float-window,
+    .float-external,
+    .settings-dialog
+  ) {
+  --bg: var(--bg-solid);
+  --panel: var(--panel-solid);
+  --editor-bg: var(--editor-bg-solid);
+  --term-bg: var(--term-bg-solid);
+  --rail: var(--rail-solid);
+}
+
+/* Popups, dialogs, Settings and the Commit and Diff windows are glass too, over
+   the same image fixed to the window, so it lines up with the frame's (Popup
+   opacity in Settings). Their fields, cards, footers and side bars keep a lighter
+   tint. A window of its own is below. */
+:root[data-ui="islands"][data-backdrop]
+  :is(.context-menu, .se-popup, .find-popup, .find-history, .toast, .modal, .settings-dialog, .float-window:not(.external)) {
+  --panel: transparent;
+  --rail: color-mix(in srgb, var(--rail-solid) 50%, transparent);
+  --bg: color-mix(in srgb, var(--bg-solid) 45%, transparent);
+  --editor-bg: color-mix(in srgb, var(--editor-bg-solid) 60%, transparent);
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--panel-solid) var(--popup-glass), transparent),
+      color-mix(in srgb, var(--panel-solid) var(--popup-glass), transparent)
+    ),
+    var(--backdrop-dimmed);
+  background-attachment: scroll, fixed, fixed;
+}
+
+/* A Commit or Diff window of its own draws the image itself (Backdrop in Overlays.tsx). */
+:root[data-ui="islands"][data-backdrop] .float-window.external {
+  --panel: transparent;
+  --rail: color-mix(in srgb, var(--rail-solid) 50%, transparent);
+  --bg: color-mix(in srgb, var(--bg-solid) 45%, transparent);
+  --editor-bg: color-mix(in srgb, var(--editor-bg-solid) 60%, transparent);
+  background: color-mix(in srgb, var(--panel-solid) var(--popup-glass), transparent);
+}
+
+/* Code in the frosted surfaces (Search Everywhere's and Find's previews, diffs in
+   the Diff and Commit windows) is clear glass like the editor: Monaco's glass
+   theme draws no background, nor do the diff views. Only fields keep a tint. */
+:root[data-ui="islands"][data-backdrop] :is(.context-menu, .se-popup, .find-popup, .modal, .float-window) :is(.diff-view, .diff-lgutter, .merge-view) {
+  background: transparent;
+}
+
 .panel-header {
   height: 36px;
   flex: none;
@@ -3838,6 +3957,25 @@ html:has(.float-external) body {
 .settings-font-name,
 .settings-font-size {
   min-width: 0;
+}
+.settings-backdrop {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 6px;
+}
+.settings-range {
+  min-width: 0;
+  accent-color: var(--accent);
+}
+.settings-range-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.settings-backdrop-reset {
+  grid-column: 1 / -1;
+  justify-self: end;
 }
 .settings-ellipsis,
 .settings-path {
