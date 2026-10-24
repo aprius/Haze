@@ -367,7 +367,7 @@ export default function App() {
   if (!loaded) return <div className="app loading" />;
   return (
     <div className="app">
-      <Backdrop />
+      <Backdrop live />
       <TitleBar project={active} />
       <div className="app-body">
         <ProjectRail />

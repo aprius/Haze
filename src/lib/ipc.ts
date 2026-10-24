@@ -503,6 +503,8 @@ export const api = {
   findFiles: (root: string, query: string, limit?: number, includeIgnored = false) =>
     invoke<FileHit[]>("find_files", { root, query, limit: limit ?? null, includeIgnored }),
   readImage: (path: string) => invoke<{ mime: string; base64: string }>("read_image", { path }),
+  /** A file's bytes, unencoded (background images and videos). */
+  readMedia: (path: string) => invoke<ArrayBuffer>("read_media", { path }),
   clipboardFilePaths: () => invoke<string[]>("clipboard_file_paths"),
 
   readLines: (requests: { path: string; lines: number[] }[]) => invoke<string[][]>("read_lines", { requests }),

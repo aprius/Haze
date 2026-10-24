@@ -317,6 +317,21 @@ struct ImageData {
     base64: String,
 }
 
+/// A background image or video (Settings > Appearance) as raw bytes: a video is
+/// too big to go through base64 like read_image's previews.
+#[tauri::command]
+async fn read_media(path: String) -> CmdResult<tauri::ipc::Response> {
+    blocking(move || {
+        let meta = std::fs::metadata(&path)?;
+        anyhow::ensure!(
+            meta.len() <= 512 * 1024 * 1024,
+            "the file is too large (over 512 MB)"
+        );
+        Ok(tauri::ipc::Response::new(std::fs::read(&path)?))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn read_image(path: String) -> CmdResult<ImageData> {
     blocking(move || {
@@ -1035,6 +1050,7 @@ pub fn run() {
             undo_replace,
             find_files,
             read_image,
+            read_media,
             clipboard_file_paths,
             git_log,
             git_toplevel,

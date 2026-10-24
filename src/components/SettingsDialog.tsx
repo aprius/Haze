@@ -3,7 +3,7 @@ import { ArrowUpCircle, Bot, Box, Code, FolderTree, GitBranch, Keyboard, type Lu
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
-import { BACKDROP_EXTENSIONS, BACKDROP_LIMITS, DEFAULT_BACKDROP, setBackdrop, useBackdrop, useBackdropImage, type BackdropSettings } from "../lib/backdrop";
+import { BACKDROP_EXTENSIONS, BACKDROP_LIMITS, DEFAULT_BACKDROP, setBackdrop, useBackdrop, useBackdropImage } from "../lib/backdrop";
 import {
   CODE_FONT_SUGGESTIONS,
   DEFAULT_FONTS,
@@ -270,11 +270,11 @@ function FontSettingsSection() {
 }
 
 async function chooseBackdrop() {
-  const path = await openDialog({ multiple: false, title: "Background Image", filters: [{ name: "Images", extensions: BACKDROP_EXTENSIONS }] });
+  const path = await openDialog({ multiple: false, title: "Background", filters: [{ name: "Images and videos", extensions: BACKDROP_EXTENSIONS }] });
   if (typeof path === "string") setBackdrop({ path });
 }
 
-function BackdropSlider({ field, label, unit }: { field: Exclude<keyof BackdropSettings, "path">; label: string; unit: string }) {
+function BackdropSlider({ field, label, unit }: { field: keyof typeof BACKDROP_LIMITS; label: string; unit: string }) {
   const value = useBackdrop((s) => s[field]);
   const [min, max] = BACKDROP_LIMITS[field];
   return (
@@ -292,8 +292,9 @@ function BackdropSlider({ field, label, unit }: { field: Exclude<keyof BackdropS
 /** Background image, islands layout only (src/lib/backdrop.ts). */
 function BackdropSection() {
   const path = useBackdrop((s) => s.path);
-  const isDefault = useBackdrop((s) => (["blur", "dim", "opacity", "popupOpacity", "ambient"] as const).every((k) => s[k] === DEFAULT_BACKDROP[k]));
+  const isDefault = useBackdrop((s) => (["blur", "dim", "opacity", "popupOpacity", "ambient", "agentGlow"] as const).every((k) => s[k] === DEFAULT_BACKDROP[k]));
   const error = useBackdropImage((s) => s.error);
+  const agentGlow = useBackdrop((s) => s.agentGlow);
   const islands = useUiStyle((s) => s.style === "islands");
   return (
     <div className="settings-card">
@@ -305,7 +306,7 @@ function BackdropSection() {
               {path}
             </div>
           ) : (
-            <div className="muted small">An image behind the panels, which turn to tinted glass over it.</div>
+            <div className="muted small">An image, GIF or video (MP4, WebM, MOV) behind the panels, which turn to tinted glass over it.</div>
           )}
         </div>
         {path && (
@@ -333,8 +334,18 @@ function BackdropSection() {
           <BackdropSlider field="opacity" label="Panel opacity" unit="%" />
           <BackdropSlider field="popupOpacity" label="Popup opacity" unit="%" />
           <BackdropSlider field="ambient" label="Ambient glow" unit="%" />
+          <label className="settings-row settings-backdrop-switch">
+            <div className="settings-row-text">
+              <div>Agent status glow</div>
+              <div className="muted small">The terminal panel glows while its agents work, wait for you, finish or fail.</div>
+            </div>
+            <span className="switch">
+              <input type="checkbox" role="switch" checked={agentGlow} onChange={(e) => setBackdrop({ agentGlow: e.target.checked })} />
+              <span />
+            </span>
+          </label>
           {!isDefault && (
-            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop({ blur: DEFAULT_BACKDROP.blur, dim: DEFAULT_BACKDROP.dim, opacity: DEFAULT_BACKDROP.opacity, popupOpacity: DEFAULT_BACKDROP.popupOpacity, ambient: DEFAULT_BACKDROP.ambient })}>
+            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop({ blur: DEFAULT_BACKDROP.blur, dim: DEFAULT_BACKDROP.dim, opacity: DEFAULT_BACKDROP.opacity, popupOpacity: DEFAULT_BACKDROP.popupOpacity, ambient: DEFAULT_BACKDROP.ambient, agentGlow: DEFAULT_BACKDROP.agentGlow })}>
               Reset
             </button>
           )}

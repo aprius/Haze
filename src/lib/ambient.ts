@@ -11,7 +11,14 @@
 // Drawing it is about a millisecond, so it follows a drag live. Islands
 // register with glowRef and are drawn again when they change size, once a
 // frame at most (moving one changes its or a neighbour's size).
+//
+// With Agent status glow on, the terminal island glows instead in the state of
+// the active project's agents (the rail's badge, src/components/Shell.tsx):
+// failed, waiting for you, done until seen, or working, fainter.
+import { useTerminals } from "../store/terminals";
+import { useWorkspace } from "../store/workspace";
 import { useBackdrop, useBackdropImage } from "./backdrop";
+import { useTheme } from "./theme";
 
 const GW = 48;
 const GH = 30;
@@ -52,26 +59,49 @@ function schedule(): void {
   if (!frame) frame = requestAnimationFrame(() => void update());
 }
 
+/** Draws `src` (sw × sh) into the grid as the window shows it (cover). */
+function toGrid(src: CanvasImageSource, sw: number, sh: number): Uint8ClampedArray {
+  const k = Math.max(innerWidth / sw, innerHeight / sh);
+  const sx = GW / innerWidth;
+  const sy = GH / innerHeight;
+  const c = (gridCanvas ??= document.createElement("canvas"));
+  c.width = GW;
+  c.height = GH;
+  const ctx = c.getContext("2d", { willReadFrequently: true })!;
+  ctx.imageSmoothingQuality = "high";
+  const dw = sw * k;
+  const dh = sh * k;
+  ctx.drawImage(src, ((innerWidth - dw) / 2) * sx, ((innerHeight - dh) / 2) * sy, dw * sx, dh * sy);
+  return ctx.getImageData(0, 0, GW, GH).data;
+}
+let gridCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * A frame of a playing GIF or video (backdropLive.ts), or null once it stops:
+ * the light eases towards its colours rather than jumping to them.
+ */
+export function sampleLive(src: CanvasImageSource | null, sw = 0, sh = 0): void {
+  if (!src) {
+    if (gridFor === LIVE) gridFor = "";
+    return;
+  }
+  const next = toGrid(src, sw, sh);
+  if (grid && gridFor === LIVE) for (let i = 0; i < next.length; i++) next[i] = (grid[i] + next[i]) / 2;
+  grid = next;
+  gridFor = LIVE;
+  schedule();
+}
+const LIVE = "live";
+
 async function sample(url: string): Promise<void> {
   const key = `${url} ${innerWidth}x${innerHeight}`;
-  if (key === gridFor) return;
+  if (key === gridFor || gridFor === LIVE) return;
   gridFor = key;
   try {
     const img = await createImageBitmap(await (await fetch(url)).blob());
-    // Laid out as background-size: cover shows it in the window.
-    const k = Math.max(innerWidth / img.width, innerHeight / img.height);
-    const sx = GW / innerWidth;
-    const sy = GH / innerHeight;
-    const c = document.createElement("canvas");
-    c.width = GW;
-    c.height = GH;
-    const ctx = c.getContext("2d", { willReadFrequently: true })!;
-    ctx.imageSmoothingQuality = "high";
-    const dw = img.width * k;
-    const dh = img.height * k;
-    ctx.drawImage(img, ((innerWidth - dw) / 2) * sx, ((innerHeight - dh) / 2) * sy, dw * sx, dh * sy);
+    const data = toGrid(img, img.width, img.height);
     img.close();
-    if (gridFor === key) grid = ctx.getImageData(0, 0, GW, GH).data;
+    if (gridFor === key) grid = data;
   } catch {
     grid = null;
   }
@@ -116,6 +146,33 @@ function hsl(r: number, g: number, b: number): [number, number, number] {
   return [h * 60, s, l];
 }
 
+type AgentLight = "error" | "waiting" | "done" | "working";
+const AGENT_LIGHT: Record<AgentLight, [colour: string, alpha: number]> = {
+  error: ["--mk-red", 0.7],
+  waiting: ["--mk-yellow", 0.7],
+  done: ["--mk-green", 0.55],
+  working: ["--mk-cyan", 0.35],
+};
+
+function agentLight(): AgentLight | null {
+  if (!useBackdrop.getState().agentGlow) return null;
+  const { sessions, attention } = useTerminals.getState();
+  const project = useWorkspace.getState().activeProjectId;
+  const mine = Object.entries(sessions).filter(([, x]) => x.projectId === project);
+  if (mine.some(([id, x]) => x.agent?.state === "error" && attention[id])) return "error";
+  if (mine.some(([, x]) => x.agent?.state === "waiting")) return "waiting";
+  if (mine.some(([id]) => attention[id])) return "done";
+  return mine.some(([, x]) => x.agent?.state === "working") ? "working" : null;
+}
+
+/** The theme's colour for an agent state, as the canvas takes it. */
+function agentColour(light: AgentLight): string {
+  const [name, alpha] = AGENT_LIGHT[light];
+  const hex = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
 function setOn(on: boolean): void {
   if (on) document.documentElement.dataset.ambient = "";
   else delete document.documentElement.dataset.ambient;
@@ -125,9 +182,11 @@ async function update(): Promise<void> {
   frame = 0;
   const url = useBackdropImage.getState().url;
   const strength = useBackdrop.getState().ambient;
-  if (!url || strength <= 0) return setOn(false);
-  await sample(url);
-  if (!grid) return;
+  const agent = agentLight();
+  if (!url || (strength <= 0 && !agent)) return setOn(false);
+  if (strength > 0) await sample(url);
+  if (!grid && !agent) return;
+  const agentFill = agent && agentColour(agent);
   const w = Math.max(1, Math.round(innerWidth * SCALE));
   const h = Math.max(1, Math.round(innerHeight * SCALE));
   if (canvas.width !== w || canvas.height !== h) {
@@ -138,13 +197,16 @@ async function update(): Promise<void> {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, w, h);
   ctx.scale(SCALE, SCALE);
-  const rects = [...islands].map((el) => el.getBoundingClientRect()).filter((r) => r.width && r.height);
+  const all = [...islands].map((el) => ({ r: el.getBoundingClientRect(), terminal: el.classList.contains("side-dock") }));
+  const lit = all.filter(({ r }) => r.width && r.height);
   // Each edge's band drawn far off the canvas, its shadow alone brought back:
   // a blur every canvas has, unlike ctx.filter.
   const off = 4 * (innerWidth + innerHeight);
   ctx.shadowOffsetX = off * SCALE;
   ctx.shadowBlur = BLUR * SCALE;
-  for (const r of rects) {
+  for (const { r, terminal } of lit) {
+    const fill = terminal && agentFill ? agentFill : null;
+    if (!fill && (strength <= 0 || !grid)) continue;
     // The band of image under each edge: a fifth of the island, at most 120px.
     const bw = Math.min(120, r.width / 5);
     const bh = Math.min(120, r.height / 5);
@@ -155,7 +217,7 @@ async function update(): Promise<void> {
       [[r.left, r.top, r.left + bw, r.bottom], [r.left - BAND, r.top, 2 * BAND, r.height]],
     ];
     for (const [[x0, y0, x1, y1], [x, y, ew, eh]] of edges) {
-      ctx.shadowColor = light(x0, y0, x1, y1, strength / 100);
+      ctx.shadowColor = fill ?? light(x0, y0, x1, y1, strength / 100);
       ctx.fillRect(x - off, y, ew, eh);
     }
   }
@@ -163,7 +225,7 @@ async function update(): Promise<void> {
   ctx.shadowColor = "transparent";
   ctx.globalCompositeOperation = "destination-out";
   ctx.beginPath();
-  for (const r of rects) {
+  for (const { r } of lit) {
     if (ctx.roundRect) ctx.roundRect(r.left, r.top, r.width, r.height, RADIUS);
     else ctx.rect(r.left, r.top, r.width, r.height);
   }
@@ -173,5 +235,8 @@ async function update(): Promise<void> {
 }
 
 useBackdropImage.subscribe(schedule);
-useBackdrop.subscribe((s, prev) => s.ambient !== prev.ambient && schedule());
+useBackdrop.subscribe((s, prev) => (s.ambient !== prev.ambient || s.agentGlow !== prev.agentGlow) && schedule());
+useTerminals.subscribe((s, prev) => (s.sessions !== prev.sessions || s.attention !== prev.attention) && schedule());
+useWorkspace.subscribe((s, prev) => s.activeProjectId !== prev.activeProjectId && schedule());
+useTheme.subscribe(schedule);
 addEventListener("resize", schedule);

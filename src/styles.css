@@ -313,6 +313,29 @@ kbd {
   animation: backdrop-in 0.3s ease-out;
 }
 
+/* A GIF or video playing (src/lib/backdropLive.ts): the file as it is, or its
+   frames blurred on a canvas over it, dimmed like the still. */
+.backdrop-live,
+.backdrop-media,
+.backdrop-live canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.backdrop-media,
+.backdrop-live canvas {
+  object-fit: cover;
+}
+
+.backdrop-live:not(:empty)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--rail-solid) var(--backdrop-dim), transparent);
+}
+
 @keyframes backdrop-in {
   from {
     opacity: 0;
@@ -1330,6 +1353,29 @@ kbd {
     transform: translateY(-6px) scale(0.98);
   }
 }
+/* A GIF or video playing (src/lib/backdropLive.ts): the file as it is, or its
+   frames blurred on a canvas over it, dimmed like the still. */
+.backdrop-live,
+.backdrop-media,
+.backdrop-live canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.backdrop-media,
+.backdrop-live canvas {
+  object-fit: cover;
+}
+
+.backdrop-live:not(:empty)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--rail-solid) var(--backdrop-dim), transparent);
+}
+
 @keyframes backdrop-in {
   from {
     background: transparent;
@@ -3989,6 +4035,10 @@ html:has(.float-external) body {
 .settings-range-value {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.settings-backdrop-switch {
+  grid-column: 1 / -1;
+  margin-top: 4px;
 }
 .settings-backdrop-reset {
   grid-column: 1 / -1;
