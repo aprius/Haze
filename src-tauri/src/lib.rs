@@ -753,8 +753,8 @@ async fn check_update() -> CmdResult<updates::UpdateInfo> {
 }
 
 #[tauri::command]
-fn update_install_kind() -> updates::InstallKind {
-    updates::install_kind()
+async fn update_install_kind() -> CmdResult<updates::InstallKind> {
+    blocking(|| Ok(updates::install_kind())).await
 }
 
 #[tauri::command]

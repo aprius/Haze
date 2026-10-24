@@ -154,8 +154,18 @@ impl Target {
 
 /// Whether a file can be created in `dir` (the new copy is staged next to the old one,
 /// so the swap is a rename).
+#[cfg(unix)]
 fn writable(dir: &Path) -> bool {
-    tempfile::tempdir_in(dir).is_ok()
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(dir) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else { return false };
+    // SAFETY: a valid NUL-terminated path.
+    unsafe { libc::access(dir.as_ptr(), libc::W_OK) == 0 }
+}
+
+/// Windows has no cheap equivalent of `access`: try creating a file.
+#[cfg(windows)]
+fn writable(dir: &Path) -> bool {
+    tempfile::tempfile_in(dir).is_ok()
 }
 
 /// The running Haze.app.
