@@ -338,17 +338,30 @@ async fn read_media(path: String) -> CmdResult<tauri::ipc::Response> {
 #[tauri::command]
 async fn cache_backdrop(app: AppHandle, path: Option<String>) -> CmdResult<Option<String>> {
     blocking(move || {
-        let dir = app.path().app_cache_dir().map_err(|e| anyhow::anyhow!("no cache directory: {e}"))?.join("backdrop");
-        Ok(media::cache(&dir, path.as_deref().map(std::path::Path::new))?
+        Ok(media::cache(&backdrop_cache_dir(&app)?, path.as_deref().map(std::path::Path::new))?
             .map(|p| p.to_string_lossy().into_owned()))
     })
     .await
 }
 
-/// A loopback URL that plays a background video (src-tauri/src/media.rs).
+fn backdrop_cache_dir(app: &AppHandle) -> anyhow::Result<std::path::PathBuf> {
+    Ok(app.path().app_cache_dir().map_err(|e| anyhow::anyhow!("no cache directory: {e}"))?.join("backdrop"))
+}
+
+/// A loopback URL that plays a background video (src-tauri/src/media.rs): only
+/// the copy cache_backdrop keeps, never any other file.
 #[tauri::command]
-async fn media_url(path: String) -> CmdResult<String> {
-    blocking(move || media::url(std::path::Path::new(&path))).await
+async fn media_url(app: AppHandle, path: String) -> CmdResult<String> {
+    blocking(move || {
+        let path = std::path::Path::new(&path);
+        let inside = match (path.canonicalize(), backdrop_cache_dir(&app)?.canonicalize()) {
+            (Ok(p), Ok(dir)) => p.starts_with(dir),
+            _ => false,
+        };
+        anyhow::ensure!(inside, "the video is gone");
+        media::url(path)
+    })
+    .await
 }
 
 #[tauri::command]

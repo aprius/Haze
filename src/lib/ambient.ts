@@ -97,17 +97,30 @@ export function sampleLive(src: CanvasImageSource | null, sw = 0, sh = 0): void 
 }
 const LIVE = "live";
 
+// The image, decoded once and kept small: the window resizing samples it again
+// every frame.
+let small: { url: string; canvas: HTMLCanvasElement } | null = null;
+
 async function sample(url: string): Promise<void> {
   const key = `${url} ${innerWidth}x${innerHeight}`;
   if (key === gridFor || gridFor === LIVE) return;
   gridFor = key;
   try {
-    const img = await createImageBitmap(await (await fetch(url)).blob());
-    const data = toGrid(img, img.width, img.height);
-    img.close();
+    if (small?.url !== url) {
+      const img = await createImageBitmap(await (await fetch(url)).blob());
+      const canvas = document.createElement("canvas");
+      canvas.width = 4 * GW;
+      canvas.height = Math.max(1, Math.round((4 * GW * img.height) / img.width));
+      const ctx = canvas.getContext("2d")!;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.close();
+      small = { url, canvas };
+    }
+    const data = toGrid(small.canvas, small.canvas.width, small.canvas.height);
     if (gridFor === key) grid = data;
   } catch {
-    grid = null;
+    if (gridFor === key) grid = null;
   }
 }
 

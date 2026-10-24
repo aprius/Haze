@@ -323,7 +323,7 @@ function BackdropSection() {
           {path ? "Change…" : "Choose…"}
         </button>
       </div>
-      {error && <div className="modal-error">Cannot read the image: {error}</div>}
+      {error && <div className="modal-error">Cannot read the file: {error}</div>}
       {path && !islands && (
         <div className="settings-row static">
           <div className="settings-row-text muted small">Shown with the Islands layout only.</div>

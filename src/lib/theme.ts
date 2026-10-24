@@ -80,8 +80,10 @@ export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
   },
 };
 
+// Glass: the background clear, but its colour kept, as xterm draws inverse
+// text in it made opaque (black, from #00000000: unreadable in the light theme).
 export const terminalTheme = (mode: ThemeMode = useTheme.getState().mode, glass = useGlass.getState().on): ITheme =>
-  glass ? { ...TERMINAL_THEMES[mode], background: "#00000000" } : TERMINAL_THEMES[mode];
+  glass ? { ...TERMINAL_THEMES[mode], background: TERMINAL_THEMES[mode].background + "00" } : TERMINAL_THEMES[mode];
 
 function apply(mode: ThemeMode): void {
   document.documentElement.dataset.theme = mode;

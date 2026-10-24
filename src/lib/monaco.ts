@@ -126,10 +126,14 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
       // Glass: the island behind shows through; sticky scroll stays nearly
       // opaque, or the lines scrolling under it would show.
       ...(glass && {
-        "editor.background": "#00000000",
-        "editorGutter.background": "#00000000",
-        "minimap.background": "#00000000",
+        // Clear, in the theme's own colour: what Monaco derives from it (the
+        // minimap's text) does not turn towards black.
+        "editor.background": c.bg + "00",
+        "editorGutter.background": c.bg + "00",
+        "minimap.background": c.bg + "00",
         "editorStickyScroll.background": c.bg + "f2",
+        // Its line numbers: by default the editor's background, clear here.
+        "editorStickyScrollGutter.background": c.bg + "f2",
       }),
     },
   });

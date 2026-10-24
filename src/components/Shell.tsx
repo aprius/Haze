@@ -2,7 +2,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { AlertCircle, ArrowUpCircle, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type BuildDiagnostic, type TextEncoding } from "../lib/ipc";
 import { toggleThemeMode, useTheme } from "../lib/theme";
@@ -273,6 +273,18 @@ export function Splitter({
     if (d.next !== d.value) onChange(d.next);
     setSplitDragging(false);
   };
+  // Gone mid-drag (its panel closed by a shortcut): no pointerup reaches it, and
+  // terminals would wait for the drop forever.
+  useEffect(
+    () => () => {
+      const d = drag.current;
+      if (!d) return;
+      drag.current = null;
+      d.win.cancelAnimationFrame(d.frame);
+      setSplitDragging(false);
+    },
+    [],
+  );
   return (
     <div
       className={"splitter " + (vertical ? "vertical" : "horizontal")}

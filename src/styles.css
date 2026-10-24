@@ -441,6 +441,12 @@ kbd {
   background: color-mix(in srgb, var(--panel-solid) var(--popup-glass), transparent);
 }
 
+/* What scrolls under a sticky header must not show through it: nearly opaque,
+   as Monaco's sticky scroll is (monaco.ts). */
+:root[data-ui="islands"][data-backdrop] .unity-panel .test-fixture {
+  background: color-mix(in srgb, var(--bg-solid) 95%, transparent);
+}
+
 /* Code in a Markdown preview keeps a tint: --panel is clear glass here. */
 :root[data-ui="islands"][data-backdrop] .markdown-body :is(code, pre) {
   background: color-mix(in srgb, var(--panel-solid) 60%, transparent);
@@ -1185,6 +1191,11 @@ kbd {
    was painted again with every redraw. */
 .xterm-host .xterm-viewport {
   scrollbar-width: none;
+}
+
+/* WebKit before Safari 18.2 has no scrollbar-width. */
+.xterm-host .xterm-viewport::-webkit-scrollbar {
+  display: none;
 }
 
 /* Code in editors and diffs draws like the terminal; icons keep Monaco's own. */

@@ -118,6 +118,9 @@ export function blurredSize(blur: number): { w: number; h: number; r: number } {
 }
 
 let scratch: HTMLCanvasElement | null = null;
+// Not by setting ctx.filter and reading it back: without the property, that
+// sets a plain one, which reads back the same.
+const canvasFilters = "filter" in CanvasRenderingContext2D.prototype;
 
 /**
  * Draws `src` (sw × sh) blurred by `r` to cover `ctx`'s canvas. Blurred here,
@@ -132,8 +135,8 @@ export function drawBlurred(ctx: CanvasRenderingContext2D, src: CanvasImageSourc
   const k = Math.max((w + 4 * r) / sw, (h + 4 * r) / sh);
   const dw = sw * k;
   const dh = sh * k;
-  ctx.filter = r > 0 ? `blur(${r}px)` : "none";
-  if (r === 0 || ctx.filter.startsWith("blur")) {
+  if (r === 0 || canvasFilters) {
+    ctx.filter = r > 0 ? `blur(${r}px)` : "none";
     ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
     return;
   }
