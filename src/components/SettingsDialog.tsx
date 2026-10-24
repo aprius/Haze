@@ -333,7 +333,7 @@ function BackdropSection() {
         </div>
       )}
       {path && (
-        <div className="settings-backdrop">
+        <div className="settings-backdrop-grid">
           <BackdropSlider field="blur" label="Blur" unit="px" />
           <BackdropSlider field="dim" label="Dim" unit="%" />
           <BackdropSlider field="opacity" label="Panel opacity" unit="%" />

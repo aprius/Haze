@@ -4033,7 +4033,7 @@ html:has(.float-external) body {
 .settings-font-size {
   min-width: 0;
 }
-.settings-backdrop {
+.settings-backdrop-grid {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) 44px;
   align-items: center;
