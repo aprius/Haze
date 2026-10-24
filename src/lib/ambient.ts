@@ -64,17 +64,21 @@ function toGrid(src: CanvasImageSource, sw: number, sh: number): Uint8ClampedArr
   const k = Math.max(innerWidth / sw, innerHeight / sh);
   const sx = GW / innerWidth;
   const sy = GH / innerHeight;
-  const c = (gridCanvas ??= document.createElement("canvas"));
-  c.width = GW;
-  c.height = GH;
-  const ctx = c.getContext("2d", { willReadFrequently: true })!;
-  ctx.imageSmoothingQuality = "high";
+  if (!gridCtx) {
+    const c = document.createElement("canvas");
+    c.width = GW;
+    c.height = GH;
+    gridCtx = c.getContext("2d", { willReadFrequently: true })!;
+    gridCtx.imageSmoothingQuality = "high";
+  }
+  const ctx = gridCtx;
+  ctx.clearRect(0, 0, GW, GH);
   const dw = sw * k;
   const dh = sh * k;
   ctx.drawImage(src, ((innerWidth - dw) / 2) * sx, ((innerHeight - dh) / 2) * sy, dw * sx, dh * sy);
   return ctx.getImageData(0, 0, GW, GH).data;
 }
-let gridCanvas: HTMLCanvasElement | null = null;
+let gridCtx: CanvasRenderingContext2D | null = null;
 
 /**
  * A frame of a playing GIF or video (backdropLive.ts), or null once it stops:
@@ -165,12 +169,17 @@ function agentLight(): AgentLight | null {
   return mine.some(([, x]) => x.agent?.state === "working") ? "working" : null;
 }
 
-/** The theme's colour for an agent state, as the canvas takes it. */
+/** The theme's colour for an agent state, as the canvas takes it; read once a theme. */
+const colours = new Map<AgentLight, string>();
 function agentColour(light: AgentLight): string {
+  const known = colours.get(light);
+  if (known) return known;
   const [name, alpha] = AGENT_LIGHT[light];
   const hex = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  const c = `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  colours.set(light, c);
+  return c;
 }
 
 function setOn(on: boolean): void {
@@ -182,7 +191,7 @@ async function update(): Promise<void> {
   frame = 0;
   const url = useBackdropImage.getState().url;
   const strength = useBackdrop.getState().ambient;
-  const agent = agentLight();
+  const agent = (lastAgent = agentLight());
   if (!url || (strength <= 0 && !agent)) return setOn(false);
   if (strength > 0) await sample(url);
   if (!grid && !agent) return;
@@ -236,7 +245,13 @@ async function update(): Promise<void> {
 
 useBackdropImage.subscribe(schedule);
 useBackdrop.subscribe((s, prev) => (s.ambient !== prev.ambient || s.agentGlow !== prev.agentGlow) && schedule());
-useTerminals.subscribe((s, prev) => (s.sessions !== prev.sessions || s.attention !== prev.attention) && schedule());
-useWorkspace.subscribe((s, prev) => s.activeProjectId !== prev.activeProjectId && schedule());
-useTheme.subscribe(schedule);
+// Agents report on every tool they use: drawn again only when the light changes.
+let lastAgent: AgentLight | null = null;
+const agentChanged = () => agentLight() !== lastAgent && schedule();
+useTerminals.subscribe((s, prev) => (s.sessions !== prev.sessions || s.attention !== prev.attention) && agentChanged());
+useWorkspace.subscribe((s, prev) => s.activeProjectId !== prev.activeProjectId && agentChanged());
+useTheme.subscribe(() => {
+  colours.clear();
+  schedule();
+});
 addEventListener("resize", schedule);

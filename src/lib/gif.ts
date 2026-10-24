@@ -2,7 +2,7 @@
 // draws an animated <img> as its first frame only, and WebKit has no
 // ImageDecoder, so the frames are decoded here. parseGif reads the file's
 // structure, decodeFrame one frame's pixels; GifPlayer composes the frames on
-// a canvas, in time, as a browser plays them.
+// a canvas, in time, as a browser plays them (GifComposer, on arrays).
 
 export interface GifFrame {
   left: number;
@@ -115,21 +115,22 @@ export function parseGif(bytes: Uint8Array): Gif {
   return { width, height, frames };
 }
 
-/** A frame's colour indices, row by row, interlacing undone. */
-export function decodeFrame(f: GifFrame): Uint8Array {
+// The LZW tables, shared: frames decode one at a time.
+const prefix = new Int16Array(4096);
+const suffix = new Uint8Array(4096);
+const first = new Uint8Array(4096);
+const stack = new Uint8Array(4097);
+
+/** A frame's colour indices, row by row, interlacing undone; into `out` if given, which is reused. */
+export function decodeFrame(f: GifFrame, out = new Uint8Array(f.width * f.height)): Uint8Array {
   const count = f.width * f.height;
-  const out = new Uint8Array(count);
   const clear = 1 << f.minCodeSize;
   const eoi = clear + 1;
-  const prefix = new Int16Array(4096);
-  const suffix = new Uint8Array(4096);
-  const first = new Uint8Array(4096);
   for (let i = 0; i < clear; i++) {
     prefix[i] = -1;
     suffix[i] = i;
     first[i] = i;
   }
-  const stack = new Uint8Array(4097);
   let size = f.minCodeSize + 1;
   let mask = (1 << size) - 1;
   let next = eoi + 1;
@@ -183,8 +184,10 @@ export function decodeFrame(f: GifFrame): Uint8Array {
       prev = code;
     }
   }
+  // A frame cut short: the rest as a fresh buffer would have it.
+  out.fill(0, o, count);
   if (!f.interlaced) return out;
-  const rows = new Uint8Array(count);
+  const rows = out.slice(0, count);
   let row = 0;
   for (const [start, step] of [
     [0, 8],
@@ -193,71 +196,118 @@ export function decodeFrame(f: GifFrame): Uint8Array {
     [1, 2],
   ]) {
     for (let y = start; y < f.height; y += step) {
-      rows.set(out.subarray(row * f.width, (row + 1) * f.width), y * f.width);
+      out.set(rows.subarray(row * f.width, (row + 1) * f.width), y * f.width);
       row++;
     }
   }
-  return rows;
+  return out;
 }
 
-/** A frame's pixels as RGBA, its transparent colour clear. */
-export function frameRGBA(f: GifFrame, indices: Uint8Array, out = new Uint8ClampedArray(indices.length * 4)): Uint8ClampedArray {
-  const pal = f.palette;
-  for (let i = 0, o = 0; i < indices.length; i++, o += 4) {
-    const k = indices[i];
-    if (k === f.transparent) {
-      out[o + 3] = 0;
-      continue;
-    }
-    out[o] = pal[k * 3];
-    out[o + 1] = pal[k * 3 + 1];
-    out[o + 2] = pal[k * 3 + 2];
-    out[o + 3] = 255;
+/**
+ * Composes a GIF's frames in turn, as a browser plays them, into `pixels`
+ * (RGBA, the GIF's size), and says which area each step changed.
+ */
+export class GifComposer {
+  readonly pixels: Uint8ClampedArray;
+  index = -1;
+  /** What the last step changed: x, y, width, height. */
+  dirty: [number, number, number, number] = [0, 0, 0, 0];
+  private indices = new Uint8Array(0);
+  private saved: Uint8ClampedArray | null = null;
+
+  constructor(readonly gif: Gif) {
+    this.pixels = new Uint8ClampedArray(gif.width * gif.height * 4);
   }
-  return out;
+
+  step(): void {
+    const { width: W, height: H, frames } = this.gif;
+    const px = this.pixels;
+    let x0 = W;
+    let y0 = H;
+    let x1 = 0;
+    let y1 = 0;
+    // A frame's rectangle, within the GIF: [left, top, right, bottom].
+    const area = (f: GifFrame) => [Math.max(0, f.left), Math.max(0, f.top), Math.min(W, f.left + f.width), Math.min(H, f.top + f.height)];
+    const touch = ([l, t, r, b]: number[]) => {
+      if (l >= r || t >= b) return;
+      x0 = Math.min(x0, l);
+      y0 = Math.min(y0, t);
+      x1 = Math.max(x1, r);
+      y1 = Math.max(y1, b);
+    };
+    const prev = frames[this.index];
+    if (prev && (prev.disposal === 2 || (prev.disposal === 3 && this.saved))) {
+      const a = area(prev);
+      for (let y = a[1]; y < a[3]; y++) {
+        const s = (y * W + a[0]) * 4;
+        const e = (y * W + a[2]) * 4;
+        if (prev.disposal === 2) px.fill(0, s, e);
+        else px.set(this.saved!.subarray(s, e), s);
+      }
+      touch(a);
+    }
+    this.index = (this.index + 1) % frames.length;
+    if (this.index === 0) {
+      px.fill(0);
+      touch([0, 0, W, H]);
+    }
+    const f = frames[this.index];
+    if (f.disposal === 3) (this.saved ??= new Uint8ClampedArray(px.length)).set(px);
+    const a = area(f);
+    if (a[0] < a[2] && a[1] < a[3]) {
+      if (this.indices.length < f.width * f.height) this.indices = new Uint8Array(f.width * f.height);
+      const idx = decodeFrame(f, this.indices);
+      const pal = f.palette;
+      const t = f.transparent;
+      for (let y = a[1]; y < a[3]; y++) {
+        let i = (y - f.top) * f.width + (a[0] - f.left);
+        let o = (y * W + a[0]) * 4;
+        for (let x = a[0]; x < a[2]; x++, i++, o += 4) {
+          const k = idx[i];
+          if (k === t) continue;
+          px[o] = pal[k * 3];
+          px[o + 1] = pal[k * 3 + 1];
+          px[o + 2] = pal[k * 3 + 2];
+          px[o + 3] = 255;
+        }
+      }
+      touch(a);
+    }
+    this.dirty = x0 < x1 ? [x0, y0, x1 - x0, y1 - y0] : [0, 0, 0, 0];
+  }
 }
 
 /** Plays a GIF on `canvas`, frame by frame, when advance() is called. */
 export class GifPlayer {
   readonly canvas = document.createElement("canvas");
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly patch = document.createElement("canvas");
-  private index = -1;
+  private readonly composer: GifComposer;
+  private readonly image: ImageData;
   private nextAt = 0;
-  private saved: ImageData | null = null;
 
   constructor(readonly gif: Gif) {
     this.canvas.width = gif.width;
     this.canvas.height = gif.height;
-    this.ctx = this.canvas.getContext("2d", { willReadFrequently: true })!;
+    this.ctx = this.canvas.getContext("2d")!;
+    this.composer = new GifComposer(gif);
+    // The composer's pixels themselves: putImageData copies only what changed.
+    this.image = new ImageData(this.composer.pixels as Uint8ClampedArray<ArrayBuffer>, gif.width, gif.height);
+  }
+
+  /** When the next frame is due, on performance.now()'s clock; Infinity for a still. */
+  get due(): number {
+    return this.gif.frames.length === 1 && this.composer.index === 0 ? Infinity : this.nextAt;
   }
 
   /** Shows the next frame once the current one has had its time; true when it did. */
   advance(now: number): boolean {
-    if (now < this.nextAt) return false;
-    const frames = this.gif.frames;
-    if (frames.length === 1 && this.index === 0) return false;
-    const prev = frames[this.index];
-    if (prev?.disposal === 2) this.ctx.clearRect(prev.left, prev.top, prev.width, prev.height);
-    else if (prev?.disposal === 3 && this.saved) this.ctx.putImageData(this.saved, 0, 0);
-    this.index = (this.index + 1) % frames.length;
-    if (this.index === 0) this.ctx.clearRect(0, 0, this.gif.width, this.gif.height);
-    const f = frames[this.index];
-    this.saved = f.disposal === 3 ? this.ctx.getImageData(0, 0, this.gif.width, this.gif.height) : null;
-    if (f.width && f.height) {
-      if (this.patch.width !== f.width || this.patch.height !== f.height) {
-        this.patch.width = f.width;
-        this.patch.height = f.height;
-      }
-      const pctx = this.patch.getContext("2d")!;
-      const img = pctx.createImageData(f.width, f.height);
-      frameRGBA(f, decodeFrame(f), img.data);
-      pctx.putImageData(img, 0, 0);
-      // drawImage, not putImageData: the frame's transparent pixels keep what is under them.
-      this.ctx.drawImage(this.patch, f.left, f.top);
-    }
+    if (now < this.due) return false;
+    const c = this.composer;
+    c.step();
+    const [x, y, w, h] = c.dirty;
+    if (w && h) this.ctx.putImageData(this.image, 0, 0, x, y, w, h);
     // On the GIF's own clock, unless far behind it (the first frame, or the window was hidden).
-    this.nextAt = (now - this.nextAt > 1000 ? now : this.nextAt) + f.delay;
+    this.nextAt = (now - this.nextAt > 1000 ? now : this.nextAt) + this.gif.frames[c.index].delay;
     return true;
   }
 }
