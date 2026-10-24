@@ -5,7 +5,7 @@ import { FileTree, ProjectViewHeader } from "./components/FileTree";
 import { FindInFiles } from "./components/FindInFiles";
 import { SearchEverywhere } from "./components/SearchEverywhere";
 import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
-import { ProjectRail, Splitter, StatusBar, toggleBottom, Welcome } from "./components/Shell";
+import { ProjectRail, Splitter, StatusBar, toggleBottom, UpdateProgressCard, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
 import { TestsPanel, UnityPanel } from "./components/UnityPanel";
 import { CommitWindow } from "./components/CommitPanel";
@@ -385,7 +385,9 @@ export default function App() {
       <SettingsDialog />
       <ContextMenu />
       <Dialogs />
-      <Toasts />
+      <Toasts>
+        <UpdateProgressCard />
+      </Toasts>
     </div>
   );
 }

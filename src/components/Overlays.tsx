@@ -572,12 +572,14 @@ export function toast(text: string, kind: "error" | "info" = "info", action?: To
   setTimeout(() => dismiss(id), action ? 15000 : kind === "error" ? 8000 : 3500);
 }
 
-export function Toasts() {
+/** `children`: extra cards above the toasts (the update progress). */
+export function Toasts({ children }: { children?: ReactNode }) {
   const items = useToasts((s) => s.items);
   const doc = useHost((s) => s.doc);
   return inDoc(
     doc,
     <div className="toasts">
+      {children}
       {items.map((t) => (
         <div key={t.id} className={"toast " + t.kind}>
           <span>{t.text}</span>

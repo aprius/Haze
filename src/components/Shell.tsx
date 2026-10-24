@@ -12,7 +12,7 @@ import { useTasks } from "../store/tasks";
 import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
 import { useTree } from "../store/tree";
 import { toggleCommitWindow, useUi } from "../store/ui";
-import { BREW_UPGRADE, openRelease, useUpdates } from "../store/updates";
+import { openRelease, updateLabel, updateNow, useUpdates } from "../store/updates";
 import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
@@ -20,7 +20,7 @@ import { useWorkspace, type BottomTab, type Project } from "../store/workspace";
 import { closeTabsWithPrompt, PathCrumbs, useCursor } from "./EditorArea";
 import { confirmAction, openMenu } from "./Overlays";
 import { disposeView, toggleTerminal } from "./TerminalPanel";
-import { isMac, shortcutLabel } from "../lib/keymap";
+import { shortcutLabel } from "../lib/keymap";
 import { DEFAULT_ZOOM, resetZoom, useZoom } from "../lib/zoom";
 
 export async function openFolder(): Promise<void> {
@@ -100,7 +100,16 @@ function AgentBadge({ projectId }: { projectId: string }) {
 /** Shown while a newer Haze release is out. */
 function UpdateButton() {
   const info = useUpdates((s) => s.info);
+  const kind = useUpdates((s) => s.kind);
+  const updating = useUpdates((s) => s.progress !== null);
   if (!info?.available) return null;
+  if (updating) {
+    return (
+      <button className="rail-item rail-update" title={`Updating to Haze ${info.latest}…`} disabled>
+        <LoaderCircle size={16} className="spin" />
+      </button>
+    );
+  }
   return (
     <button
       className="rail-item rail-update"
@@ -109,8 +118,8 @@ function UpdateButton() {
         openMenu(e, [
           { label: `Haze ${info.latest} is available`, disabled: true },
           { separator: true },
-          { label: "Download from GitHub…", action: openRelease },
-          ...(isMac ? [{ label: `Copy "${BREW_UPGRADE}"`, action: () => void navigator.clipboard.writeText(BREW_UPGRADE) }] : []),
+          { label: updateLabel(kind), action: () => void updateNow() },
+          ...(kind !== "manual" ? [{ label: "Release Notes…", action: openRelease }] : []),
           { separator: true },
           { label: "Update Settings…", action: () => openSettings("updates") },
         ])
@@ -440,6 +449,33 @@ export function StatusBar({ project }: { project: Project | null }) {
           <TerminalSquare size={14} /> Terminal
         </button>
       )}
+    </div>
+  );
+}
+
+const MB = 1024 * 1024;
+
+/** Download progress of Update Now, shown with the toasts. */
+export function UpdateProgressCard() {
+  const progress = useUpdates((s) => s.progress);
+  const latest = useUpdates((s) => s.info?.latest);
+  if (!progress) return null;
+  const { received, total } = progress;
+  const done = total > 0 && received >= total;
+  const pct = total > 0 ? Math.min(100, (received / total) * 100) : 0;
+  return (
+    <div className="toast update-progress">
+      <div className="update-progress-text">
+        <span>{done ? `Installing Haze ${latest}…` : `Downloading Haze ${latest}…`}</span>
+        {!done && total > 0 && (
+          <span className="muted small">
+            {(received / MB).toFixed(1)} / {(total / MB).toFixed(1)} MB
+          </span>
+        )}
+      </div>
+      <div className="update-progress-bar">
+        <div className={done ? "indeterminate" : undefined} style={done ? undefined : { width: `${pct}%` }} />
+      </div>
     </div>
   );
 }

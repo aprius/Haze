@@ -107,6 +107,18 @@ jobs:
           releaseDraft: false
           prerelease: false
 
+      # Update Now on Windows replaces haze.exe in place (src-tauri/src/updates.rs),
+      # so the release also carries the bare executable.
+      - name: Publish haze.exe
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          exe="$RUNNER_TEMP/Haze_${GITHUB_REF_NAME#v}_x64.exe"
+          cp src-tauri/target/release/haze.exe "$exe"
+          gh release upload "$GITHUB_REF_NAME" "$exe" --clobber
+
       - name: Upload installers
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
@@ -149,6 +161,10 @@ jobs:
             -e "s/^  version \".*\"/  version \"$version\"/" \
             -e "s/^  sha256 \".*\"/  sha256 \"$sha\"/" \
             Casks/haze.rb
+          # The `haze` command ships inside Haze.app from 1.0.5 on, so the cask
+          # links it only once it points at such a release.
+          grep -q '^  binary ' Casks/haze.rb ||
+            sed -i -E 's|^  app "Haze.app"$|&\n  binary "#{appdir}/Haze.app/Contents/Resources/haze"|' Casks/haze.rb
           if git diff --quiet; then
             echo "Cask is already at $version"
             exit 0

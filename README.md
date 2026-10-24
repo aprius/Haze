@@ -133,7 +133,7 @@ Works with any CLI agent: if it runs in a terminal, it runs in Haze. Status badg
 ```bash
 brew tap aprius/haze https://github.com/aprius/Haze
 brew install --cask haze
-brew upgrade --cask haze   # update
+haze update                # update (restarts Haze if it is open)
 ```
 
 **Windows / Linux**: download from [Releases](https://github.com/aprius/Haze/releases): `-setup.exe` or `.msi` (Windows), `.deb`, `.rpm` or `.AppImage` (Linux).

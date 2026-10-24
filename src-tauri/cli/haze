@@ -1,0 +1,76 @@
+#!/bin/sh
+# The `haze` command, bundled in Haze.app and linked into the PATH by the Homebrew cask.
+#   haze update    update Haze to the latest release
+#   haze version   print the installed version
+set -e
+
+BUNDLE_ID="dev.haze.app"
+# Started from Haze (Update Now), the shell profile that adds Homebrew may not have run.
+PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
+
+# Haze.app/Contents/Resources/haze, reached through the cask's symlink.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+app=$(cd "$(dirname "$self")/../.." && pwd)
+
+installed_version() {
+  defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "?"
+}
+
+is_running() {
+  [ "$(osascript -e "application id \"$BUNDLE_ID\" is running" 2>/dev/null)" = "true" ]
+}
+
+update() {
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "haze: Homebrew not found; download Haze from https://github.com/aprius/Haze/releases" >&2
+    exit 1
+  fi
+  before=$(installed_version)
+  # `brew upgrade` alone may skip pulling the tap for up to a day and report the old version as latest.
+  brew update --quiet
+  brew upgrade --cask haze
+  after=$(installed_version)
+  if [ "$before" = "$after" ]; then
+    echo "Haze $after is the latest version."
+    return
+  fi
+  echo "Haze updated: $before -> $after"
+  # Terminals live in a separate PTY host, so restarting Haze does not kill them
+  # (including the one running this command).
+  if is_running; then
+    echo "Restarting Haze..."
+    osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+    i=0
+    while is_running && [ $i -lt 20 ]; do
+      sleep 0.5
+      i=$((i + 1))
+    done
+    if is_running; then
+      echo "Haze did not quit; restart it to use $after."
+    else
+      open -b "$BUNDLE_ID"
+    fi
+  fi
+}
+
+case ${1:-help} in
+  update | upgrade) update ;;
+  version | --version | -v) installed_version ;;
+  help | --help | -h)
+    echo "usage: haze <command>"
+    echo
+    echo "  update    update Haze to the latest release"
+    echo "  version   print the installed version"
+    ;;
+  *)
+    echo "haze: unknown command '$1' (see 'haze help')" >&2
+    exit 1
+    ;;
+esac

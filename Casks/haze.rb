@@ -1,6 +1,7 @@
 # Homebrew cask for Haze. version/sha256 are updated by .github/workflows/release.yml.
 #   brew tap aprius/haze https://github.com/aprius/Haze
 #   brew install --cask haze
+#   haze update
 cask "haze" do
   version "1.0.4"
   sha256 "dac19afae064c265fbe95d992ff19d9341e3cf6c4b775e2b6d0e2abbf9fe8fb4"

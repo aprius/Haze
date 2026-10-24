@@ -126,6 +126,6 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
 ## Keymap and updates
 
 - **Keymap** page in Settings: every command with its shortcuts, Rider's defaults (the macOS ReSharper keymap on macOS); click **+** and press keys to add one, conflicts are shown, changed commands are highlighted and can be reset.
-- **Check for Updates…** (app menu, or automatically every few hours, Settings → Updates) compares the build with the latest GitHub release and links to it (or `brew upgrade --cask haze`); nothing is downloaded or installed by itself. **About Haze** in the app menu.
+- **Check for Updates…** (app menu, or automatically every few hours, Settings → Updates) compares the build with the latest GitHub release. **Update Now** updates a Homebrew install through `haze update` in Terminal. Otherwise Haze downloads the release with a progress bar, checks it against GitHub's checksum and restarts into it: it replaces Haze.app (macOS), the AppImage (Linux) or haze.exe (Windows), and terminals keep running. A .deb or .rpm install, or Haze in a folder it cannot write (an MSI install under Program Files), opens the release page instead. Nothing is downloaded or installed until you choose to. **About Haze** in the app menu.
 
 ![Keymap](keymap.png)

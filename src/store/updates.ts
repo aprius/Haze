@@ -1,29 +1,34 @@
 // Check for Updates: the latest GitHub release, at most every few hours
-// (Settings › Updates), or on demand. Haze only points at the release; it does not install it.
+// (Settings › Updates), or on demand. "Update Now" runs `haze update` in Terminal
+// for a Homebrew install; a Haze.app, AppImage or haze.exe install downloads the release
+// inside Haze and restarts into it (updates.rs); anything else opens the release page.
 // Kept off the startup path: the first check waits until Haze has settled, the
 // request runs on a Rust worker thread, and the last result is saved with the
 // workspace so a relaunch shows it without asking GitHub again.
 import { getVersion } from "@tauri-apps/api/app";
+import { Channel } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { create } from "zustand";
 import { toast } from "../components/Overlays";
-import { api, errorMessage, type UpdateInfo } from "../lib/ipc";
+import { api, errorMessage, type InstallKind, type UpdateInfo, type UpdateProgress } from "../lib/ipc";
+import { flush } from "./persist";
 import { useWorkspace } from "./workspace";
 
 /** The earliest automatic check after launch. */
 const FIRST_CHECK_MS = 30_000;
 const INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-export const BREW_UPGRADE = "brew upgrade --cask haze";
-
 interface UpdatesState {
   info: UpdateInfo | null;
   checking: boolean;
   error: string | null;
   checkedAt: number | null;
+  kind: InstallKind;
+  /** Set while Update Now downloads (bundle installs); `received === total` while it installs. */
+  progress: UpdateProgress | null;
 }
 
-export const useUpdates = create<UpdatesState>(() => ({ info: null, checking: false, error: null, checkedAt: null }));
+export const useUpdates = create<UpdatesState>(() => ({ info: null, checking: false, error: null, checkedAt: null, kind: "manual", progress: null }));
 
 /** What persist.ts saves: the last successful check. */
 export interface SavedUpdateCheck {
@@ -52,6 +57,37 @@ export function openRelease(): void {
   if (url) void openUrl(url);
 }
 
+/** The label of the action that updates this copy. */
+export function updateLabel(kind: InstallKind): string {
+  return kind === "manual" ? "Download…" : "Update Now";
+}
+
+export async function updateNow(): Promise<void> {
+  const { kind, progress } = useUpdates.getState();
+  if (progress) return;
+  if (kind === "manual") return openRelease();
+  if (kind === "brew") {
+    try {
+      await api.updateInTerminal();
+      toast("Updating Haze in Terminal. Haze restarts when it is done.");
+    } catch (e) {
+      toast(`Cannot update: ${errorMessage(e)}`, "error", { label: "Download", run: openRelease });
+    }
+    return;
+  }
+  const channel = new Channel<UpdateProgress>();
+  channel.onmessage = (p) => useUpdates.setState({ progress: p });
+  useUpdates.setState({ progress: { received: 0, total: 0 } });
+  try {
+    await api.installUpdate(channel);
+    await flush().catch(console.error);
+    await api.relaunchUpdated();
+  } catch (e) {
+    useUpdates.setState({ progress: null });
+    toast(`Cannot update: ${errorMessage(e)}`, "error", { label: "Download", run: openRelease });
+  }
+}
+
 /** `manual`: from Settings, so the result is reported either way. */
 export async function checkForUpdates(manual = false): Promise<void> {
   if (useUpdates.getState().checking) return;
@@ -62,7 +98,11 @@ export async function checkForUpdates(manual = false): Promise<void> {
     useUpdates.setState({ info, error: null, checkedAt: Date.now() });
     // Announced once per version; the rail button stays until Haze is updated.
     if (info.available && (manual || before?.latest !== info.latest)) {
-      toast(`Haze ${info.latest} is available (you have ${info.current}).`, "info", { label: "Download", run: openRelease });
+      const kind = useUpdates.getState().kind;
+      toast(`Haze ${info.latest} is available (you have ${info.current}).`, "info", {
+        label: kind === "manual" ? "Download" : "Update",
+        run: () => void updateNow(),
+      });
     } else if (manual && !info.available) {
       toast(`Haze ${info.current} is the latest version.`);
     }
@@ -77,6 +117,10 @@ export async function checkForUpdates(manual = false): Promise<void> {
 
 /** Runs the periodic check while the setting is on; returns the stop function. */
 export function startUpdateChecks(): () => void {
+  void api
+    .updateInstallKind()
+    .then((kind) => useUpdates.setState({ kind }))
+    .catch(() => {});
   let timer: ReturnType<typeof setTimeout> | null = null;
   const stop = () => {
     if (timer) clearTimeout(timer);

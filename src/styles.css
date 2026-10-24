@@ -1258,6 +1258,46 @@ kbd {
   border-left-color: var(--danger);
 }
 
+.toast.update-progress {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 300px;
+}
+
+.update-progress-text {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.update-progress-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.update-progress-bar > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.update-progress-bar > .indeterminate {
+  width: 30%;
+  animation: update-progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes update-progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
 /* ------------------------------------------------------------ search everywhere */
 
 .se-backdrop,

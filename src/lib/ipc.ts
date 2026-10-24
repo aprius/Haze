@@ -1,5 +1,5 @@
 // Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type Channel } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export interface DirEntry {
@@ -21,6 +21,14 @@ export interface UpdateInfo {
   /** The release page. */
   url: string;
   available: boolean;
+}
+
+/** How this copy updates: `brew` runs `haze update` in Terminal, `bundle` downloads in Haze, `manual` opens the release. */
+export type InstallKind = "brew" | "bundle" | "manual";
+
+export interface UpdateProgress {
+  received: number;
+  total: number;
 }
 
 export type FileContent =
@@ -553,6 +561,11 @@ export const api = {
   unwatchProject: (root: string) => invoke<void>("unwatch_project", { root }),
 
   checkUpdate: () => invoke<UpdateInfo>("check_update"),
+  updateInstallKind: () => invoke<InstallKind>("update_install_kind"),
+  updateInTerminal: () => invoke<void>("update_in_terminal"),
+  installUpdate: (onProgress: Channel<UpdateProgress>) => invoke<void>("install_update", { onProgress }),
+  /** Exits Haze; the new version starts once it is gone. */
+  relaunchUpdated: () => invoke<void>("relaunch_updated"),
 
   ptyList: () => invoke<SessionInfo[]>("pty_list"),
   ptyCreate: (spec: SessionSpec) => invoke<SessionInfo>("pty_create", { spec }),

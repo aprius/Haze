@@ -752,6 +752,34 @@ async fn check_update() -> CmdResult<updates::UpdateInfo> {
     blocking(updates::check).await
 }
 
+#[tauri::command]
+fn update_install_kind() -> updates::InstallKind {
+    updates::install_kind()
+}
+
+#[tauri::command]
+async fn update_in_terminal() -> CmdResult<()> {
+    blocking(updates::update_in_terminal).await
+}
+
+#[tauri::command]
+async fn install_update(on_progress: tauri::ipc::Channel<updates::Progress>) -> CmdResult<()> {
+    blocking(move || {
+        updates::download_and_install(|p| {
+            let _ = on_progress.send(p);
+        })
+    })
+    .await
+}
+
+/// After `install_update`; the page has saved the workspace first.
+#[tauri::command]
+fn relaunch_updated(app: AppHandle) -> CmdResult<()> {
+    updates::spawn_relaunch().map_err(err)?;
+    app.exit(0);
+    Ok(())
+}
+
 // ---------------------------------------------------------------- command line
 
 /// Projects/files asked for on the command line or by a second launch.
@@ -971,12 +999,18 @@ pub fn run() {
             // Starting the host overlaps with the webview loading.
             let warm = client.clone();
             std::thread::spawn(move || warm.warm());
+            #[cfg(windows)]
+            std::thread::spawn(updates::remove_replaced_exes);
             app.manage(Pty::new(client));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             take_open_requests,
             check_update,
+            update_install_kind,
+            update_in_terminal,
+            install_update,
+            relaunch_updated,
             load_state,
             save_state,
             list_dir,

@@ -28,10 +28,9 @@ import {
   setRecordingKeys,
   useKeymap,
 } from "../lib/keymap";
-import { isMac } from "../lib/keymap";
 import { setUiStyle, type UiStyle, useUiStyle } from "../lib/theme";
 import { popupClosed } from "../store/ui";
-import { BREW_UPGRADE, checkForUpdates, openRelease, useUpdates } from "../store/updates";
+import { checkForUpdates, openRelease, updateLabel, updateNow, useUpdates } from "../store/updates";
 import { useWorkspace } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
 import { toast } from "./Overlays";
@@ -527,7 +526,7 @@ function UnitySection() {
 
 function UpdatesSection() {
   const checkUpdates = useWorkspace((s) => s.checkUpdates);
-  const { info, checking, error, checkedAt } = useUpdates();
+  const { info, checking, error, checkedAt, kind, progress } = useUpdates();
   const status = checking
     ? "Checking…"
     : error
@@ -539,7 +538,10 @@ function UpdatesSection() {
         : "Not checked yet.";
   return (
     <>
-      <PageHeader title="Updates" desc="Haze asks GitHub for its latest release. Nothing is downloaded or installed until you choose to." />
+      <PageHeader
+        title="Updates"
+        desc="Haze asks GitHub for its latest release. Nothing is downloaded or installed until you choose Update Now; a Homebrew install updates through Homebrew in Terminal."
+      />
       <div className="settings-card">
         <SwitchRow
           label="Check for updates automatically"
@@ -553,19 +555,19 @@ function UpdatesSection() {
             {checkedAt && !checking && <div className="muted small">Checked at {new Date(checkedAt).toLocaleTimeString()}</div>}
           </div>
           {info?.available && (
-            <button className="btn small primary" onClick={openRelease}>
-              Download…
+            <button className="btn small primary" disabled={progress !== null} onClick={() => void updateNow()}>
+              {progress ? "Updating…" : updateLabel(kind)}
+            </button>
+          )}
+          {info?.available && kind !== "manual" && (
+            <button className="btn small" onClick={openRelease}>
+              Release Notes…
             </button>
           )}
           <button className="btn small" disabled={checking} onClick={() => void checkForUpdates(true)}>
             Check Now
           </button>
         </div>
-        {info?.available && isMac && (
-          <div className="muted small">
-            Installed with Homebrew? Run <code>{BREW_UPGRADE}</code>
-          </div>
-        )}
       </div>
     </>
   );
