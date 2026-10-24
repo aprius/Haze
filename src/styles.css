@@ -337,14 +337,21 @@ kbd {
   background: color-mix(in srgb, var(--editor-bg-solid) var(--glass), transparent);
 }
 
-/* Ambient glow (src/lib/ambient.ts sets data-ambient and each island's colours):
-   light cast from each edge, in the colours of the image behind it. */
-:root[data-ui="islands"][data-backdrop][data-ambient] :is(.sidebar, .center, .side-dock, .bottom) {
-  box-shadow:
-    0 -6px 22px -6px var(--glow-t, transparent),
-    6px 0 22px -6px var(--glow-r, transparent),
-    0 6px 22px -6px var(--glow-b, transparent),
-    -6px 0 22px -6px var(--glow-l, transparent);
+/* Ambient glow (src/lib/ambient.ts draws it and sets data-ambient): light cast
+   around each island, on a canvas between the image and the islands, drawn at a
+   quarter of the window's size. */
+.ambient {
+  display: none;
+}
+
+:root[data-ui="islands"][data-backdrop][data-ambient] .ambient {
+  display: block;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
 }
 
 /* xterm.css paints the viewport black; xterm 6 no longer covers it with the

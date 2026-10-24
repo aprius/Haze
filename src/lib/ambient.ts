@@ -2,20 +2,37 @@
 // in the islands layout: each island casts light from its edges, in the colours
 // of the image behind each edge, like a TV's ambilight. The image is sampled
 // once into a small grid laid out as the window shows it (cover); each island
-// then reads the cells under its edges into --glow-t/-r/-b/-l, which its
-// box-shadow draws. Islands register with glowRef and are read again when they
-// change size, once a frame at most (moving one changes its or a neighbour's
-// size), and after a splitter drag rather than on each step of it.
+// edge takes the colour of the cells under it.
+//
+// The light is drawn on one canvas behind the islands, at a quarter of the
+// window's size and scaled up (it is blurred, so that costs nothing to look
+// at): box-shadows on the islands blurred again, at full resolution, whenever
+// an island changed size, and doubled the frames a splitter drag dropped.
+// Drawing it is about a millisecond, so it follows a drag live. Islands
+// register with glowRef and are drawn again when they change size, once a
+// frame at most (moving one changes its or a neighbour's size).
 import { useBackdrop, useBackdropImage } from "./backdrop";
-import { afterSplitDrag, splitDragging } from "./splitDrag";
 
 const GW = 48;
 const GH = 30;
+/** Canvas pixels per window pixel. */
+const SCALE = 0.25;
+/** The light's reach, in window pixels, and how far it starts inside the edge. */
+const BLUR = 22;
+const BAND = 6;
+/** The islands' corner radius (styles.css, islands layout). */
+const RADIUS = 10;
+
 let grid: Uint8ClampedArray | null = null;
 let gridFor = "";
 
 const islands = new Set<HTMLElement>();
 const ro = new ResizeObserver(() => schedule());
+
+const canvas = document.createElement("canvas");
+canvas.className = "ambient";
+canvas.setAttribute("aria-hidden", "true");
+document.body.appendChild(canvas);
 
 /** Ref for an island: `ref={glowRef}`. */
 export function glowRef(el: HTMLElement | null): (() => void) | void {
@@ -26,13 +43,13 @@ export function glowRef(el: HTMLElement | null): (() => void) | void {
   return () => {
     islands.delete(el);
     ro.unobserve(el);
+    schedule();
   };
 }
 
 let frame = 0;
 function schedule(): void {
-  if (splitDragging()) return afterSplitDrag(schedule);
-  if (!frame) frame = requestAnimationFrame(update);
+  if (!frame) frame = requestAnimationFrame(() => void update());
 }
 
 async function sample(url: string): Promise<void> {
@@ -45,10 +62,10 @@ async function sample(url: string): Promise<void> {
     const k = Math.max(innerWidth / img.width, innerHeight / img.height);
     const sx = GW / innerWidth;
     const sy = GH / innerHeight;
-    const canvas = document.createElement("canvas");
-    canvas.width = GW;
-    canvas.height = GH;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    const c = document.createElement("canvas");
+    c.width = GW;
+    c.height = GH;
+    const ctx = c.getContext("2d", { willReadFrequently: true })!;
     ctx.imageSmoothingQuality = "high";
     const dw = img.width * k;
     const dh = img.height * k;
@@ -82,7 +99,7 @@ function light(x0: number, y0: number, x1: number, y1: number, alpha: number): s
   }
   const [h, s, l] = hsl(r / n, gr / n, b / n);
   // More saturated, and neither so dark it does not show nor so bright it glares.
-  return `hsl(${h.toFixed(0)} ${Math.min(100, s * 130).toFixed(0)}% ${Math.min(70, Math.max(45, l * 100)).toFixed(0)}% / ${alpha})`;
+  return `hsla(${h.toFixed(0)}, ${Math.min(100, s * 130).toFixed(0)}%, ${Math.min(70, Math.max(45, l * 100)).toFixed(0)}%, ${alpha})`;
 }
 
 function hsl(r: number, g: number, b: number): [number, number, number] {
@@ -99,36 +116,60 @@ function hsl(r: number, g: number, b: number): [number, number, number] {
   return [h * 60, s, l];
 }
 
-const SIDES = ["t", "r", "b", "l"] as const;
+function setOn(on: boolean): void {
+  if (on) document.documentElement.dataset.ambient = "";
+  else delete document.documentElement.dataset.ambient;
+}
 
 async function update(): Promise<void> {
   frame = 0;
   const url = useBackdropImage.getState().url;
   const strength = useBackdrop.getState().ambient;
-  const on = !!url && strength > 0;
-  if (on) document.documentElement.dataset.ambient = "";
-  else delete document.documentElement.dataset.ambient;
-  if (!on) return;
+  if (!url || strength <= 0) return setOn(false);
   await sample(url);
   if (!grid) return;
-  const alpha = (strength / 100).toFixed(2);
-  for (const el of islands) {
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) continue;
+  const w = Math.max(1, Math.round(innerWidth * SCALE));
+  const h = Math.max(1, Math.round(innerHeight * SCALE));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const ctx = canvas.getContext("2d")!;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.scale(SCALE, SCALE);
+  const rects = [...islands].map((el) => el.getBoundingClientRect()).filter((r) => r.width && r.height);
+  // Each edge's band drawn far off the canvas, its shadow alone brought back:
+  // a blur every canvas has, unlike ctx.filter.
+  const off = 4 * (innerWidth + innerHeight);
+  ctx.shadowOffsetX = off * SCALE;
+  ctx.shadowBlur = BLUR * SCALE;
+  for (const r of rects) {
     // The band of image under each edge: a fifth of the island, at most 120px.
     const bw = Math.min(120, r.width / 5);
     const bh = Math.min(120, r.height / 5);
-    const bands = {
-      t: [r.left, r.top, r.right, r.top + bh],
-      r: [r.right - bw, r.top, r.right, r.bottom],
-      b: [r.left, r.bottom - bh, r.right, r.bottom],
-      l: [r.left, r.top, r.left + bw, r.bottom],
-    };
-    for (const side of SIDES) {
-      const [x0, y0, x1, y1] = bands[side];
-      el.style.setProperty(`--glow-${side}`, light(x0, y0, x1, y1, Number(alpha)));
+    const edges: [number[], number[]][] = [
+      [[r.left, r.top, r.right, r.top + bh], [r.left, r.top - BAND, r.width, 2 * BAND]],
+      [[r.right - bw, r.top, r.right, r.bottom], [r.right - BAND, r.top, 2 * BAND, r.height]],
+      [[r.left, r.bottom - bh, r.right, r.bottom], [r.left, r.bottom - BAND, r.width, 2 * BAND]],
+      [[r.left, r.top, r.left + bw, r.bottom], [r.left - BAND, r.top, 2 * BAND, r.height]],
+    ];
+    for (const [[x0, y0, x1, y1], [x, y, ew, eh]] of edges) {
+      ctx.shadowColor = light(x0, y0, x1, y1, strength / 100);
+      ctx.fillRect(x - off, y, ew, eh);
     }
   }
+  // Light only around the islands, as a box-shadow casts it, not under their glass.
+  ctx.shadowColor = "transparent";
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.beginPath();
+  for (const r of rects) {
+    if (ctx.roundRect) ctx.roundRect(r.left, r.top, r.width, r.height, RADIUS);
+    else ctx.rect(r.left, r.top, r.width, r.height);
+  }
+  ctx.fill();
+  ctx.globalCompositeOperation = "source-over";
+  setOn(true);
 }
 
 useBackdropImage.subscribe(schedule);
