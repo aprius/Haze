@@ -9,6 +9,7 @@ pub mod git_auth;
 mod git_log;
 mod git_ops;
 mod lsp;
+mod media;
 mod nesting;
 mod procinfo;
 pub mod pty;
@@ -315,6 +316,52 @@ out.join("\n");"#;
 struct ImageData {
     mime: &'static str,
     base64: String,
+}
+
+/// A background image or video (Settings > Appearance) as raw bytes: a video is
+/// too big to go through base64 like read_image's previews.
+#[tauri::command]
+async fn read_media(path: String) -> CmdResult<tauri::ipc::Response> {
+    blocking(move || {
+        let meta = std::fs::metadata(&path)?;
+        anyhow::ensure!(
+            meta.len() <= 512 * 1024 * 1024,
+            "the file is too large (over 512 MB)"
+        );
+        Ok(tauri::ipc::Response::new(std::fs::read(&path)?))
+    })
+    .await
+}
+
+/// Keeps a copy of a background video in the app's cache (src-tauri/src/media.rs),
+/// or with no path drops the one kept; returns the copy.
+#[tauri::command]
+async fn cache_backdrop(app: AppHandle, path: Option<String>) -> CmdResult<Option<String>> {
+    blocking(move || {
+        Ok(media::cache(&backdrop_cache_dir(&app)?, path.as_deref().map(std::path::Path::new))?
+            .map(|p| p.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
+fn backdrop_cache_dir(app: &AppHandle) -> anyhow::Result<std::path::PathBuf> {
+    Ok(app.path().app_cache_dir().map_err(|e| anyhow::anyhow!("no cache directory: {e}"))?.join("backdrop"))
+}
+
+/// A loopback URL that plays a background video (src-tauri/src/media.rs): only
+/// the copy cache_backdrop keeps, never any other file.
+#[tauri::command]
+async fn media_url(app: AppHandle, path: String) -> CmdResult<String> {
+    blocking(move || {
+        let path = std::path::Path::new(&path);
+        let inside = match (path.canonicalize(), backdrop_cache_dir(&app)?.canonicalize()) {
+            (Ok(p), Ok(dir)) => p.starts_with(dir),
+            _ => false,
+        };
+        anyhow::ensure!(inside, "the video is gone");
+        media::url(path)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -943,6 +990,25 @@ fn about_close(window: tauri::WebviewWindow) {
     }
 }
 
+/// Whether any Haze window has focus, for what slows down or pauses while Haze
+/// is in the background (a background video): `app://active` when it changes.
+fn track_focus(window: &tauri::Window, event: &tauri::WindowEvent) {
+    static FOCUSED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let label = window.label().to_owned();
+    let mut focused = FOCUSED.lock().unwrap();
+    let was = !focused.is_empty();
+    match event {
+        tauri::WindowEvent::Focused(true) if !focused.contains(&label) => focused.push(label),
+        tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed => focused.retain(|l| *l != label),
+        _ => return,
+    }
+    let now = !focused.is_empty();
+    drop(focused);
+    if now != was {
+        let _ = window.app_handle().emit("app://active", now);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     shell_env::load_login_path();
@@ -1004,6 +1070,7 @@ pub fn run() {
             app.manage(Pty::new(client));
             Ok(())
         })
+        .on_window_event(track_focus)
         .invoke_handler(tauri::generate_handler![
             take_open_requests,
             check_update,
@@ -1035,6 +1102,9 @@ pub fn run() {
             undo_replace,
             find_files,
             read_image,
+            read_media,
+            cache_backdrop,
+            media_url,
             clipboard_file_paths,
             git_log,
             git_toplevel,

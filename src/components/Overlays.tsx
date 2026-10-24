@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { matches } from "../lib/keymap";
+import { Backdrop } from "./Backdrop";
 
 export interface MenuItem {
   label?: string;
@@ -519,12 +520,15 @@ export function FloatWindow({
   if (host === "opening") return null;
   if (external) {
     return createPortal(
-      <div ref={ref} className={"float-window external" + (className ? " " + className : "")} tabIndex={-1} onKeyDown={onKeyDown}>
-        <span ref={titleRef} hidden>
-          {title}
-        </span>
-        <div className="float-body">{children}</div>
-      </div>,
+      <>
+        <Backdrop />
+        <div ref={ref} className={"float-window external" + (className ? " " + className : "")} tabIndex={-1} onKeyDown={onKeyDown}>
+          <span ref={titleRef} hidden>
+            {title}
+          </span>
+          <div className="float-body">{children}</div>
+        </div>
+      </>,
       external.root,
     );
   }

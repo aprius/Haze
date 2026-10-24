@@ -686,6 +686,14 @@ fn snapshot_tree(root: &Path) -> Result<String> {
     let tmp = tempfile::NamedTempFile::new()?;
     if index.exists() {
         std::fs::copy(&index, tmp.path())?;
+        // With the index's own mtime: git compares the content of entries
+        // indexed in that instant (racy git), where their stat cannot tell an
+        // edit. A copy dated now (as on Linux) had git trust them, and miss a
+        // same-size edit made in the second of a `git add`.
+        std::fs::File::options()
+            .write(true)
+            .open(tmp.path())?
+            .set_modified(std::fs::metadata(&index)?.modified()?)?;
     }
     let with_index = |args: &[&str]| -> Result<String> {
         let out = git(root)
@@ -983,6 +991,37 @@ mod tests {
             vec!["add b (reworded)", "add a"]
         );
         assert!(r.path().join("c.txt").exists() && !r.path().join("d.txt").exists());
+    }
+
+    #[test]
+    fn checkpoints_see_a_same_size_edit_made_as_the_index_was_written() {
+        // Racy git: a file indexed in the same instant as the index was written,
+        // then changed to the same size in that instant again, looks unchanged
+        // by its stat; git compares the content because the index file's mtime
+        // says so. Linux git compares whole seconds, so this is any edit in the
+        // second of a `git add`. The instant is set here, ten seconds ago, and
+        // ctime (which any write moves) is left out of the comparison.
+        let r = Repo::new();
+        r.git(&["config", "core.trustctime", "false"]);
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+        let touch = |rel: &str| {
+            std::fs::File::options()
+                .write(true)
+                .open(r.path().join(rel))
+                .unwrap()
+                .set_modified(past)
+                .unwrap()
+        };
+        r.write("a.cs", "1");
+        touch("a.cs");
+        r.git(&["add", "."]);
+        r.git(&["commit", "-q", "-m", "init"]);
+        touch(".git/index");
+        r.write("a.cs", "2");
+        touch("a.cs");
+        let cp = checkpoint(r.path(), "before agent").unwrap();
+        assert_eq!(file_at(r.path(), &cp, "a.cs").unwrap().as_deref(), Some("2"));
+        assert!(changes_since(r.path(), &cp).unwrap().is_empty());
     }
 
     #[test]

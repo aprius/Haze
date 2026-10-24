@@ -503,6 +503,12 @@ export const api = {
   findFiles: (root: string, query: string, limit?: number, includeIgnored = false) =>
     invoke<FileHit[]>("find_files", { root, query, limit: limit ?? null, includeIgnored }),
   readImage: (path: string) => invoke<{ mime: string; base64: string }>("read_image", { path }),
+  /** A file's bytes, unencoded (background images and videos). */
+  readMedia: (path: string) => invoke<ArrayBuffer>("read_media", { path }),
+  /** Copies a background video into the app's cache (or, with null, drops it); the copy's path. */
+  cacheBackdrop: (path: string | null) => invoke<string | null>("cache_backdrop", { path }),
+  /** A loopback URL that plays a cached background video. */
+  mediaUrl: (path: string) => invoke<string>("media_url", { path }),
   clipboardFilePaths: () => invoke<string[]>("clipboard_file_paths"),
 
   readLines: (requests: { path: string; lines: number[] }[]) => invoke<string[][]>("read_lines", { requests }),
@@ -579,6 +585,11 @@ export const api = {
 /** Haze › Check for Updates… in the app menu (macOS). */
 export function onCheckUpdatesMenu(cb: () => void): Promise<UnlistenFn> {
   return listen("app://check-updates", () => cb());
+}
+
+/** Whether any Haze window has focus, when that changes. */
+export function onAppActive(cb: (active: boolean) => void): Promise<UnlistenFn> {
+  return listen<boolean>("app://active", (e) => cb(e.payload));
 }
 
 export function onOpenRequest(cb: () => void): Promise<UnlistenFn> {

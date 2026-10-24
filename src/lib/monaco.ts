@@ -7,7 +7,7 @@ import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker";
 import { csharpLanguage } from "./csharpGrammar";
 import { codeFontFamily, codeLineHeight, loadCodeFont, useFonts } from "./fonts";
-import { monacoTheme, useTheme } from "./theme";
+import { monacoTheme, useGlass, useTheme } from "./theme";
 import { useWorkspace } from "../store/workspace";
 
 // JSON is the one language service Haze keeps (see vite.config.ts); it needs
@@ -32,7 +32,7 @@ const MONOKAI = {
   },
 };
 
-function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)["dark"]) {
+function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)["dark"], glass = false) {
   const strip = (hex: string) => hex.slice(1);
   // Rainbow Brackets: one colour per nesting depth, cycling after six. Each
   // pair's guide takes its brackets' colour, faint until the caret is inside.
@@ -123,12 +123,26 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
       "scrollbarSlider.background": c.gutter + "55",
       "scrollbarSlider.hoverBackground": c.gutter + "88",
       "scrollbarSlider.activeBackground": c.gutter + "aa",
+      // Glass: the island behind shows through; sticky scroll stays nearly
+      // opaque, or the lines scrolling under it would show.
+      ...(glass && {
+        // Clear, in the theme's own colour: what Monaco derives from it (the
+        // minimap's text) does not turn towards black.
+        "editor.background": c.bg + "00",
+        "editorGutter.background": c.bg + "00",
+        "minimap.background": c.bg + "00",
+        "editorStickyScroll.background": c.bg + "f2",
+        // Its line numbers: by default the editor's background, clear here.
+        "editorStickyScrollGutter.background": c.bg + "f2",
+      }),
     },
   });
 }
 
 defineMonokai("haze-dark", "vs-dark", MONOKAI.dark);
 defineMonokai("haze-light", "vs", MONOKAI.light);
+defineMonokai("haze-dark-glass", "vs-dark", MONOKAI.dark, true);
+defineMonokai("haze-light-glass", "vs", MONOKAI.light, true);
 
 // Replaces Monaco's grammar (registered tokenizers win over the lazy one;
 // the language configuration still comes from Monaco).
@@ -147,10 +161,30 @@ const markComment = () =>
 // Theme names are global in Monaco: one setTheme repaints every editor.
 monaco.editor.setTheme(monacoTheme());
 markComment();
-useTheme.subscribe((s) => {
-  monaco.editor.setTheme(monacoTheme(s.mode));
+const applyTheme = () => {
+  monaco.editor.setTheme(monacoTheme());
   markComment();
+};
+useTheme.subscribe(applyTheme);
+useGlass.subscribe(applyTheme);
+
+// automaticLayout watches with the main window's ResizeObserver, which WebKit
+// runs only when the main window draws: an editor in a Commit or Diff window of
+// its own did not follow that window's resizing, and stayed cut at its old size.
+// Watch it from its own window too. The editors inside a diff editor follow it.
+type Laid = { getContainerDomNode(): HTMLElement; layout(): void; onDidDispose(listener: () => void): monaco.IDisposable };
+function followOwnWindow(ed: Laid): void {
+  const el = ed.getContainerDomNode();
+  const win = el.ownerDocument.defaultView as (Window & typeof globalThis) | null;
+  if (!win || win === window) return;
+  const ro = new win.ResizeObserver(() => ed.layout());
+  ro.observe(el);
+  ed.onDidDispose(() => ro.disconnect());
+}
+monaco.editor.onDidCreateEditor((ed) => {
+  if (!ed.getContainerDomNode().closest(".monaco-diff-editor")) followOwnWindow(ed);
 });
+monaco.editor.onDidCreateDiffEditor(followOwnWindow);
 
 /** Font options for a new editor; open editors follow later changes below. */
 export const codeFontOptions = () => {

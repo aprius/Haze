@@ -1,7 +1,9 @@
 // Settings: fonts, layout style, keymap, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting, updates.
 import { ArrowUpCircle, Bot, Box, Code, FolderTree, GitBranch, Keyboard, type LucideIcon, Plus, RotateCcw, Type, X } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
+import { BACKDROP_EXTENSIONS, BACKDROP_LIMITS, DEFAULT_BACKDROP, setBackdrop, useBackdrop, useBackdropImage } from "../lib/backdrop";
 import {
   CODE_FONT_SUGGESTIONS,
   DEFAULT_FONTS,
@@ -244,6 +246,7 @@ function FontSettingsSection() {
           </div>
         </div>
       </div>
+      <BackdropSection />
       <div className="settings-card">
         <SwitchRow
           label="GPU-accelerated terminal"
@@ -263,6 +266,109 @@ function FontSettingsSection() {
         ))}
       </datalist>
     </>
+  );
+}
+
+async function chooseBackdrop() {
+  const path = await openDialog({ multiple: false, title: "Background", filters: [{ name: "Images and videos", extensions: BACKDROP_EXTENSIONS }] });
+  if (typeof path === "string") setBackdrop({ path });
+}
+
+function BackdropSlider({ field, label, unit }: { field: keyof typeof BACKDROP_LIMITS; label: string; unit: string }) {
+  const value = useBackdrop((s) => s[field]);
+  const [min, max] = BACKDROP_LIMITS[field];
+  return (
+    <>
+      <span>{label}</span>
+      <input type="range" className="settings-range" min={min} max={max} value={value} onChange={(e) => setBackdrop({ [field]: Number(e.target.value) })} />
+      <span className="muted small settings-range-value">
+        {value}
+        {unit}
+      </span>
+    </>
+  );
+}
+
+/** What Reset puts back: everything but the file. */
+const BACKDROP_TUNING = ["blur", "dim", "opacity", "popupOpacity", "ambient", "agentGlow", "pauseInBackground"] as const;
+
+/** Background image, islands layout only (src/lib/backdrop.ts). */
+function BackdropSection() {
+  const path = useBackdrop((s) => s.path);
+  const isDefault = useBackdrop((s) => BACKDROP_TUNING.every((k) => s[k] === DEFAULT_BACKDROP[k]));
+  const error = useBackdropImage((s) => s.error);
+  const moving = useBackdropImage((s) => !!s.live);
+  const agentGlow = useBackdrop((s) => s.agentGlow);
+  const pauseInBackground = useBackdrop((s) => s.pauseInBackground);
+  const islands = useUiStyle((s) => s.style === "islands");
+  return (
+    <div className="settings-card">
+      <div className="settings-row static">
+        <div className="settings-row-text">
+          <div>Background</div>
+          {path ? (
+            <div className="muted small settings-path" title={path}>
+              {path}
+            </div>
+          ) : (
+            <div className="muted small">An image or video (MP4, WebM, MOV) behind the panels, which turn to tinted glass over it.</div>
+          )}
+        </div>
+        {path && (
+          <button className="btn small" onClick={() => setBackdrop({ path: null })}>
+            Remove
+          </button>
+        )}
+        <button className="btn small" onClick={() => void chooseBackdrop()}>
+          {path ? "Change…" : "Choose…"}
+        </button>
+      </div>
+      {error && <div className="modal-error">Cannot read the file: {error}</div>}
+      {path && !islands && (
+        <div className="settings-row static">
+          <div className="settings-row-text muted small">Shown with the Islands layout only.</div>
+          <button className="btn small" onClick={() => setUiStyle("islands")}>
+            Use Islands
+          </button>
+        </div>
+      )}
+      {path && (
+        <div className="settings-backdrop-grid">
+          <BackdropSlider field="blur" label="Blur" unit="px" />
+          <BackdropSlider field="dim" label="Dim" unit="%" />
+          <BackdropSlider field="opacity" label="Panel opacity" unit="%" />
+          <BackdropSlider field="popupOpacity" label="Popup opacity" unit="%" />
+          <BackdropSlider field="ambient" label="Ambient glow" unit="%" />
+          <label className="settings-row settings-backdrop-switch">
+            <div className="settings-row-text">
+              <div>Agent status glow</div>
+              <div className="muted small">The terminal panel glows while its agents work, wait for you, finish or fail.</div>
+            </div>
+            <span className="switch">
+              <input type="checkbox" role="switch" checked={agentGlow} onChange={(e) => setBackdrop({ agentGlow: e.target.checked })} />
+              <span />
+            </span>
+          </label>
+          {moving && (
+            <label className="settings-row settings-backdrop-switch">
+              <div className="settings-row-text">
+                <div>Pause in background</div>
+                <div className="muted small">The video stops while another app has focus, and plays on when you come back.</div>
+              </div>
+              <span className="switch">
+                <input type="checkbox" role="switch" checked={pauseInBackground} onChange={(e) => setBackdrop({ pauseInBackground: e.target.checked })} />
+                <span />
+              </span>
+            </label>
+          )}
+          {!isDefault && (
+            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop(Object.fromEntries(BACKDROP_TUNING.map((k) => [k, DEFAULT_BACKDROP[k]])))}>
+              Reset
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
