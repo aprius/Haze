@@ -1156,10 +1156,28 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Haze")
-        .run(|app, event| {
+        .run(|app, event| match event {
             // Language servers are children of this window process; stop them with it.
-            if let tauri::RunEvent::Exit = event {
-                app.state::<Arc<lsp::LspServers>>().stop_all();
+            tauri::RunEvent::Exit => app.state::<Arc<lsp::LspServers>>().stop_all(),
+            // Finder's "Open With" and drops on the Dock icon open like `haze <path>`.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Opened { urls } => {
+                let reqs: Vec<_> = urls
+                    .iter()
+                    .filter_map(|u| u.to_file_path().ok())
+                    .map(|p| cli_open::dropped(&p))
+                    .collect();
+                if reqs.is_empty() {
+                    return;
+                }
+                app.state::<cli_open::PendingOpens>().0.lock().extend(reqs);
+                let _ = app.emit("app://open", ());
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.unminimize();
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
             }
+            _ => {}
         });
 }
