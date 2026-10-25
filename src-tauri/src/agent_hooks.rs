@@ -452,8 +452,9 @@ import {{ spawn, spawnSync }} from "node:child_process";
 const HAZE = {exe};
 const args = (state, message) => ["{HOOK_FLAG}", "opencode", state, ...(message ? [String(message).slice(0, 200)] : [])];
 
-export const HazeStatus = async () => {{
-  if (!process.env.HAZE_TERMINAL_ID) return {{}};
+// Reports this process's sessions; None outside a Haze terminal.
+const watch = () => {{
+  if (!process.env.HAZE_TERMINAL_ID) return null;
   let last = null;
   const report = (state, message) => {{
     if (state === last && !message) return;
@@ -470,35 +471,63 @@ export const HazeStatus = async () => {{
   report("idle");
   // Sessions at work; a subagent's session finishing must not mark its parent done.
   const busy = new Set();
-  return {{
-    event: async ({{ event }}) => {{
-      const p = event.properties ?? {{}};
-      switch (event.type) {{
-        case "session.status": {{
-          const type = p.status?.type;
-          if (type === "busy" || type === "retry") busy.add(p.sessionID);
-          else if (type === "idle") busy.delete(p.sessionID);
-          else break;
-          report(busy.size ? "working" : "done");
-          break;
-        }}
-        case "session.idle":
-          busy.delete(p.sessionID);
-          if (!busy.size) report("done");
-          break;
-        case "permission.asked":
-        case "permission.updated":
-          report("waiting", "Waiting for permission");
-          break;
-        case "permission.replied":
-          report(busy.size ? "working" : "done");
-          break;
-        case "session.error":
-          report("error", p.error?.data?.message ?? p.error?.name);
-          break;
-      }}
-    }},
+  const settle = (id) => {{
+    busy.delete(id);
+    if (!busy.size) report("done");
   }};
+  // OpenCode 2 puts the payload in `data`, OpenCode 1 in `properties`.
+  return (event) => {{
+    const p = event.data ?? event.properties ?? {{}};
+    switch (event.type) {{
+      case "session.execution.started":
+        busy.add(p.sessionID);
+        report("working");
+        break;
+      case "session.execution.succeeded":
+      case "session.execution.interrupted":
+        settle(p.sessionID);
+        break;
+      case "session.execution.failed":
+        busy.delete(p.sessionID);
+        report("error", p.error?.message);
+        break;
+      case "session.status": {{
+        const type = p.status?.type;
+        if (type === "busy" || type === "retry") busy.add(p.sessionID);
+        else if (type === "idle") busy.delete(p.sessionID);
+        else break;
+        report(busy.size ? "working" : "done");
+        break;
+      }}
+      case "session.idle":
+        settle(p.sessionID);
+        break;
+      case "permission.asked":
+      case "permission.updated":
+        report("waiting", "Waiting for permission");
+        break;
+      case "permission.replied":
+        report(busy.size ? "working" : "done");
+        break;
+      case "session.error":
+        report("error", p.error?.data?.message ?? p.error?.name);
+        break;
+    }}
+  }};
+}};
+
+export default {{
+  id: "haze.status",
+  // OpenCode 2.
+  setup: (api) => {{
+    const onEvent = watch();
+    if (onEvent) api.event.subscribe(onEvent);
+  }},
+  // OpenCode 1.
+  server: async () => {{
+    const onEvent = watch();
+    return onEvent ? {{ event: async ({{ event }}) => onEvent(event) }} : {{}};
+  }},
 }};
 "#
     )
@@ -734,6 +763,8 @@ mod tests {
         assert!(js.contains(OPENCODE_MARK));
         assert!(js.contains(r#"const HAZE = "C:\\Program Files\\Haze \"x\"\\haze.exe";"#));
         assert!(js.contains("\"--agent-hook\", \"opencode\""));
+        assert!(js.contains("export default {"));
+        assert!(js.contains("setup: (api) =>"));
     }
 
     #[test]
