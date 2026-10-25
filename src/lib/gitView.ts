@@ -80,7 +80,10 @@ export function changeDiffSpec(root: string, c: GitChange): DiffSpec {
 
 /** Default ticks: tracked changes on, unversioned files and conflicts off. */
 export function checkedPaths(r: { checked: string[] | null; changes: GitChange[] }): Set<string> {
-  if (r.checked) return new Set(r.checked.filter((p) => r.changes.some((c) => c.rel === p)));
+  if (r.checked) {
+    const known = new Set(r.changes.map((c) => c.rel));
+    return new Set(r.checked.filter((p) => known.has(p)));
+  }
   return new Set(r.changes.filter((c) => c.status !== "untracked" && c.status !== "conflict").map((c) => c.rel));
 }
 

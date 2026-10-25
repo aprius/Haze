@@ -80,9 +80,17 @@ function ReviewToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   );
 }
 
+const ROW_LIMIT = 500;
+
+function limitRows<T>(rows: T[], all: boolean | undefined): T[] {
+  return all || rows.length <= ROW_LIMIT ? rows : rows.slice(0, ROW_LIMIT);
+}
+
 function CommitPanel({ project, selected, setSelected }: { project: Project; selected: string | null; setSelected: (rel: string) => void }) {
   const r = useGit((s) => s.repos[project.id]);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // Groups whose rows are all rendered; a huge group (a deleted .gitignore) stops at ROW_LIMIT.
+  const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const byDir = useWorkspace((s) => !!s.ui[project.id]?.commitGroupByDir);
   const checked = useMemo(() => (r ? checkedPaths(r) : new Set<string>()), [r]);
   // Rows picked with Ctrl/Shift+click; the context menu and Ctrl+Alt+Z act on them.
@@ -387,7 +395,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                 <span className="muted small">{items.length}</span>
               </div>
               {!collapsed[g.id] &&
-                changeRows(g.id, items, byDir, collapsed).map((row) => {
+                limitRows(changeRows(g.id, items, byDir, collapsed), showAll[g.id]).map((row) => {
                   if (row.kind === "dir") {
                     const n = row.files.filter((c) => checked.has(c.rel)).length;
                     return (
@@ -438,6 +446,11 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                     </div>
                   );
                 })}
+              {!collapsed[g.id] && !showAll[g.id] && items.length > ROW_LIMIT && (
+                <div className="se-empty" style={{ cursor: "pointer" }} onClick={() => setShowAll((a) => ({ ...a, [g.id]: true }))}>
+                  Showing the first {ROW_LIMIT} rows of {items.length} files. Click to show all.
+                </div>
+              )}
             </div>
           );
         })}
