@@ -3,6 +3,7 @@
 //! missing credential fails fast with git's own message. GitHub/GitLab
 //! accounts added in Settings supply their tokens (see git_auth).
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::Stdio;
@@ -27,6 +28,15 @@ fn git(root: &Path) -> std::process::Command {
 
 fn run_ok(root: &Path, args: &[&str]) -> Result<String> {
     let out = git(root).args(args).output()?;
+    if !out.status.success() {
+        bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// `git <args> --pathspec-from-file=<list>`.
+fn run_ok_os(root: &Path, args: &[&str], list: &PathList) -> Result<String> {
+    let out = git(root).args(args).args(list.args()).output()?;
     if !out.status.success() {
         bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
     }
@@ -112,6 +122,36 @@ pub fn changes(root: &Path) -> Result<Vec<Change>> {
     Ok(parse_changes(&out))
 }
 
+/// Paths handed to git as `--pathspec-from-file` (NUL-separated), deleted on drop.
+struct PathList(std::path::PathBuf);
+
+impl PathList {
+    fn new(paths: &[&str]) -> Result<Self> {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let file = std::env::temp_dir().join(format!("haze-paths-{}-{n}", std::process::id()));
+        let mut data = Vec::new();
+        for p in paths {
+            data.extend_from_slice(p.as_bytes());
+            data.push(0);
+        }
+        std::fs::write(&file, data).context("writing the path list")?;
+        Ok(Self(file))
+    }
+
+    fn args(&self) -> [std::ffi::OsString; 2] {
+        let mut from = std::ffi::OsString::from("--pathspec-from-file=");
+        from.push(&self.0);
+        [from, "--pathspec-file-nul".into()]
+    }
+}
+
+impl Drop for PathList {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Commits exactly `paths` (relative), the checkbox commit: no need
 /// to stage first. Untracked paths among them are added.
 pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Result<GitOutput> {
@@ -119,41 +159,40 @@ pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Resu
         bail!("nothing selected to commit");
     }
     let current = changes(root)?;
-    let untracked: Vec<&String> = paths
+    let wanted: HashSet<&str> = paths.iter().map(String::as_str).collect();
+    let untracked: Vec<&str> = current
         .iter()
-        .filter(|p| {
-            current
-                .iter()
-                .any(|c| &c.rel == *p && c.status == "untracked")
-        })
+        .filter(|c| c.status == "untracked" && wanted.contains(c.rel.as_str()))
+        .map(|c| c.rel.as_str())
         .collect();
     if !untracked.is_empty() {
+        let list = PathList::new(&untracked)?;
         let mut add = git(root);
-        add.args(["add", "--"])
-            .args(untracked.iter().map(|s| s.as_str()));
+        add.args(["add"]).args(list.args());
         let out = add.output()?;
         if !out.status.success() {
             bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
         }
     }
     // Renames need both sides in the pathspec.
-    let mut spec: Vec<String> = paths.to_vec();
+    let mut spec: Vec<&str> = paths.iter().map(String::as_str).collect();
     for c in &current {
         if let Some(old) = &c.old_rel {
-            if paths.contains(&c.rel) && !spec.contains(old) {
-                spec.push(old.clone());
+            if wanted.contains(c.rel.as_str()) && !wanted.contains(old.as_str()) {
+                spec.push(old);
             }
         }
     }
+    // Thousands of paths overflow the command line, so they go through a file.
+    let list = if spec.is_empty() { None } else { Some(PathList::new(&spec)?) };
     let mut cmd = git(root);
     cmd.args(["commit", "--file=-", "--cleanup=strip"]);
     if amend {
         cmd.arg("--amend");
     }
-    if !spec.is_empty() {
-        cmd.arg("--only").arg("--").args(&spec);
-    } else {
-        cmd.arg("--only");
+    cmd.arg("--only");
+    if let Some(list) = &list {
+        cmd.args(list.args());
     }
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -177,33 +216,42 @@ pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Resu
 /// unstaged here — deleting them is the caller's decision.
 pub fn rollback(root: &Path, paths: &[String]) -> Result<()> {
     let current = changes(root)?;
-    let (new, tracked): (Vec<&String>, Vec<&String>) = paths.iter().partition(|p| {
-        current
-            .iter()
-            .any(|c| &c.rel == *p && (c.status == "added" || c.status == "untracked"))
-    });
+    let new_rels: HashSet<&str> = current
+        .iter()
+        .filter(|c| c.status == "added" || c.status == "untracked")
+        .map(|c| c.rel.as_str())
+        .collect();
+    let added_rels: HashSet<&str> = current
+        .iter()
+        .filter(|c| c.status == "added")
+        .map(|c| c.rel.as_str())
+        .collect();
+    let (new, tracked): (Vec<&str>, Vec<&str>) = paths
+        .iter()
+        .map(String::as_str)
+        .partition(|p| new_rels.contains(p));
+    // Thousands of paths overflow the command line, so they go through a file.
     if !tracked.is_empty() {
-        let mut spec: Vec<&str> = tracked.iter().map(|s| s.as_str()).collect();
+        let wanted: HashSet<&str> = tracked.iter().copied().collect();
+        let mut spec = tracked.clone();
         for c in &current {
             if let Some(old) = &c.old_rel {
-                if tracked.contains(&&c.rel) {
+                if wanted.contains(c.rel.as_str()) {
                     spec.push(old);
                 }
             }
         }
-        let mut args = vec!["restore", "--source=HEAD", "--staged", "--worktree", "--"];
-        args.extend(spec);
-        run_ok(root, &args)?;
+        let list = PathList::new(&spec)?;
+        run_ok_os(
+            root,
+            &["restore", "--source=HEAD", "--staged", "--worktree"],
+            &list,
+        )?;
     }
-    let added: Vec<&str> = new
-        .iter()
-        .filter(|p| current.iter().any(|c| &c.rel == **p && c.status == "added"))
-        .map(|s| s.as_str())
-        .collect();
+    let added: Vec<&str> = new.into_iter().filter(|p| added_rels.contains(p)).collect();
     if !added.is_empty() {
-        let mut args = vec!["rm", "--cached", "-q", "--"];
-        args.extend(added);
-        run_ok(root, &args)?;
+        let list = PathList::new(&added)?;
+        run_ok_os(root, &["rm", "--cached", "-q"], &list)?;
     }
     Ok(())
 }
@@ -836,6 +884,38 @@ mod tests {
         assert_eq!(c[1].status, "renamed");
         assert!(c[1].staged && !c[0].staged);
         assert_eq!(c[3].status, "conflict");
+    }
+
+    #[test]
+    fn commits_more_paths_than_fit_on_a_command_line() {
+        let r = Repo::new();
+        r.write("keep.txt", "1");
+        let dir = "d".repeat(100);
+        let rels: Vec<String> = (0..20_000).map(|i| format!("{dir}/file-{i:06}.txt")).collect();
+        for rel in &rels {
+            r.write(rel, "x");
+        }
+        let out = commit(r.path(), "many", &rels, false).unwrap();
+        assert!(out.ok, "{}", out.stderr);
+        assert_eq!(r.git(&["ls-files"]).lines().count(), rels.len());
+        assert!(r.git(&["status", "--porcelain"]).contains("keep.txt"));
+    }
+
+    #[test]
+    fn rolls_back_more_paths_than_fit_on_a_command_line() {
+        let r = Repo::new();
+        let dir = "d".repeat(100);
+        let rels: Vec<String> = (0..20_000).map(|i| format!("{dir}/file-{i:06}.txt")).collect();
+        for rel in &rels {
+            r.write(rel, "1");
+        }
+        r.git(&["add", "."]);
+        r.git(&["commit", "-q", "-m", "init"]);
+        for rel in &rels {
+            r.write(rel, "2");
+        }
+        rollback(r.path(), &rels).unwrap();
+        assert!(r.git(&["status", "--porcelain"]).is_empty());
     }
 
     #[test]
