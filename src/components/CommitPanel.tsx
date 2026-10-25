@@ -53,7 +53,7 @@ export async function commitChanges(project: Project, push: boolean): Promise<vo
   const out = await withTask(project.id, r.amend ? "Amending commit" : "Committing", () => api.gitCommit(r.root!, message, paths, r.amend)).catch((e) => ({ ok: false, stdout: "", stderr: String(e), code: null }));
   patchRepo(project.id, (s) => ({
     busy: null,
-    console: [...s.console.slice(-199), { time: Date.now(), args: ["commit", ...(r.amend ? ["--amend"] : []), "--", ...paths], output: out }],
+    console: [...s.console.slice(-199), { time: Date.now(), args: ["commit", ...(r.amend ? ["--amend"] : []), "--", ...(paths.length > 50 ? [`${paths.length} files`] : paths)], output: out }],
   }));
   refreshRepo(project.id, project.path);
   refreshTreeGit(project.id, project.path, 0);

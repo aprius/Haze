@@ -160,20 +160,6 @@ pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Resu
     }
     let current = changes(root)?;
     let wanted: HashSet<&str> = paths.iter().map(String::as_str).collect();
-    let untracked: Vec<&str> = current
-        .iter()
-        .filter(|c| c.status == "untracked" && wanted.contains(c.rel.as_str()))
-        .map(|c| c.rel.as_str())
-        .collect();
-    if !untracked.is_empty() {
-        let list = PathList::new(&untracked)?;
-        let mut add = git(root);
-        add.args(["add"]).args(list.args());
-        let out = add.output()?;
-        if !out.status.success() {
-            bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
-        }
-    }
     // Renames need both sides in the pathspec.
     let mut spec: Vec<&str> = paths.iter().map(String::as_str).collect();
     for c in &current {
@@ -183,16 +169,38 @@ pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Resu
             }
         }
     }
-    // Thousands of paths overflow the command line, so they go through a file.
-    let list = if spec.is_empty() { None } else { Some(PathList::new(&spec)?) };
     let mut cmd = git(root);
+    // `commit --only -- <paths>` matches every pathspec against the whole index,
+    // which takes minutes for tens of thousands of files. Build the commit in a
+    // scratch index from HEAD plus the paths instead, then bring the real index
+    // up to date for the same paths once the commit exists.
+    let scratch = if spec.is_empty() {
+        None
+    } else {
+        let file = std::env::temp_dir().join(format!("haze-index-{}", std::process::id()));
+        let _ = std::fs::remove_file(&file);
+        let has_head = git(root)
+            .args(["rev-parse", "--verify", "-q", "HEAD"])
+            .output()?
+            .status
+            .success();
+        let mut read = git(root);
+        read.env("GIT_INDEX_FILE", &file).arg("read-tree");
+        read.arg(if has_head { "HEAD" } else { "--empty" });
+        let out = read.output()?;
+        if !out.status.success() {
+            bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        update_index(root, Some(&file), &spec)?;
+        cmd.env("GIT_INDEX_FILE", &file);
+        Some(ScratchIndex(file))
+    };
     cmd.args(["commit", "--file=-", "--cleanup=strip"]);
     if amend {
         cmd.arg("--amend");
     }
-    cmd.arg("--only");
-    if let Some(list) = &list {
-        cmd.args(list.args());
+    if scratch.is_none() {
+        cmd.arg("--only");
     }
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -204,12 +212,54 @@ pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Resu
         .context("no stdin")?
         .write_all(message.as_bytes())?;
     let out = child.wait_with_output()?;
+    if out.status.success() && scratch.is_some() {
+        update_index(root, None, &spec)?;
+    }
     Ok(GitOutput {
         ok: out.status.success(),
         code: out.status.code(),
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
     })
+}
+
+struct ScratchIndex(std::path::PathBuf);
+
+impl Drop for ScratchIndex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let mut lock = self.0.clone().into_os_string();
+        lock.push(".lock");
+        let _ = std::fs::remove_file(lock);
+    }
+}
+
+/// Makes the index (`index`, or the repository's) match the working tree for
+/// `paths`: new files are added, changed ones updated, vanished ones removed.
+/// The list goes through stdin, so its length is not limited.
+fn update_index(root: &Path, index: Option<&Path>, paths: &[&str]) -> Result<()> {
+    let mut cmd = git(root);
+    if let Some(index) = index {
+        cmd.env("GIT_INDEX_FILE", index);
+    }
+    cmd.args(["update-index", "--add", "--remove", "-z", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let mut stdin = child.stdin.take().context("no stdin")?;
+    let mut data = Vec::new();
+    for p in paths {
+        data.extend_from_slice(p.as_bytes());
+        data.push(0);
+    }
+    stdin.write_all(&data)?;
+    drop(stdin);
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(())
 }
 
 /// Reverts paths to HEAD; files that are new (added or untracked) are only
@@ -899,6 +949,25 @@ mod tests {
         assert!(out.ok, "{}", out.stderr);
         assert_eq!(r.git(&["ls-files"]).lines().count(), rels.len());
         assert!(r.git(&["status", "--porcelain"]).contains("keep.txt"));
+    }
+
+    #[test]
+    fn commits_deletions_and_renames_and_leaves_the_rest_alone() {
+        let r = Repo::new();
+        for f in ["gone.txt", "old.txt", "other.txt"] {
+            r.write(f, "1");
+        }
+        r.git(&["add", "."]);
+        r.git(&["commit", "-q", "-m", "init"]);
+        std::fs::remove_file(r.path().join("gone.txt")).unwrap();
+        std::fs::rename(r.path().join("old.txt"), r.path().join("new.txt")).unwrap();
+        r.git(&["add", "-A", "new.txt", "old.txt"]);
+        r.write("other.txt", "2");
+        let paths = vec!["gone.txt".to_string(), "new.txt".to_string()];
+        let out = commit(r.path(), "m", &paths, false).unwrap();
+        assert!(out.ok, "{}", out.stderr);
+        assert_eq!(r.git(&["ls-tree", "-r", "--name-only", "HEAD"]), "new.txt\nother.txt\n");
+        assert_eq!(r.git(&["status", "--porcelain"]), " M other.txt\n");
     }
 
     #[test]
