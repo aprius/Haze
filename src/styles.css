@@ -45,6 +45,7 @@
   --mk-cyan: #1c8ca8;
   --mk-purple: #7058be;
   --mk-grey: #918c8e;
+  --unused-symbol: #808080;
   --find-match: #cc7a0a;
   --popup-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.16);
   color-scheme: light;
@@ -93,6 +94,7 @@
   --mk-cyan: #78dce8;
   --mk-purple: #ab9df2;
   --mk-grey: #939293;
+  --unused-symbol: #72737a;
   --find-match: #ffd866;
   --popup-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04) inset, 0 4px 12px rgba(0, 0, 0, 0.25), 0 20px 48px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
@@ -3421,8 +3423,12 @@ button.toggle.on {
   opacity: 0.85;
 }
 
-.unused-symbol {
-  opacity: 0.5;
+/* Unused code is greyed like Rider's, not faded: Code Vision's unused members
+   and Roslyn's unnecessary diagnostics (unused usings, private members…). */
+.unused-symbol,
+.monaco-editor .squiggly-inline-unnecessary {
+  color: var(--unused-symbol) !important;
+  opacity: 1 !important;
 }
 
 /* Monaco's button tooltips (the Find widget's Close, Previous, Next…) can open
