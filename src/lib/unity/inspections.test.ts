@@ -32,6 +32,7 @@ describe("Unity inspections", () => {
     const got = problems([
       ["tag", "Enemy"],
       ["tag", "Boss"],
+      ["tag", ""],
       ["layer", "Ground"],
       ["layer", "Water"],
       ["axis", "Horizontal"],
@@ -39,8 +40,8 @@ describe("Unity inspections", () => {
     ]);
     expect(got.map((p) => p.slice(0, 2))).toEqual([
       [1, "UnknownTag"],
-      [3, "UnknownLayer"],
-      [5, "UnknownInputAxes"],
+      [4, "UnknownLayer"],
+      [6, "UnknownInputAxes"],
     ]);
     expect(got[0][2]).toBe('The tag "Boss" is not defined in the Tag Manager.');
   });

@@ -133,7 +133,9 @@ export function inspectAsmdef(text: string, path: string, data: UnityProjectData
   if (name?.kind === "string" && name.value && name.value !== file)
     at(name, "info", "MismatchedAsmDefFilename", `The file name does not match the assembly name: rename it to ${name.value}.asmdef.`);
 
-  const self = data?.assemblies.find((a) => a.path.replace(/\\/g, "/") === path.replace(/\\/g, "/"));
+  // Monaco and the index may spell a Windows drive differently (`c:\` and `C:\`).
+  const same = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+  const self = data?.assemblies.find((a) => same(a.path) === same(path));
   for (const ref of strings(prop("references"))) {
     const v = ref.value;
     const guid = /^GUID:/i.test(v);

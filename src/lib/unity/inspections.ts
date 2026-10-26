@@ -68,6 +68,8 @@ function checkResource(ref: UnityRef, data: UnityProjectData): Omit<UnityProblem
 
 function check(ref: UnityRef, data: UnityProjectData): Omit<UnityProblem, "range"> | null {
   const v = ref.value;
+  // `CompareTag("")` is being typed: completion offers the names.
+  if (!v) return null;
   switch (ref.kind) {
     case "tag":
       if (!data.tags || data.tags.includes(v)) return null;
