@@ -247,6 +247,10 @@ const isTauri = "__TAURI_INTERNALS__" in window;
 /** The windows of their own (editor, commit, diff) our React tree renders into, with their Tauri labels. */
 export const externalWindows = new Map<Window, string>();
 
+/** When each of Haze's windows last took focus: the later, the nearer the front. */
+export const windowFocusedAt = new Map<Window, number>([[window, Date.now()]]);
+window.addEventListener("focus", () => windowFocusedAt.set(window, Date.now()));
+
 // Monaco keys its render frames by `vscodeWindowId` (Haze's window is 1). Windows
 // without one share the key `undefined`: one frame lost there (a window closed
 // or its document swapped before it ran) and editors in every later Commit or
@@ -343,6 +347,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
     const win = window.open(`about:blank#${label}`, label, `width=${w},height=${h}`);
     if (!win) return setHost(null);
     externalWindows.set(win, label);
+    windowFocusedAt.set(win, Date.now());
     let doc = win.document;
     if (!doc.body) {
       doc.open();
@@ -386,7 +391,10 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
         window.dispatchEvent(new KeyboardEvent("keydown", e));
       }
     };
-    const focused = () => useHost.setState({ doc });
+    const focused = () => {
+      windowFocusedAt.set(win, Date.now());
+      useHost.setState({ doc });
+    };
     // Again after a document swap: a new Window lost them, while the same one
     // must not get them twice (Save All would run twice and its saves collide).
     const listen = () => {
@@ -424,6 +432,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
     return () => {
       closing = true;
       externalWindows.delete(win);
+      windowFocusedAt.delete(win);
       clearInterval(poll);
       unmirror();
       unlisten?.();

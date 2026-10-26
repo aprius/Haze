@@ -23,7 +23,7 @@ import { absPath, repo, useGit } from "../store/git";
 import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
-import { choose, externalWindows, FloatWindow, openMenu, prompt, toast, type MenuItem } from "./Overlays";
+import { choose, externalWindows, FloatWindow, openMenu, prompt, toast, windowFocusedAt, type MenuItem } from "./Overlays";
 import { showAssetUsages, showDeclarations, showLocations } from "./UsagesPopup";
 import type { AssetUsage } from "../lib/ipc";
 import { runUnityTests } from "../store/unity";
@@ -882,19 +882,22 @@ interface WindowBox {
 }
 
 /**
- * Where Haze's windows are, to carry a tab dragged out of one into another:
- * detached editor windows first (they are usually in front), then the main window.
- * Empty outside Tauri, where the editor windows are panels in the main one.
+ * Where Haze's windows are, to carry a tab dragged out of one into another,
+ * the last focused first (no z-order is to be had; it is the nearest guess at
+ * which is in front). Minimized and hidden ones are left out. Empty outside
+ * Tauri, where the editor windows are panels in the main one.
  */
 async function windowBoxes(): Promise<WindowBox[]> {
   if (!("__TAURI_INTERNALS__" in window)) return [];
   const { WebviewWindow, getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-  const all: [Window, string][] = [...externalWindows, [window, getCurrentWebviewWindow().label]];
+  const at = (w: Window) => windowFocusedAt.get(w) ?? 0;
+  const all: [Window, string][] = [...externalWindows, [window, getCurrentWebviewWindow().label] as [Window, string]].sort(([a], [b]) => at(b) - at(a));
   const boxes = await Promise.all(
     all.map(async ([win, label]) => {
       const w = win.closed ? null : await WebviewWindow.getByLabel(label);
       if (!w) return null;
-      const [pos, size, scale] = await Promise.all([w.innerPosition(), w.innerSize(), w.scaleFactor()]);
+      const [pos, size, scale, minimized, visible] = await Promise.all([w.innerPosition(), w.innerSize(), w.scaleFactor(), w.isMinimized(), w.isVisible()]);
+      if (minimized || !visible) return null;
       return { win, label, left: pos.x / scale, top: pos.y / scale, zoom: size.width / scale / (win.innerWidth || 1) };
     }),
   );
