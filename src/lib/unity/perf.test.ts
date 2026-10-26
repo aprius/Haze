@@ -11,6 +11,8 @@ const method = (name: string, line: number, calls: string[] = [], expensive: str
   coroutine: false,
   calls: calls.map((c) => ({ name: c, range: r(line + 1) })),
   expensive: expensive.map((e) => ({ name: e, range: r(line + 2) })),
+  nullChecks: [],
+  arrayAccess: [],
   ...extra,
 });
 
@@ -50,5 +52,17 @@ describe("performance-critical context", () => {
     const report = analyzePerf([method("Update", 0, ["Loop"]), method("Loop", 10, ["Loop"])], () => true);
     expect(report.hot).toHaveLength(2);
     expect(report.costly).toHaveLength(0);
+  });
+
+  it("flags null checks of Unity objects and multidimensional arrays in hot methods", () => {
+    const methods = [
+      method("Update", 0, [], [], { nullChecks: [{ typeName: "Transform", range: r(1) }, { typeName: "string", range: r(2) }], arrayAccess: [r(3)] }),
+      method("Start", 10, [], [], { nullChecks: [{ typeName: "Transform", range: r(11) }], arrayAccess: [r(12)] }),
+    ];
+    const report = analyzePerf(methods, () => true, (t) => t === "Transform");
+    expect(report.costly.map((c) => [c.range.start.line, c.message.split(" in a ")[0]])).toEqual([
+      [1, "Comparing a UnityEngine.Object to null"],
+      [3, "Multidimensional array access"],
+    ]);
   });
 });

@@ -620,6 +620,7 @@ function UnitySection() {
   const autoRefresh = useWorkspace((s) => s.unityAutoRefresh);
   const perfContext = useWorkspace((s) => s.unityPerfContext);
   const perfHints = useWorkspace((s) => s.unityPerfHints);
+  const inspections = useWorkspace((s) => s.unityInspections);
   return (
     <>
       <PageHeader
@@ -650,9 +651,17 @@ function UnitySection() {
         </div>
         <SwitchRow
           label="Point out expensive calls in it"
-          desc="GetComponent, Find, Camera.main, Debug.Log, SendMessage and calls by name, and calls to methods that make them, get a dotted underline."
+          desc="GetComponent, Find, Camera.main, Debug.Log, SendMessage, calls by name, null checks of Unity objects and multidimensional arrays, and calls to methods that make them, get a dotted underline."
           checked={perfHints}
           onChange={(on) => useWorkspace.setState({ unityPerfHints: on })}
+        />
+      </div>
+      <div className="settings-card">
+        <SwitchRow
+          label="Check names against the project"
+          desc="Tags, layers, input axes, scenes, Resources paths, Animator states and shaders a script names that the project does not have, a parent set right after Instantiate, and broken references in assembly definitions."
+          checked={inspections}
+          onChange={(on) => useWorkspace.setState({ unityInspections: on })}
         />
       </div>
     </>

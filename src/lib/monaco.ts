@@ -267,6 +267,8 @@ export function languageFor(path: string): string {
     }
   }
   if (best) return best.id;
+  // Unity's assembly definitions and references.
+  if (/\.(asmdef|asmref)$/.test(name)) return "json";
   if (/\.(csproj|fsproj|vbproj|props|targets|slnx|config|nuspec|resx|xaml|axaml)$/.test(name)) return "xml";
   if (name.endsWith(".sln")) return "ini";
   return "plaintext";

@@ -6,7 +6,7 @@ import { monaco } from "../monaco";
 import { toMonacoRange } from "../lsp/convert";
 import { useWorkspace } from "../../store/workspace";
 import { analyzePerf, type PerfReport } from "./perf";
-import { onUnityCodeChanged, unityBaseFor, unityRootFor } from "./scripts";
+import { onUnityCodeChanged, unityBaseFor, unityObjectFor, unityRootFor } from "./scripts";
 
 export function installUnityPerf(editor: monaco.editor.ICodeEditor): monaco.IDisposable {
   const shown = editor.createDecorationsCollection();
@@ -48,7 +48,11 @@ export function installUnityPerf(editor: monaco.editor.ICodeEditor): monaco.IDis
       const version = model.getVersionId();
       const methods: PerfMethod[] = await api.csharpPerf(model.getValue()).catch(() => []);
       if (editor.getModel() !== model || model.getVersionId() !== version) return;
-      report = analyzePerf(methods, (cls) => unityBaseFor(root, cls) === "MonoBehaviour");
+      report = analyzePerf(
+        methods,
+        (cls) => unityBaseFor(root, cls) === "MonoBehaviour",
+        (type) => unityObjectFor(root, type),
+      );
       render();
     }, delay);
   };

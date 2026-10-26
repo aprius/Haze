@@ -26,6 +26,7 @@ interface Persisted {
   unityAutoRefresh?: boolean;
   unityPerfContext?: PerfContextMode;
   unityPerfHints?: boolean;
+  unityInspections?: boolean;
   checkUpdates?: boolean;
   updateCheck?: SavedUpdateCheck;
 }
@@ -56,6 +57,7 @@ function snapshot(): Persisted {
     unityAutoRefresh: s.unityAutoRefresh,
     unityPerfContext: s.unityPerfContext,
     unityPerfHints: s.unityPerfHints,
+    unityInspections: s.unityInspections,
     checkUpdates: s.checkUpdates,
     updateCheck: savedUpdateCheck(),
   };
@@ -133,6 +135,7 @@ async function doRestore(): Promise<void> {
       unityAutoRefresh: data.unityAutoRefresh ?? true,
       unityPerfContext: data.unityPerfContext ?? "everywhere",
       unityPerfHints: data.unityPerfHints ?? true,
+      unityInspections: data.unityInspections ?? true,
       checkUpdates: data.checkUpdates ?? true,
     });
     restoreUpdateCheck(data.updateCheck);

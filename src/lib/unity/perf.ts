@@ -2,7 +2,8 @@
 // every frame (Update, LateUpdate, FixedUpdate…), coroutines, and the methods
 // of the same class they call. Inside it, well-known expensive operations
 // (GetComponent, Find, Camera.main, Debug.Log, SendMessage, calls by name) are
-// pointed out, and so are calls to methods that do one.
+// pointed out, and so are calls to methods that do one. So are comparisons of
+// a UnityEngine.Object to null and multidimensional array accesses.
 //
 // Calls are followed within a class of the file (syntax.rs lists them; no
 // types are resolved), so a call into another class or file is not followed.
@@ -28,6 +29,17 @@ export const FRAME_MESSAGES = new Set([
   "OnCollisionStay2D",
   "OnMouseOver",
   "OnMouseDrag",
+]);
+
+/** Unity's own types that derive from UnityEngine.Object, which overloads `==` to ask the engine. */
+export const UNITY_OBJECTS = new Set([
+  "Object", "GameObject", "Component", "Transform", "RectTransform", "Behaviour", "MonoBehaviour", "ScriptableObject",
+  "Camera", "Light", "Animator", "Animation", "AudioSource", "AudioListener", "AudioClip", "Rigidbody", "Rigidbody2D",
+  "Collider", "Collider2D", "BoxCollider", "SphereCollider", "CapsuleCollider", "MeshCollider", "BoxCollider2D", "CircleCollider2D",
+  "CharacterController", "Renderer", "MeshRenderer", "SkinnedMeshRenderer", "SpriteRenderer", "LineRenderer", "TrailRenderer",
+  "MeshFilter", "ParticleSystem", "Canvas", "CanvasGroup", "Graphic", "Image", "RawImage", "Text", "Button", "Toggle", "Slider",
+  "Selectable", "TMP_Text", "TextMeshPro", "TextMeshProUGUI", "Material", "Shader", "Texture", "Texture2D", "RenderTexture",
+  "Sprite", "Mesh", "AnimationClip", "RuntimeAnimatorController", "NavMeshAgent", "Terrain", "Joint", "HingeJoint",
 ]);
 
 const ADVICE: Record<string, (where: string) => string> = {
@@ -56,8 +68,16 @@ export interface PerfReport {
   costly: CostlyCall[];
 }
 
-/** The performance-critical methods of a file's classes and the expensive calls in them. */
-export function analyzePerf(methods: PerfMethod[], isMonoBehaviour: (className: string) => boolean): PerfReport {
+const NULL_CHECK = (w: string) =>
+  `Comparing a UnityEngine.Object to null in a performance-critical context (${w}) asks the engine whether it was destroyed: check once, in Awake or Start, where you can.`;
+const ARRAY_ACCESS = (w: string) =>
+  `Multidimensional array access in a performance-critical context (${w}) is slower than a jagged (T[][]) or flat (T[]) array.`;
+
+/**
+ * The performance-critical methods of a file's classes and the expensive calls
+ * in them. `isUnityObject` tells which declared types derive from UnityEngine.Object.
+ */
+export function analyzePerf(methods: PerfMethod[], isMonoBehaviour: (className: string) => boolean, isUnityObject: (typeName: string) => boolean = () => false): PerfReport {
   const byName = new Map<string, PerfMethod[]>();
   const key = (cls: string, name: string) => `${cls}.${name}`;
   for (const m of methods) {
@@ -106,6 +126,8 @@ export function analyzePerf(methods: PerfMethod[], isMonoBehaviour: (className: 
       const target = callees(m, c).find((t) => cost.has(t) && t !== m);
       if (target) costly.push({ range: c.range, message: `Expensive method invocation in a performance-critical context (${from}): ${c.name} uses ${cost.get(target)}.` });
     }
+    for (const n of m.nullChecks ?? []) if (isUnityObject(n.typeName)) costly.push({ range: n.range, message: NULL_CHECK(from) });
+    for (const a of m.arrayAccess ?? []) costly.push({ range: a, message: ARRAY_ACCESS(from) });
   }
   return { hot: [...hot].map(([method, from]) => ({ method, from })), costly };
 }

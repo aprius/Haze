@@ -119,12 +119,13 @@ src-tauri/src/               backend (Rust)
   git_ops.rs                 changes, commit, rollback, branches, stash, blame, rebase, checkpoints
   git_auth.rs                GitHub / GitLab accounts, keychain tokens, credential helper
   search.rs                  Find/Replace in Files with undo
-  syntax.rs                  C# comment/string ranges and declarations for Code Vision (tree-sitter)
+  syntax.rs                  C# comment/string ranges, declarations for Code Vision, Unity facts (tree-sitter)
   file_index.rs              file list and fuzzy matching for Search Everywhere
   lsp.rs                     language server process and message relay
   dotnet.rs                  solutions, projects, launch profiles, dotnet build parsing
   agent_hooks.rs             Claude Code / Codex hook install and the --agent-hook mode
   unity.rs, unity_index.rs   live link to the Unity Editor; Unity classes, event functions and asset usages
+  unity_data.rs              tags, layers, scenes, Resources, shaders and assemblies a Unity project names
   updates.rs                 Check for Updates against the latest GitHub release
   shell_env.rs               PATH from the login shell (macOS)
   procinfo.rs                shell working directory and child-process detection for terminals

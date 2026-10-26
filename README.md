@@ -53,7 +53,7 @@ Rider-style commit window, diffs, log graph, AI checkpoints and per-file "review
 
 ### C# navigation with Roslyn
 
-Go to Definition, Find Usages, Rename, quick fixes, Code Vision and inline completions through the Roslyn Language Server. Errors, warnings, suggestions and hints as you type, like Rider's, and Unity's performance-critical context.
+Go to Definition, Find Usages, Rename, quick fixes, Code Vision and inline completions through the Roslyn Language Server. Errors, warnings, suggestions and hints as you type, like Rider's, Unity's performance-critical context, and tags, layers, scenes and assembly references checked against the Unity project.
 
 [Docs →](docs/FEATURES.md#c-and-net)
 
@@ -248,6 +248,7 @@ Haze is not a Rider replacement. It keeps the Rider workflow for reviewing and s
 | | Profiler (dotTrace, dotMemory) | ❌ | ✅ |
 | | .NET test runner | ⚠️ (`dotnet test` in a terminal) | ✅ |
 | Unity | Editor link: compile, Console, Play/Pause, asset usages | ✅ | ✅ |
+| | Unity inspections (tags, layers, scenes, Resources, `.asmdef` references) | ✅ | ✅ |
 | | Unity tests | ✅ | ✅ |
 | | Unity Editor/Player debugging | ❌ | ✅ |
 | Git | Commit window, log graph, diff, 3-way merge | ✅ | ✅ |
@@ -288,4 +289,4 @@ Want to build from source or contribute? See [CONTRIBUTING.md](CONTRIBUTING.md) 
 
 Haze is released under the [MIT License](LICENSE).
 
-The file and folder icons in `src/assets/jb` are JetBrains' (IntelliJ Platform and the Rider Unity plugin), used under the Apache License 2.0; see [their license](src/assets/jb/LICENSE).
+The file and folder icons in `src/assets/jb` are JetBrains' (IntelliJ Platform and the Rider Unity plugin), used under the Apache License 2.0; see [their license](src/assets/jb/LICENSE). So is the list of Unity's built-in shaders in `src/lib/unity/builtinShaders.ts`, from the Rider Unity plugin.

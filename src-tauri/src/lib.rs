@@ -20,6 +20,7 @@ mod syntax;
 mod text;
 mod unity;
 mod unity_csproj;
+mod unity_data;
 mod unity_index;
 mod updates;
 mod watcher;
@@ -641,6 +642,16 @@ async fn unity_warm_index(
     .await
 }
 
+/// Tags, layers, scenes, Resources, Animator states, shaders and assemblies of a Unity project.
+#[tauri::command]
+async fn unity_project_data(
+    indexes: State<'_, Arc<unity_index::UnityIndexes>>,
+    root: String,
+) -> CmdResult<unity_data::ProjectData> {
+    let indexes = indexes.inner().clone();
+    blocking(move || Ok(indexes.project_data(root.as_ref()))).await
+}
+
 #[tauri::command]
 async fn unity_asset_usages(
     indexes: State<'_, Arc<unity_index::UnityIndexes>>,
@@ -657,6 +668,12 @@ async fn unity_asset_usages(
 #[tauri::command]
 async fn csharp_perf(text: String) -> CmdResult<Vec<syntax::PerfMethod>> {
     blocking(move || Ok(syntax::csharp_perf(&text))).await
+}
+
+/// Strings naming tags, layers, scenes… and Instantiate calls, for Unity's inspections.
+#[tauri::command]
+async fn csharp_unity(text: String) -> CmdResult<syntax::UnityCode> {
+    blocking(move || Ok(syntax::csharp_unity(&text))).await
 }
 
 #[tauri::command]
@@ -1157,9 +1174,11 @@ pub fn run() {
             unity_classes,
             unity_add_to_project,
             unity_asset_usages,
+            unity_project_data,
             unity_warm_index,
             csharp_outline,
             csharp_perf,
+            csharp_unity,
             lsp_find_server,
             lsp_start,
             lsp_send,

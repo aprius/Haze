@@ -1,11 +1,13 @@
 // What Haze knows about a Unity project's scripts without Unity running (the
-// Rust index in unity_index.rs): base classes, and the scenes, prefabs and
-// assets that use a script. Answers are synchronous from a cache; a miss
-// starts loading and `onUnityCodeChanged` tells when to ask again.
+// Rust index in unity_index.rs): base classes, the scenes, prefabs and assets
+// that use a script, and what the project's settings and assets name (tags,
+// layers, scenes…). Answers are synchronous from a cache; a miss starts
+// loading and `onUnityCodeChanged` tells when to ask again.
 import { useUnity } from "../../store/unity";
-import { api, type AssetUsages, type FsChange } from "../ipc";
+import { api, type AssetUsages, type FsChange, type UnityProjectData } from "../ipc";
 import { isWithin } from "../path";
 import { unityBaseOf, type UnityBase } from "./messages";
+import { UNITY_OBJECTS } from "./perf";
 
 interface Entry<T> {
   root: string;
@@ -20,6 +22,7 @@ interface Entry<T> {
 
 const classes = new Map<string, Entry<Record<string, string[]>>>();
 const usages = new Map<string, Entry<AssetUsages>>();
+const projectData = new Map<string, Entry<UnityProjectData>>();
 const listeners = new Set<() => void>();
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -97,6 +100,31 @@ export function unityBaseFor(root: string, className: string): UnityBase | null 
   return known.get(className)!;
 }
 
+/** Whether a type of the project (or of Unity) derives from UnityEngine.Object; false while the index loads. */
+export function unityObjectFor(root: string, typeName: string): boolean {
+  if (UNITY_OBJECTS.has(typeName)) return true;
+  const all = classesOf(root);
+  if (!all) return false;
+  const seen = new Set<string>();
+  let level = [typeName];
+  while (level.length) {
+    const next: string[] = [];
+    for (const n of level) {
+      if (UNITY_OBJECTS.has(n)) return true;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      next.push(...(all[n] ?? []));
+    }
+    level = next;
+  }
+  return false;
+}
+
+/** Tags, layers, scenes, Resources, Animator states, shaders and assemblies of a project, or null while loading. */
+export function projectDataFor(root: string): UnityProjectData | null {
+  return cached(projectData, root, root, () => api.unityProjectData(root));
+}
+
 /** Whether the index has answered for this project. */
 export function unityClassesLoaded(root: string): boolean {
   return !!classes.get(root)?.data;
@@ -120,6 +148,8 @@ export function unityGenerateActive(): boolean {
 }
 
 const ASSET = /\.(unity|prefab|asset|controller|overridecontroller|playable)$/i;
+// What ProjectData lists: settings, scenes, controllers, shaders, assembly definitions, compiled assemblies, Resources.
+const DATA = /[\\/]ProjectSettings[\\/]\w+\.asset$|\.(unity|controller|shader|shadergraph|asmdef|asmdef\.meta|dll)$|[\\/]Resources[\\/]/i;
 
 const reloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -129,12 +159,17 @@ const reloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
  * redraws only if an answer changed.
  */
 export function unityFilesChangedForCode(change: FsChange): void {
-  if (!classes.has(change.root)) return;
+  if (!classes.has(change.root) && !projectData.has(change.root)) return;
   const paths = [...change.files, ...change.created, ...change.removed];
   const scripts = change.overflow || paths.some((p) => /\.cs$/i.test(p));
   const assets = scripts || paths.some((p) => ASSET.test(p) || /\.cs\.meta$/i.test(p));
-  if (!assets) return;
-  const affected = [...(scripts ? [classes.get(change.root)!] : []), ...[...usages.values()].filter((e) => e.root === change.root)];
+  const data = change.overflow || paths.some((p) => DATA.test(p));
+  if (!assets && !data) return;
+  const affected = [
+    ...(scripts && classes.has(change.root) ? [classes.get(change.root)!] : []),
+    ...(assets ? [...usages.values()].filter((e) => e.root === change.root) : []),
+    ...(data && projectData.has(change.root) ? [projectData.get(change.root)!] : []),
+  ];
   affected.forEach((e) => (e.stale = true));
   clearTimeout(reloadTimers.get(change.root));
   reloadTimers.set(
