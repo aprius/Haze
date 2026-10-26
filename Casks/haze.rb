@@ -3,8 +3,8 @@
 #   brew install --cask haze
 #   haze update
 cask "haze" do
-  version "1.0.10"
-  sha256 "be36368f8954a29e880e3aabe4136b7482afdb6013df4cf0de29e4abd1dae825"
+  version "1.0.11"
+  sha256 "520d26574428a6911b85572e28cfaecbf2233ab698d6d6b1b41ceb3e89484a6f"
 
   url "https://github.com/aprius/Haze/releases/download/v#{version}/Haze_#{version}_universal.dmg"
   name "Haze"
