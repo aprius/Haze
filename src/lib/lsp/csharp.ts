@@ -43,7 +43,7 @@ const WATCHED = /(\.(cs|csx|razor|cshtml|csproj|props|targets|sln|slnx|editorcon
 
 interface ServerCapabilities {
   textDocumentSync?: number | { change?: number };
-  completionProvider?: { triggerCharacters?: string[]; resolveProvider?: boolean };
+  completionProvider?: { triggerCharacters?: string[]; allCommitCharacters?: string[]; resolveProvider?: boolean };
   signatureHelpProvider?: { triggerCharacters?: string[] };
   semanticTokensProvider?: { legend: LspSemanticLegend; full?: boolean | object; range?: boolean };
   codeLensProvider?: { resolveProvider?: boolean };
@@ -1249,7 +1249,9 @@ export function registerProviders(): void {
           sortText: it.sortText,
           filterText: it.filterText,
           preselect: it.preselect,
-          commitCharacters: it.commitCharacters,
+          // Roslyn leaves the usual commit characters off each item for the client to take from its capabilities:
+          // `Debug.Lo` then `(` gives `Debug.Log(`, as in Rider. An empty list (a new name being typed) commits only on Tab/Enter.
+          commitCharacters: it.commitCharacters ?? s.caps.completionProvider?.allCommitCharacters,
           insertText: it.textEdit?.newText ?? it.insertText ?? it.label,
           insertTextRules: it.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
           range: editRange ? toMonacoRange(editRange) : fallback,
