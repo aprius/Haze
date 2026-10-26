@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickInline, type LspCompletionItem } from "./inline";
+import { pickInline, typedEdit, type LspCompletionItem } from "./inline";
 
 // The word "To" typed at line 3, characters 8-10.
 const pick = (items: LspCompletionItem[], prefix = "To") => pickInline(items, prefix, 3, 8, 8 + prefix.length)?.text ?? null;
@@ -46,5 +46,18 @@ describe("pickInline", () => {
   it("returns the item so its resolved edits can be applied", () => {
     const item = { label: "ToImmutableList", additionalTextEdits: [{ range: range(0, 0, 0), newText: "using System.Collections.Immutable;\n" }] };
     expect(pickInline([item], "To", 3, 8, 10)?.item).toBe(item);
+  });
+});
+
+describe("typedEdit", () => {
+  it("counts a typed character or a deletion, on each cursor, as typing", () => {
+    expect(typedEdit([{ text: "e" }])).toBe(true);
+    expect(typedEdit([{ text: "" }])).toBe(true);
+    expect(typedEdit([{ text: "a" }, { text: "a" }])).toBe(true);
+  });
+
+  it("does not count an accepted completion or a paste", () => {
+    expect(typedEdit([{ text: "GameObject" }])).toBe(false);
+    expect(typedEdit([{ text: "using UnityEngine;\n" }, { text: "a" }])).toBe(false);
   });
 });

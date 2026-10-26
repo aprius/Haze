@@ -27,7 +27,7 @@ import {
 } from "./convert";
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
 import { isVirtualPath, setVirtualSource } from "../buffers";
-import { MIN_PREFIX, pickInline, type LspCompletionItem } from "./inline";
+import { MIN_PREFIX, pickInline, typedEdit, type LspCompletionItem } from "./inline";
 import { buildHover, declarationAt, type Declaration } from "./hoverDoc";
 import { SEMANTIC_LEGEND, semanticTranslator, type LspSemanticLegend } from "./semantic";
 import { useUnity, type TestResult } from "../../store/unity";
@@ -841,14 +841,19 @@ async function runCodeAction(session: CsharpSession, action: LspCodeAction) {
   if (a.command) await session.request("workspace/executeCommand", { command: a.command.command, arguments: a.command.arguments });
 }
 
+/** Each model's version after its last edit that was not typing (an accepted completion, a paste), when it has no ghost text. */
+const untyped = new WeakMap<monaco.editor.ITextModel, number>();
+
 export function registerProviders(): void {
   if (registered) return;
   registered = true;
   const L = monaco.languages;
 
   const watchEdits = (m: monaco.editor.ITextModel) =>
-    m.onDidChangeContent(() => {
-      if (m.getLanguageId() === "csharp") bumpVisionGeneration();
+    m.onDidChangeContent((e) => {
+      if (m.getLanguageId() !== "csharp") return;
+      bumpVisionGeneration();
+      if (!typedEdit(e.changes)) untyped.set(m, e.versionId);
     });
   monaco.editor.getModels().forEach(watchEdits);
   monaco.editor.onDidCreateModel((m) => {
@@ -1285,7 +1290,8 @@ export function registerProviders(): void {
       const word = model.getWordUntilPosition(position);
       // Not in the middle of a word.
       const next = model.getLineContent(position.lineNumber).charAt(position.column - 1);
-      if (!s || word.word.length < MIN_PREFIX || /\w/.test(next)) return { items: [] };
+      // Not right after a completion was accepted either: `GameObject` taken with Tab would offer `GameObjectUtility`.
+      if (!s || word.word.length < MIN_PREFIX || /\w/.test(next) || untyped.get(model) === model.getVersionId()) return { items: [] };
       const res = await s
         .request<{ items: LspCompletionItem[] } | LspCompletionItem[] | null>("textDocument/completion", { ...docParams(model, position), context: { triggerKind: 1 } }, token)
         .catch(() => null);
