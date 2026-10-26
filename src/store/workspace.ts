@@ -4,6 +4,9 @@
 import { create } from "zustand";
 import { basename } from "../lib/path";
 
+/** Where Unity's performance-critical context is marked: every method run each frame, the one at the caret, or none. */
+export type PerfContextMode = "everywhere" | "current" | "never";
+
 export interface Project {
   id: string;
   path: string;
@@ -119,6 +122,10 @@ interface WorkspaceState {
   notifyAgents: boolean;
   /** Unity refreshes its assets (and compiles) when files change on disk, without waiting for focus. */
   unityAutoRefresh: boolean;
+  /** Where the gutter marks Unity's performance-critical context (methods run every frame). */
+  unityPerfContext: PerfContextMode;
+  /** Expensive calls (GetComponent, Find…) in that context are underlined. */
+  unityPerfHints: boolean;
   /** Looks for a newer Haze release at startup and every few hours. */
   checkUpdates: boolean;
 
@@ -154,6 +161,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   rainbowGuides: true,
   notifyAgents: true,
   unityAutoRefresh: true,
+  unityPerfContext: "everywhere",
+  unityPerfHints: true,
   checkUpdates: true,
 
   addProject(path) {

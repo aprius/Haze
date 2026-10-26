@@ -1,6 +1,6 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { ChevronDown, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { AlertCircle, AlertTriangle, Check, ChevronDown, Lightbulb, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { create } from "zustand";
 import { DefinitionAction, SymbolNavigationAction } from "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js";
 import { disposeBuffer, ensureBuffer, getModel, isVirtualPath, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
@@ -8,7 +8,7 @@ import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, isWithin, join, relative } from "../lib/path";
-import { clearUnusedMarks, findImplementations, findUsages, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
+import { clearUnusedMarks, csharpAnswers, findImplementations, findUsages, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
 import { lineChanges, lineMapper } from "../lib/lineChanges";
 import { withNested } from "../lib/treeRows";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
@@ -26,6 +26,7 @@ import { showAssetUsages, showDeclarations, showLocations } from "./UsagesPopup"
 import type { AssetUsage } from "../lib/ipc";
 import { runUnityTests } from "../store/unity";
 import { generateUnityMember, registerUnityCompletion } from "../lib/unity/generate";
+import { installUnityPerf } from "../lib/unity/perfDecorations";
 import { isMac, shortcutLabel } from "../lib/keymap";
 
 export const useCursor = create<{ line: number; column: number; selected: number }>(() => ({
@@ -592,6 +593,63 @@ function installLineChanges(project: Project, editor: monaco.editor.ICodeEditor)
   };
 }
 
+/**
+ * Rider's file status in the editor's corner: errors, warnings and
+ * suggestions in the file (from the last build and live analysis), or a green
+ * check. A click goes to the next one.
+ */
+function InspectionStatus({ path, editor }: { path: string; editor: React.RefObject<monaco.editor.IStandaloneCodeEditor | null> }) {
+  const uri = useMemo(() => monaco.Uri.file(path), [path]);
+  const [counts, setCounts] = useState({ errors: 0, warnings: 0, infos: 0, csharp: false });
+  useEffect(() => {
+    const count = () => {
+      const markers = monaco.editor.getModelMarkers({ resource: uri });
+      const n = (s: monaco.MarkerSeverity) => markers.filter((m) => m.severity === s).length;
+      // The check only once Roslyn has looked at the file.
+      const model = monaco.editor.getModel(uri);
+      const csharp = !!model && model.getLanguageId() === "csharp" && csharpAnswers(model);
+      setCounts({ errors: n(monaco.MarkerSeverity.Error), warnings: n(monaco.MarkerSeverity.Warning), infos: n(monaco.MarkerSeverity.Info), csharp });
+    };
+    count();
+    const sub = monaco.editor.onDidChangeMarkers((uris) => {
+      if (uris.some((u) => u.toString() === uri.toString())) count();
+    });
+    return () => sub.dispose();
+  }, [uri]);
+  const { errors, warnings, infos, csharp } = counts;
+  if (!errors && !warnings && !infos && !csharp) return null;
+  const next = () => {
+    const e = editor.current;
+    if (!e) return;
+    e.focus();
+    void e.getAction("editor.action.marker.next")?.run();
+  };
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const title = errors || warnings || infos
+    ? [errors && plural(errors, "error"), warnings && plural(warnings, "warning"), infos && plural(infos, "suggestion")].filter(Boolean).join(", ") + ": click for the next one"
+    : "No problems found";
+  return (
+    <button className="inspection-status" title={title} onClick={next}>
+      {errors > 0 && (
+        <span>
+          <AlertCircle size={13} className="sev-error" /> {errors}
+        </span>
+      )}
+      {warnings > 0 && (
+        <span>
+          <AlertTriangle size={13} className="sev-warning" /> {warnings}
+        </span>
+      )}
+      {infos > 0 && (
+        <span>
+          <Lightbulb size={13} className="sev-info" /> {infos}
+        </span>
+      )}
+      {!errors && !warnings && !infos && <Check size={14} className="sev-ok" />}
+    </button>
+  );
+}
+
 function symbolAt(editor: monaco.editor.ICodeEditor): string {
   const model = editor.getModel();
   const pos = editor.getPosition();
@@ -1067,12 +1125,14 @@ export function EditorArea({ project }: { project: Project }) {
     }, "1_modification");
     const lineBlame = installLineBlame(project, editor);
     const changes = installLineChanges(project, editor);
+    const unityPerf = installUnityPerf(editor);
     const wheel = zedWheel(editor);
     editorRef.current = editor;
     currentEditor = editor;
     return () => {
       lineBlame.dispose();
       changes.dispose();
+      unityPerf.dispose();
       wheel.dispose();
       if (shownPath.current) viewStates.set(shownPath.current, editor.saveViewState());
       editor.dispose();
@@ -1159,6 +1219,9 @@ export function EditorArea({ project }: { project: Project }) {
       <div className="editor-stack">
         {/* Hidden under the preview too: over a background image the preview is glass, and the source would show through. */}
         <div ref={host} className="monaco-host" style={{ visibility: ready && !image && !special && !showMd ? "visible" : "hidden" }} />
+        {active && ready && !image && !special && !showMd && meta?.status === "text" && !isVirtualPath(active) && (
+          <InspectionStatus path={active} editor={editorRef} />
+        )}
         {diff && <DiffView key={active} spec={diff} />}
         {merge && <MergeView key={active} project={project} spec={merge} />}
         {showMd && <MarkdownPreview path={active!} />}

@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { collectDrafts, ensureBuffer, getModel, isVirtualPath, onDraftsChanged } from "../lib/buffers";
 import { api } from "../lib/ipc";
 import { restoreUpdateCheck, savedUpdateCheck, useUpdates, type SavedUpdateCheck } from "./updates";
-import { defaultUi, useWorkspace, type Project, type ProjectUi } from "./workspace";
+import { defaultUi, useWorkspace, type PerfContextMode, type Project, type ProjectUi } from "./workspace";
 
 const VERSION = 1;
 
@@ -23,6 +23,8 @@ interface Persisted {
   rainbowGuides?: boolean;
   notifyAgents?: boolean;
   unityAutoRefresh?: boolean;
+  unityPerfContext?: PerfContextMode;
+  unityPerfHints?: boolean;
   checkUpdates?: boolean;
   updateCheck?: SavedUpdateCheck;
 }
@@ -51,6 +53,8 @@ function snapshot(): Persisted {
     rainbowGuides: s.rainbowGuides,
     notifyAgents: s.notifyAgents,
     unityAutoRefresh: s.unityAutoRefresh,
+    unityPerfContext: s.unityPerfContext,
+    unityPerfHints: s.unityPerfHints,
     checkUpdates: s.checkUpdates,
     updateCheck: savedUpdateCheck(),
   };
@@ -124,6 +128,8 @@ async function doRestore(): Promise<void> {
       rainbowGuides: data.rainbowGuides ?? true,
       notifyAgents: data.notifyAgents ?? true,
       unityAutoRefresh: data.unityAutoRefresh ?? true,
+      unityPerfContext: data.unityPerfContext ?? "everywhere",
+      unityPerfHints: data.unityPerfHints ?? true,
       checkUpdates: data.checkUpdates ?? true,
     });
     restoreUpdateCheck(data.updateCheck);

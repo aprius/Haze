@@ -1,8 +1,9 @@
 // C# language support through Roslyn's language server: one session per open
 // project, kept in sync with the editor's models, feeding Monaco providers.
 //
-// Diagnostics are deliberately never requested from the server: errors come
-// only from real builds (store/dotnet.ts), so nothing "phantom" shows up.
+// Diagnostics are pulled as files change, like Rider's on-the-fly analysis,
+// once the projects have loaded (lib/lsp/diagnostics.ts says what is left out
+// so nothing "phantom" shows up). A build's own errors (store/dotnet.ts) win.
 import { errorMessage, type FsChange, type OutlineSymbol } from "../ipc";
 import { api } from "../ipc";
 import { monaco } from "../monaco";
@@ -34,6 +35,7 @@ import { unityMessage } from "../unity/messages";
 import { assetUsagesFor, onUnityCodeChanged, unityBaseFor, unityGenerateActive, unityRootFor } from "../unity/scripts";
 import { fixtureName, isTestHead, testPattern, typeName } from "../unity/tests";
 import { bumpVisionGeneration, setVisionRefresh, visionAnswer, type VisionAnswer } from "./visionCache";
+import { isImportFix, PULLED_KINDS, referencesMissing, shownByBuild, toMarker, touches, unitySuppressed, type LspDiagnostic } from "./diagnostics";
 
 // What Roslyn reloads on: sources, project files and restore output. Other
 // JSON (Unity's Library writes plenty) would only be parsed and dropped.
@@ -45,7 +47,23 @@ interface ServerCapabilities {
   signatureHelpProvider?: { triggerCharacters?: string[] };
   semanticTokensProvider?: { legend: LspSemanticLegend; full?: boolean | object; range?: boolean };
   codeLensProvider?: { resolveProvider?: boolean };
+  diagnosticProvider?: { identifier?: string };
   [k: string]: unknown;
+}
+
+/** Owner of live diagnostics' markers (build results use "build"). */
+const LIVE = "csharp";
+/** Pause after typing before diagnostics are asked again. */
+const PULL_DELAY = 300;
+
+interface Pulled {
+  /** Per kind of diagnostics: the server's result id and items, kept when it answers "unchanged". */
+  results: Map<string, { resultId?: string; items: LspDiagnostic[] }>;
+  timer?: ReturnType<typeof setTimeout>;
+  /** What is shown, for code actions. */
+  shown: LspDiagnostic[];
+  /** The build markers it was shown against. */
+  build?: string;
 }
 
 export class CsharpSession {
@@ -60,6 +78,13 @@ export class CsharpSession {
   private readyWaiters: (() => void)[] = [];
   private synced = new Map<string, monaco.IDisposable>();
   private disposed = false;
+  /** Kinds of pulled diagnostics the server registered ("" when it has one unnamed kind). */
+  private diagnosticKinds: string[] = [];
+  private pulled = new Map<string, Pulled>();
+  /** Files whose project lost its references, reported once. */
+  private brokenReported = false;
+  /** Scripts checked against Unity's generated projects (unity_csproj.rs). */
+  private projectChecked = new Set<string>();
   /** Server semantic tokens in Haze's legend (none when the server has none). */
   semanticTokens?: (data: ArrayLike<number>) => Uint32Array;
   /** Called when the server exits on its own after starting (see startCsharp). */
@@ -97,9 +122,12 @@ export class CsharpSession {
           didChangeWatchedFiles: { dynamicRegistration: true },
           symbol: { dynamicRegistration: false },
           semanticTokens: { refreshSupport: true },
+          diagnostics: { refreshSupport: true },
         },
         textDocument: {
           synchronization: { didSave: true, dynamicRegistration: false },
+          // Roslyn registers its kinds of diagnostics (syntax, compiler, analyzers) dynamically.
+          diagnostic: { dynamicRegistration: true, relatedDocumentSupport: false },
           completion: {
             completionItem: { snippetSupport: true, documentationFormat: ["markdown", "plaintext"], resolveSupport: { properties: ["documentation", "detail", "additionalTextEdits"] } },
           },
@@ -133,6 +161,7 @@ export class CsharpSession {
       },
     });
     this.caps = init.capabilities;
+    if (this.caps.diagnosticProvider && !this.diagnosticKinds.length) this.diagnosticKinds = [this.caps.diagnosticProvider.identifier ?? ""];
     const legend = this.caps.semanticTokensProvider?.legend;
     if (legend) this.semanticTokens = semanticTranslator(legend);
     await this.client.notify("initialized", {});
@@ -154,6 +183,23 @@ export class CsharpSession {
     });
     c.onRequest("workspace/semanticTokens/refresh", () => {
       semanticTokensChanged.fire();
+      return null;
+    });
+    c.onRequest("client/registerCapability", (p) => {
+      for (const r of (p as { registrations: { method: string; registerOptions?: { identifier?: string; documentSelector?: unknown } }[] }).registrations ?? []) {
+        // Razor's own registration has a selector; C#'s have none.
+        if (r.method !== "textDocument/diagnostic" || r.registerOptions?.documentSelector) continue;
+        const kind = r.registerOptions?.identifier ?? "";
+        if (kind && !PULLED_KINDS.includes(kind)) continue;
+        if (!this.diagnosticKinds.includes(kind)) this.diagnosticKinds.push(kind);
+      }
+      // Named kinds cover what the unnamed one would.
+      if (this.diagnosticKinds.some((k) => k)) this.diagnosticKinds = this.diagnosticKinds.filter((k) => k);
+      return null;
+    });
+    // A project reloaded, an analyzer changed: what is shown may be stale.
+    c.onRequest("workspace/diagnostic/refresh", () => {
+      this.pullAll();
       return null;
     });
     c.onNotification("workspace/projectInitializationComplete", () => this.markReady());
@@ -181,6 +227,7 @@ export class CsharpSession {
       this.usable = false;
       this.synced.forEach((d) => d.dispose());
       this.synced.clear();
+      this.clearDiagnostics();
       if (!this.disposed) {
         setCsharpStatus(this.projectId, { state: "stopped", kind: this.kind, message: exitMessage(reason) });
         this.onCrash?.();
@@ -211,6 +258,7 @@ export class CsharpSession {
     bumpVisionGeneration();
     semanticTokensChanged.fire();
     refreshCodeVision();
+    this.pullAll();
   }
 
   /** Waits for the projects to load, at most `ms`: a project that never loads must not block queries. */
@@ -246,7 +294,13 @@ export class CsharpSession {
         ? e.changes.map((c) => ({ range: toLspRange(c.range), rangeLength: c.rangeLength, text: c.text }))
         : [{ text: model.getValue() }];
       void this.client.notify("textDocument/didChange", { textDocument: { uri, version: model.getVersionId() }, contentChanges });
+      if (model.uri.scheme === "file") this.schedulePull(model, PULL_DELAY);
     });
+    // Decompiled and generated code (csharp: URIs) has nothing to fix.
+    if (model.uri.scheme === "file") {
+      this.addToUnityProject(path);
+      this.schedulePull(model, 0);
+    }
     const disposeSub = model.onWillDispose(() => this.unsync(uri));
     this.synced.set(uri, {
       dispose: () => {
@@ -261,6 +315,8 @@ export class CsharpSession {
     if (!sub) return;
     sub.dispose();
     this.synced.delete(uri);
+    clearTimeout(this.pulled.get(uri)?.timer);
+    this.pulled.delete(uri);
     void this.client.notify("textDocument/didClose", { textDocument: { uri } });
   }
 
@@ -275,10 +331,125 @@ export class CsharpSession {
     if (changes.length) void this.client.notify("workspace/didChangeWatchedFiles", { changes });
   }
 
+  /**
+   * A Unity script no generated project lists (just created, Unity not
+   * reimported yet) is a loose file to Roslyn: no errors, no "using" fixes.
+   * It goes into its assembly's project, as Rider does.
+   */
+  private addToUnityProject(path: string) {
+    const root = unityRootFor(path);
+    if (!root || !path.toLowerCase().endsWith(".cs") || this.projectChecked.has(path)) return;
+    this.projectChecked.add(path);
+    void api
+      .unityAddToProject(root, path)
+      .then((project) => {
+        if (project && this.client.alive) void this.client.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: pathToUri(project), type: 2 }] });
+      })
+      .catch((e) => console.warn("adding to the Unity project", e));
+  }
+
+  // -------------------------------------------------------------- diagnostics
+
+  private schedulePull(model: monaco.editor.ITextModel, delay: number) {
+    const uri = serverUri(model);
+    let state = this.pulled.get(uri);
+    if (!state) this.pulled.set(uri, (state = { results: new Map(), shown: [] }));
+    clearTimeout(state.timer);
+    state.timer = setTimeout(() => void this.pull(model).catch(() => {}), delay);
+  }
+
+  /** Asks again for every open document (projects loaded or reloaded). */
+  private pullAll() {
+    for (const m of monaco.editor.getModels()) if (m.uri.scheme === "file" && this.synced.has(serverUri(m))) this.schedulePull(m, 0);
+  }
+
+  private async pull(model: monaco.editor.ITextModel) {
+    // Before the projects load every name is unknown.
+    if (!this.ready || !this.client.alive || model.isDisposed() || !this.diagnosticKinds.length) return;
+    const uri = serverUri(model);
+    const state = this.pulled.get(uri);
+    if (!state) return;
+    const version = model.getVersionId();
+    await Promise.all(
+      this.diagnosticKinds.map(async (kind) => {
+        const prev = state.results.get(kind);
+        const res = await this.client.request<{ kind: "full" | "unchanged"; resultId?: string; items?: LspDiagnostic[] } | null>("textDocument/diagnostic", {
+          textDocument: { uri },
+          ...(kind ? { identifier: kind } : {}),
+          ...(prev?.resultId ? { previousResultId: prev.resultId } : {}),
+        });
+        if (!res) return;
+        state.results.set(kind, { resultId: res.resultId, items: res.kind === "unchanged" ? (prev?.items ?? []) : (res.items ?? []) });
+      }),
+    );
+    // Edited meanwhile: the next pull is on its way.
+    if (model.isDisposed() || model.getVersionId() !== version || this.pulled.get(uri) !== state) return;
+    this.showDiagnostics(model, state);
+  }
+
+  private showDiagnostics(model: monaco.editor.ITextModel, state: Pulled) {
+    let items = [...state.results.values()].flatMap((r) => r.items);
+    if (referencesMissing(items)) {
+      // Only what the parser says is still true.
+      items = state.results.get("syntax")?.items ?? [];
+      if (!this.brokenReported) {
+        this.brokenReported = true;
+        setCsharpStatus(this.projectId, {
+          state: "ready",
+          kind: this.kind,
+          message: unityRootFor(this.root)
+            ? "References are missing from the project files (the Unity Editor that generated them was moved or removed?): regenerate them in Unity, External Tools"
+            : "References are missing from the project: restore or build it",
+        });
+      }
+    }
+    if (model.uri.scheme === "file" && unityRootFor(model.uri.fsPath)) {
+      const src = { line: (n: number) => (n >= 1 && n <= model.getLineCount() ? model.getLineContent(n) : ""), isMessage: (n: string) => UNITY_MESSAGES.has(n) };
+      items = items.filter((d) => !unitySuppressed(d, src));
+    }
+    // Code Vision greys unused members itself (Unity messages left alone).
+    if (useWorkspace.getState().codeVision) items = items.filter((d) => d.code !== "IDE0051");
+    const build = monaco.editor.getModelMarkers({ owner: "build", resource: model.uri });
+    state.build = buildKey(build);
+    items = items.filter((d) => !shownByBuild(d, build));
+    state.shown = items;
+    monaco.editor.setModelMarkers(
+      model,
+      LIVE,
+      items.map((d) => {
+        const m = toMarker(d);
+        // The code links to the rule's documentation.
+        return { ...m, code: typeof m.code === "object" ? { value: m.code.value, target: monaco.Uri.parse(m.code.target) } : m.code };
+      }),
+    );
+  }
+
+  /** A build's markers on the model changed: what they show is not shown twice. */
+  buildMarkersChanged(model: monaco.editor.ITextModel) {
+    const state = this.pulled.get(serverUri(model));
+    if (!state || state.results.size === 0) return;
+    if (state.build !== buildKey(monaco.editor.getModelMarkers({ owner: "build", resource: model.uri }))) this.showDiagnostics(model, state);
+  }
+
+  /** The live diagnostics shown in a range, for the code actions that fix them. */
+  diagnosticsAt(model: monaco.editor.ITextModel, range: LspRange): LspDiagnostic[] {
+    return (this.pulled.get(serverUri(model))?.shown ?? []).filter((d) => touches(d.range, range));
+  }
+
+  private clearDiagnostics() {
+    for (const state of this.pulled.values()) clearTimeout(state.timer);
+    this.pulled.clear();
+    for (const m of monaco.editor.getModels()) {
+      const path = modelPath(m);
+      if (path && this.owns(path)) monaco.editor.setModelMarkers(m, LIVE, []);
+    }
+  }
+
   async stop(): Promise<void> {
     this.disposed = true;
     this.synced.forEach((d) => d.dispose());
     this.synced.clear();
+    this.clearDiagnostics();
     if (this.client) await this.client.shutdown();
     setCsharpStatus(this.projectId, { state: "off" });
   }
@@ -287,6 +458,8 @@ export class CsharpSession {
     return this.client.request<T>(method, params, token);
   }
 }
+
+const buildKey = (markers: monaco.editor.IMarker[]) => markers.map((m) => `${m.startLineNumber}:${typeof m.code === "object" ? m.code.value : m.code}`).join(",");
 
 /** Why the server stopped, with the fix for the usual cause. */
 export function exitMessage(reason: string | null): string {
@@ -693,6 +866,14 @@ export function registerProviders(): void {
     const res = await s.request<{ source?: string } | null>("csharp/metadata", { textDocument: { uri: serverUris.get(path) ?? path } });
     if (typeof res?.source !== "string") throw new Error("The C# server has no source for this code");
     return res.source;
+  });
+
+  monaco.editor.onDidChangeMarkers((uris) => {
+    for (const uri of uris) {
+      const model = monaco.editor.getModel(uri);
+      const path = model && modelPath(model);
+      if (path) sessionForPath(path)?.buildMarkersChanged(model);
+    }
   });
 
   monaco.editor.registerCommand("haze.applyCodeAction", (_accessor, path: string, action: LspCodeAction) => {
@@ -1161,16 +1342,19 @@ export function registerProviders(): void {
     async provideCodeActions(model, range, _context, token) {
       const s = ready(model);
       if (!s || model.uri.scheme !== "file") return { actions: [], dispose() {} };
+      const lspRange = toLspRange(range);
+      const diagnostics = s.diagnosticsAt(model, lspRange);
       const res = await s.request<LspCodeAction[] | null>(
         "textDocument/codeAction",
-        { textDocument: { uri: serverUri(model) }, range: toLspRange(range), context: { diagnostics: [] } },
+        { textDocument: { uri: serverUri(model) }, range: lspRange, context: { diagnostics } },
         token,
       );
       const actions: monaco.languages.CodeAction[] = (res ?? []).map((a) => ({
         title: a.title,
         // Everything is offered as a quick fix so Alt+Enter lists all of it.
         kind: "quickfix",
-        isPreferred: a.isPreferred,
+        // "using UnityEngine;" first for a missing namespace, as in Rider.
+        isPreferred: a.isPreferred || isImportFix(a.title),
         command: { id: "haze.applyCodeAction", title: a.title, arguments: [model.uri.fsPath, a] },
       }));
       return { actions, dispose() {} };

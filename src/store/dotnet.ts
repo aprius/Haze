@@ -1,6 +1,6 @@
 // .NET state per project: discovered solutions/projects, the C# language
 // server status, and the last build with its diagnostics (shown as editor
-// markers — the only errors Haze shows, so they are always real).
+// markers; Roslyn's live diagnostics, lsp/csharp.ts, give way to them).
 import { create } from "zustand";
 import { api, errorMessage, onBuildEvent, type BuildDiagnostic, type BuildEvent, type BuildVerb, type DotnetInfo, type UnityDiagnostic } from "../lib/ipc";
 import { monaco } from "../lib/monaco";
@@ -77,19 +77,28 @@ function samePath(a: string, b: string): boolean {
   return n(a) === n(b);
 }
 
-function markersFor(diags: BuildDiagnostic[]): monaco.editor.IMarkerData[] {
+function markersFor(model: monaco.editor.ITextModel, diags: BuildDiagnostic[]): monaco.editor.IMarkerData[] {
   return diags
     .filter((d) => d.line)
-    .map((d) => ({
-      severity: d.severity === "error" ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
-      message: d.message,
-      code: d.code ?? undefined,
-      source: "build",
-      startLineNumber: d.line!,
-      startColumn: d.column ?? 1,
-      endLineNumber: d.endLine ?? d.line!,
-      endColumn: d.endColumn ?? (d.column ? d.column + 1 : 1000),
-    }));
+    .map((d) => {
+      let startColumn = d.column ?? 1;
+      let endColumn = d.endColumn ?? (d.column ? d.column + 1 : 1000);
+      // Unity reports where a problem starts only: underline the word there, as Rider does.
+      if (d.endColumn == null && d.column && d.line! <= model.getLineCount()) {
+        const word = model.getWordAtPosition({ lineNumber: d.line!, column: d.column });
+        if (word) [startColumn, endColumn] = [word.startColumn, word.endColumn];
+      }
+      return {
+        severity: d.severity === "error" ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+        message: d.message,
+        code: d.code ?? undefined,
+        source: "build",
+        startLineNumber: d.line!,
+        startColumn,
+        endLineNumber: d.endLine ?? d.line!,
+        endColumn,
+      };
+    });
 }
 
 /** Puts build diagnostics on every open model (and on models opened later). */
@@ -99,7 +108,7 @@ function applyMarkers() {
     if (model.uri.scheme !== "file") continue;
     const path = model.uri.fsPath;
     const diags = editedSinceBuild.has(path) ? [] : all.filter((d) => d.file && samePath(d.file, path));
-    monaco.editor.setModelMarkers(model, "build", markersFor(diags));
+    monaco.editor.setModelMarkers(model, "build", markersFor(model, diags));
   }
 }
 

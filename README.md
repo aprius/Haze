@@ -53,7 +53,7 @@ Rider-style commit window, diffs, log graph, AI checkpoints and per-file "review
 
 ### C# navigation with Roslyn
 
-Go to Definition, Find Usages, Rename, quick fixes, Code Vision and inline completions through the Roslyn Language Server. Errors come only from a real `dotnet build`, never a server out of sync.
+Go to Definition, Find Usages, Rename, quick fixes, Code Vision and inline completions through the Roslyn Language Server. Errors, warnings, suggestions and hints as you type, like Rider's, and Unity's performance-critical context.
 
 [Docs →](docs/FEATURES.md#c-and-net)
 

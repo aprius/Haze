@@ -33,7 +33,7 @@ import {
 import { setUiStyle, type UiStyle, useUiStyle } from "../lib/theme";
 import { popupClosed } from "../store/ui";
 import { checkForUpdates, openRelease, updateLabel, updateNow, useUpdates } from "../store/updates";
-import { useWorkspace } from "../store/workspace";
+import { useWorkspace, type PerfContextMode } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
 import { toast } from "./Overlays";
 
@@ -610,8 +610,16 @@ function ProjectViewSection() {
   );
 }
 
+const PERF_CONTEXT: [PerfContextMode, string][] = [
+  ["everywhere", "Everywhere"],
+  ["current", "Current method"],
+  ["never", "Never"],
+];
+
 function UnitySection() {
   const autoRefresh = useWorkspace((s) => s.unityAutoRefresh);
+  const perfContext = useWorkspace((s) => s.unityPerfContext);
+  const perfHints = useWorkspace((s) => s.unityPerfHints);
   return (
     <>
       <PageHeader
@@ -624,6 +632,27 @@ function UnitySection() {
           desc="Saving in Haze or an agent's edits make Unity import and compile right away, without switching to it. Skipped in Play Mode."
           checked={autoRefresh}
           onChange={(on) => useWorkspace.setState({ unityAutoRefresh: on })}
+        />
+      </div>
+      <div className="settings-card">
+        <div className="settings-row static">
+          <div className="settings-row-text">
+            <div>Highlight performance-critical context</div>
+            <div className="muted small">A bar in the gutter beside methods Unity runs every frame (Update, FixedUpdate, coroutines…) and the methods they call, as in Rider.</div>
+          </div>
+          <div className="seg">
+            {PERF_CONTEXT.map(([id, name]) => (
+              <button key={id} className={"seg-btn" + (perfContext === id ? " on" : "")} onClick={() => useWorkspace.setState({ unityPerfContext: id })}>
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+        <SwitchRow
+          label="Point out expensive calls in it"
+          desc="GetComponent, Find, Camera.main, Debug.Log, SendMessage and calls by name, and calls to methods that make them, get a dotted underline."
+          checked={perfHints}
+          onChange={(on) => useWorkspace.setState({ unityPerfHints: on })}
         />
       </div>
     </>

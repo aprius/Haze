@@ -2574,6 +2574,42 @@ button.toggle.on {
   flex: none;
 }
 
+.sev-info,
+.sev-ok {
+  color: var(--mk-green);
+  flex: none;
+}
+
+/* Rider's file status, in the editor's top-right corner beside the scrollbar. */
+.inspection-status {
+  position: absolute;
+  top: 4px;
+  right: 18px;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.inspection-status span {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.inspection-status:hover {
+  background: var(--hover);
+}
+/* Monaco's Find widget opens in the same corner. */
+.editor-stack:has(.find-widget.visible) .inspection-status {
+  display: none;
+}
+
 .build-body {
   flex: 1;
   display: flex;
@@ -3464,6 +3500,20 @@ button.toggle.on {
 .monaco-editor .line-change.deleted.top::after {
   top: -4px;
   bottom: auto;
+}
+
+/* Unity's performance-critical context (lib/unity/perfDecorations.ts): a bar
+   beside the change markers, and expensive calls underlined, as in Rider. */
+.monaco-editor .unity-hot {
+  margin-left: 7px;
+  width: 2px !important;
+  background: #e8a33d;
+  opacity: 0.55;
+}
+.monaco-editor .unity-expensive {
+  text-decoration: underline dotted color-mix(in srgb, #e8a33d 80%, transparent);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
 }
 
 .line-blame-text {

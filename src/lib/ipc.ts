@@ -322,6 +322,25 @@ export interface OutlineSymbol {
   children: OutlineSymbol[];
 }
 
+type SourceRange = OutlineSymbol["range"];
+
+/** A call in a method body (syntax.rs): a same-class method, or what an expensive operation is. */
+export interface PerfCall {
+  name: string;
+  range: SourceRange;
+}
+
+/** A method with its calls, for Unity's performance-critical context (lib/unity/perf.ts). */
+export interface PerfMethod {
+  class: string;
+  name: string;
+  range: SourceRange;
+  nameRange: SourceRange;
+  coroutine: boolean;
+  calls: PerfCall[];
+  expensive: PerfCall[];
+}
+
 /** Messages from one Unity Editor, a burst at a time. */
 export interface UnityEvent {
   root: string;
@@ -554,7 +573,10 @@ export const api = {
   unityClasses: (root: string) => invoke<Record<string, string[]>>("unity_classes", { root }),
   unityAssetUsages: (root: string, script: string, classes: string[]) => invoke<AssetUsages>("unity_asset_usages", { root, script, classes }),
   unityWarmIndex: (root: string) => invoke<void>("unity_warm_index", { root }),
+  /** Adds a script no generated `.csproj` lists to its assembly's project; the project changed, or null. */
+  unityAddToProject: (root: string, file: string) => invoke<string | null>("unity_add_to_project", { root, file }),
   csharpOutline: (text: string) => invoke<OutlineSymbol[]>("csharp_outline", { text }),
+  csharpPerf: (text: string) => invoke<PerfMethod[]>("csharp_perf", { text }),
   lspFindServer: () => invoke<ServerCommand | null>("lsp_find_server"),
   lspStart: (cwd: string) => invoke<{ id: number; kind: ServerCommand["kind"] }>("lsp_start", { cwd }),
   lspSend: (id: number, message: unknown) => invoke<void>("lsp_send", { id, message }),

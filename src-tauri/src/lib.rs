@@ -19,6 +19,7 @@ mod state;
 mod syntax;
 mod text;
 mod unity;
+mod unity_csproj;
 mod unity_index;
 mod updates;
 mod watcher;
@@ -607,6 +608,16 @@ fn unity_send(links: State<'_, unity::UnityLinks>, root: String, message: serde_
     links.send(&root, &message)
 }
 
+/// Adds a script Unity's projects do not list yet to its assembly's `.csproj`; the project changed, if any.
+#[tauri::command]
+async fn unity_add_to_project(root: String, file: String) -> CmdResult<Option<String>> {
+    blocking(move || {
+        let changed = unity_csproj::add_to_project(root.as_ref(), file.as_ref())?;
+        Ok(changed.map(|p| p.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn unity_classes(
     indexes: State<'_, Arc<unity_index::UnityIndexes>>,
@@ -642,6 +653,12 @@ async fn unity_asset_usages(
 }
 
 /// Types and members of C# source, for Code Vision before (and without) a language server.
+/// Methods and their calls, for Unity's performance-critical context.
+#[tauri::command]
+async fn csharp_perf(text: String) -> CmdResult<Vec<syntax::PerfMethod>> {
+    blocking(move || Ok(syntax::csharp_perf(&text))).await
+}
+
 #[tauri::command]
 async fn csharp_outline(text: String) -> CmdResult<Vec<syntax::OutlineSymbol>> {
     blocking(move || Ok(syntax::csharp_outline(&text))).await
@@ -1138,9 +1155,11 @@ pub fn run() {
             unity_disconnect,
             unity_send,
             unity_classes,
+            unity_add_to_project,
             unity_asset_usages,
             unity_warm_index,
             csharp_outline,
+            csharp_perf,
             lsp_find_server,
             lsp_start,
             lsp_send,

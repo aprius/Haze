@@ -278,9 +278,292 @@ pub fn csharp_outline(text: &str) -> Vec<OutlineSymbol> {
     out
 }
 
+// ------------------------------------------------------------------ Unity performance
+
+/// A call in a method body, for Unity's performance-critical context.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PerfCall {
+    /// A method of the same class (`Move`, `this.Move`), or for an expensive
+    /// operation what it is: "GetComponent", "Camera.main", "Debug.Log",
+    /// "SendMessage", "string-invoke".
+    pub name: String,
+    pub range: Range,
+}
+
+/// A method of a class, with what it calls.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PerfMethod {
+    /// The class declaring it (the innermost one).
+    pub class: String,
+    pub name: String,
+    /// The whole declaration, attributes included.
+    pub range: Range,
+    pub name_range: Range,
+    /// Returns `IEnumerator`: a coroutine when started.
+    pub coroutine: bool,
+    /// Calls that may be to methods of the same class.
+    pub calls: Vec<PerfCall>,
+    /// Well-known expensive operations.
+    pub expensive: Vec<PerfCall>,
+}
+
+const FIND_ANYWHERE: &[&str] = &[
+    "FindObjectOfType",
+    "FindObjectsOfType",
+    "FindAnyObjectByType",
+    "FindFirstObjectByType",
+    "FindObjectsByType",
+    "FindWithTag",
+    "FindGameObjectWithTag",
+    "FindGameObjectsWithTag",
+];
+const MESSAGES: &[&str] = &["SendMessage", "SendMessageUpwards", "BroadcastMessage"];
+const BY_NAME: &[&str] = &[
+    "Invoke",
+    "InvokeRepeating",
+    "CancelInvoke",
+    "StartCoroutine",
+    "StopCoroutine",
+];
+
+/// The last segment of a dotted name: `UnityEngine.Debug` → `Debug`.
+fn last_segment(s: &str) -> &str {
+    s.rsplit('.').next().unwrap_or(s).trim()
+}
+
+impl Outliner<'_> {
+    /// The receiver (if any) and the name of an invocation's callee.
+    fn callee<'n>(&self, f: tree_sitter::Node<'n>) -> Option<(Option<&str>, &str)> {
+        let name_of = |n: tree_sitter::Node| match n.kind() {
+            "identifier" => Some(self.text(n)),
+            "generic_name" => n.named_child(0).map(|i| self.text(i)),
+            _ => None,
+        };
+        match f.kind() {
+            "identifier" | "generic_name" => Some((None, name_of(f)?)),
+            "member_access_expression" => {
+                let receiver = f.child_by_field_name("expression").map(|e| self.text(e));
+                Some((receiver, name_of(f.child_by_field_name("name")?)?))
+            }
+            _ => None,
+        }
+    }
+
+    /// What an invocation costs in a performance-critical context, if it is known to be expensive.
+    fn expensive_call(
+        &self,
+        call: tree_sitter::Node,
+        receiver: Option<&str>,
+        name: &str,
+    ) -> Option<&'static str> {
+        let receiver = receiver.map(last_segment);
+        if name.starts_with("GetComponent") {
+            return Some("GetComponent");
+        }
+        if name == "AddComponent" {
+            return Some("AddComponent");
+        }
+        if FIND_ANYWHERE.contains(&name) || (name == "Find" && receiver == Some("GameObject")) {
+            return Some("Find");
+        }
+        if (receiver == Some("Debug") && name.starts_with("Log"))
+            || (receiver.is_none() && name == "print")
+        {
+            return Some("Debug.Log");
+        }
+        if MESSAGES.contains(&name) {
+            return Some("SendMessage");
+        }
+        if BY_NAME.contains(&name) && (receiver.is_none() || receiver == Some("this")) {
+            let first = call
+                .child_by_field_name("arguments")
+                .and_then(|a| a.named_child(0))
+                .and_then(|a| a.named_child(0));
+            if first.is_some_and(|e| e.kind() == "string_literal") {
+                return Some("string-invoke");
+            }
+        }
+        None
+    }
+
+    fn collect_calls(&self, n: tree_sitter::Node, m: &mut PerfMethod) {
+        match n.kind() {
+            "invocation_expression" => {
+                if let Some(f) = n.child_by_field_name("function") {
+                    if let Some((receiver, name)) = self.callee(f) {
+                        let at = match f.kind() {
+                            "member_access_expression" => {
+                                f.child_by_field_name("name").unwrap_or(f)
+                            }
+                            _ => f,
+                        };
+                        if let Some(what) = self.expensive_call(n, receiver, name) {
+                            m.expensive.push(PerfCall {
+                                name: what.into(),
+                                range: self.range(at),
+                            });
+                        } else if receiver.is_none() || receiver == Some("this") {
+                            m.calls.push(PerfCall {
+                                name: name.into(),
+                                range: self.range(at),
+                            });
+                        }
+                    }
+                }
+            }
+            "member_access_expression" => {
+                let expr = n
+                    .child_by_field_name("expression")
+                    .map(|e| last_segment(self.text(e)));
+                let name = n.child_by_field_name("name").map(|e| self.text(e));
+                if expr == Some("Camera") && name == Some("main") {
+                    m.expensive.push(PerfCall {
+                        name: "Camera.main".into(),
+                        range: self.range(n),
+                    });
+                }
+            }
+            _ => {}
+        }
+        let mut c = n.walk();
+        for child in n.named_children(&mut c) {
+            self.collect_calls(child, m);
+        }
+    }
+
+    fn perf_members(
+        &self,
+        parent: tree_sitter::Node,
+        class: Option<&str>,
+        out: &mut Vec<PerfMethod>,
+    ) {
+        let mut c = parent.walk();
+        for n in parent.named_children(&mut c) {
+            match n.kind() {
+                "class_declaration" | "struct_declaration" | "record_declaration" => {
+                    let name = n.child_by_field_name("name").map(|x| self.text(x));
+                    if let Some(body) = n.child_by_field_name("body") {
+                        self.perf_members(body, name, out);
+                    }
+                }
+                "method_declaration" => {
+                    let (Some(class), Some(name)) = (class, n.child_by_field_name("name")) else {
+                        continue;
+                    };
+                    let returns = n
+                        .child_by_field_name("returns")
+                        .or_else(|| n.child_by_field_name("type"));
+                    let mut m = PerfMethod {
+                        class: class.into(),
+                        name: self.text(name).into(),
+                        range: self.range(n),
+                        name_range: self.range(name),
+                        coroutine: returns
+                            .is_some_and(|t| last_segment(self.text(t)) == "IEnumerator"),
+                        calls: vec![],
+                        expensive: vec![],
+                    };
+                    if let Some(body) = n.child_by_field_name("body") {
+                        self.collect_calls(body, &mut m);
+                    }
+                    out.push(m);
+                }
+                k if k.contains("namespace")
+                    || k == "declaration_list"
+                    || k.starts_with("preproc")
+                    || k == "ERROR" =>
+                {
+                    self.perf_members(n, class, out)
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Every method of the classes in C# source, with its calls, for Unity's
+/// performance-critical context (lib/unity/perf.ts follows the calls).
+pub fn csharp_perf(text: &str) -> Vec<PerfMethod> {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_c_sharp::LANGUAGE.into())
+        .is_err()
+    {
+        return vec![];
+    }
+    let Some(tree) = parser.parse(text, None) else {
+        return vec![];
+    };
+    let line_starts = std::iter::once(0)
+        .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+    let o = Outliner { text, line_starts };
+    let mut out = vec![];
+    o.perf_members(tree.root_node(), None, &mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_calls_and_expensive_operations() {
+        let src = r#"
+namespace Game {
+  public class Player : MonoBehaviour {
+    void Update() {
+      Move();
+      this.Aim(1);
+      var rb = GetComponent<Rigidbody>();
+      var cam = Camera.main;
+      UnityEngine.Debug.Log("x");
+      Invoke("Fire", 1f);
+      Invoke(nameof(Fire), 1f);
+      items.Find(i => i > 0);
+      GameObject.Find("Boss");
+      other.SendMessage("Hit");
+    }
+    IEnumerator Spawn() { yield return null; }
+    void Move() {}
+  }
+}
+"#;
+        let methods = csharp_perf(src);
+        let names: Vec<_> = methods
+            .iter()
+            .map(|m| (m.class.as_str(), m.name.as_str(), m.coroutine))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Player", "Update", false),
+                ("Player", "Spawn", true),
+                ("Player", "Move", false)
+            ]
+        );
+        let update = &methods[0];
+        let calls: Vec<_> = update.calls.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(calls, ["Move", "Aim", "Invoke", "nameof"]);
+        let costly: Vec<_> = update.expensive.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(
+            costly,
+            [
+                "GetComponent",
+                "Camera.main",
+                "Debug.Log",
+                "string-invoke",
+                "Find",
+                "SendMessage"
+            ]
+        );
+        let get = update.expensive[0].range;
+        assert_eq!(
+            (get.start.line, get.start.character, get.end.character),
+            (6, 15, 38)
+        );
+    }
 
     #[test]
     fn finds_comments_and_strings() {
