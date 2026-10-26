@@ -47,8 +47,19 @@ function run(): void {
   sampler = undefined;
   if (!video) return;
   if (!on) return video.pause();
-  void video.play().catch(() => {});
+  start(video);
   sample();
+}
+
+/** play() can be refused (WebKit suspends a video while the window is in the
+ * background): retry, or it stays stopped after focus returns. */
+let retry: ReturnType<typeof setTimeout> | undefined;
+function start(v: HTMLVideoElement, tries = 0): void {
+  clearTimeout(retry);
+  if (v !== video || !playing() || !v.paused) return;
+  v.play().catch(() => {
+    if (tries < 5) retry = setTimeout(() => start(v, tries + 1), 300 * (tries + 1));
+  });
 }
 
 function layout(): void {
@@ -78,6 +89,9 @@ function setMedia(url: string | null): void {
     v.src = url;
     v.className = "backdrop-media";
     host.appendChild(v);
+    // Paused by the system while it should play, or stalled: start it again.
+    v.addEventListener("pause", () => playing() && start(v));
+    v.addEventListener("stalled", () => playing() && start(v));
     video = v;
   }
   layout();
@@ -105,6 +119,13 @@ onAppActive((on) => {
     }, 200);
   }
 }).catch(() => {});
+// The window's own focus events back up app://active, which can be missed or
+// leave `active` stale.
+window.addEventListener("focus", () => {
+  clearTimeout(inactive);
+  active = true;
+  run();
+});
 useGlass.subscribe(run);
 document.addEventListener("visibilitychange", run);
 setMedia(useBackdropImage.getState().live);
