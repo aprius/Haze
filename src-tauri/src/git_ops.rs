@@ -192,7 +192,16 @@ pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Resu
             .success();
         let mut read = git(root);
         read.env("GIT_INDEX_FILE", &file).arg("read-tree");
-        read.arg(if has_head { "HEAD" } else { "--empty" });
+        // `git commit` refreshes the index first; a bare `read-tree HEAD` has
+        // no stat data, so that hashed every file in the working tree. Reset a
+        // copy of the real index instead: entries matching HEAD keep theirs.
+        if !has_head {
+            read.arg("--empty");
+        } else if copy_index(root, &file)? {
+            read.args(["--reset", "HEAD"]);
+        } else {
+            read.arg("HEAD");
+        }
         let out = read.output()?;
         if !out.status.success() {
             bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
@@ -785,20 +794,27 @@ pub fn checkpoint(root: &Path, label: &str) -> Result<String> {
     Ok(hash)
 }
 
-fn snapshot_tree(root: &Path) -> Result<String> {
+/// Copies the repository's index to `to`; `false` when there is none.
+fn copy_index(root: &Path, to: &Path) -> Result<bool> {
     let index = git_dir(root)?.join("index");
-    let tmp = tempfile::NamedTempFile::new()?;
-    if index.exists() {
-        std::fs::copy(&index, tmp.path())?;
-        // With the index's own mtime: git compares the content of entries
-        // indexed in that instant (racy git), where their stat cannot tell an
-        // edit. A copy dated now (as on Linux) had git trust them, and miss a
-        // same-size edit made in the second of a `git add`.
-        std::fs::File::options()
-            .write(true)
-            .open(tmp.path())?
-            .set_modified(std::fs::metadata(&index)?.modified()?)?;
+    if !index.exists() {
+        return Ok(false);
     }
+    std::fs::copy(&index, to)?;
+    // With the index's own mtime: git compares the content of entries
+    // indexed in that instant (racy git), where their stat cannot tell an
+    // edit. A copy dated now (as on Linux) had git trust them, and miss a
+    // same-size edit made in the second of a `git add`.
+    std::fs::File::options()
+        .write(true)
+        .open(to)?
+        .set_modified(std::fs::metadata(&index)?.modified()?)?;
+    Ok(true)
+}
+
+fn snapshot_tree(root: &Path) -> Result<String> {
+    let tmp = tempfile::NamedTempFile::new()?;
+    copy_index(root, tmp.path())?;
     let with_index = |args: &[&str]| -> Result<String> {
         let out = git(root)
             .env("GIT_INDEX_FILE", tmp.path())
@@ -974,6 +990,22 @@ mod tests {
         assert!(out.ok, "{}", out.stderr);
         assert_eq!(r.git(&["ls-tree", "-r", "--name-only", "HEAD"]), "new.txt\nother.txt\n");
         assert_eq!(r.git(&["status", "--porcelain"]), " M other.txt\n");
+    }
+
+    #[test]
+    fn leaves_staged_changes_of_unchecked_files_out_and_staged() {
+        let r = Repo::new();
+        r.write("a.txt", "1");
+        r.write("b.txt", "1");
+        r.git(&["add", "."]);
+        r.git(&["commit", "-q", "-m", "init"]);
+        r.write("a.txt", "2");
+        r.write("b.txt", "2");
+        r.git(&["add", "b.txt"]);
+        let out = commit(r.path(), "m", &["a.txt".into()], false).unwrap();
+        assert!(out.ok, "{}", out.stderr);
+        assert_eq!(file_at(r.path(), "HEAD", "b.txt").unwrap().as_deref(), Some("1"));
+        assert_eq!(r.git(&["status", "--porcelain"]), "M  b.txt\n");
     }
 
     #[test]
