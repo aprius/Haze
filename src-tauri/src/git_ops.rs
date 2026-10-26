@@ -158,13 +158,17 @@ pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Resu
     if paths.is_empty() && !amend {
         bail!("nothing selected to commit");
     }
-    let current = changes(root)?;
     let wanted: HashSet<&str> = paths.iter().map(String::as_str).collect();
-    // Renames need both sides in the pathspec.
+    // Renames need both sides in the pathspec. Only staged renames exist, and
+    // diffing the index against HEAD is cheap; `git status` would walk the
+    // whole working tree (every untracked file) just to find them.
+    let renamed = run_ok(root, &["diff", "--cached", "-M", "--name-status", "-z"])
+        .map(|out| parse_name_status(&out))
+        .unwrap_or_default();
     let mut spec: Vec<&str> = paths.iter().map(String::as_str).collect();
-    for c in &current {
+    for c in &renamed {
         if let Some(old) = &c.old_rel {
-            if wanted.contains(c.rel.as_str()) && !wanted.contains(old.as_str()) {
+            if c.status == "renamed" && wanted.contains(c.rel.as_str()) && !wanted.contains(old.as_str()) {
                 spec.push(old);
             }
         }
@@ -177,7 +181,9 @@ pub fn commit(root: &Path, message: &str, paths: &[String], amend: bool) -> Resu
     let scratch = if spec.is_empty() {
         None
     } else {
-        let file = std::env::temp_dir().join(format!("haze-index-{}", std::process::id()));
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let file = std::env::temp_dir().join(format!("haze-index-{}-{n}", std::process::id()));
         let _ = std::fs::remove_file(&file);
         let has_head = git(root)
             .args(["rev-parse", "--verify", "-q", "HEAD"])
