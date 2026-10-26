@@ -48,6 +48,11 @@ export function pickInline(items: readonly LspCompletionItem[], prefix: string, 
   return best;
 }
 
+/** Whether an edit is typing: each change puts in at most one character (a deletion included), unlike an accepted completion or a paste. */
+export function typedEdit(changes: readonly { text: string }[]): boolean {
+  return changes.every((c) => c.text.length <= 1);
+}
+
 function better(a: LspCompletionItem, b: LspCompletionItem): boolean {
   if (!!a.preselect !== !!b.preselect) return !!a.preselect;
   const ka = a.sortText ?? a.label;

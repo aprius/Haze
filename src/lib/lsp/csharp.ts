@@ -27,7 +27,7 @@ import {
 } from "./convert";
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
 import { isVirtualPath, setVirtualSource } from "../buffers";
-import { MIN_PREFIX, pickInline, type LspCompletionItem } from "./inline";
+import { MIN_PREFIX, pickInline, typedEdit, type LspCompletionItem } from "./inline";
 import { buildHover, declarationAt, type Declaration } from "./hoverDoc";
 import { SEMANTIC_LEGEND, semanticTranslator, type LspSemanticLegend } from "./semantic";
 import { useUnity, type TestResult } from "../../store/unity";
@@ -43,7 +43,7 @@ const WATCHED = /(\.(cs|csx|razor|cshtml|csproj|props|targets|sln|slnx|editorcon
 
 interface ServerCapabilities {
   textDocumentSync?: number | { change?: number };
-  completionProvider?: { triggerCharacters?: string[]; resolveProvider?: boolean };
+  completionProvider?: { triggerCharacters?: string[]; allCommitCharacters?: string[]; resolveProvider?: boolean };
   signatureHelpProvider?: { triggerCharacters?: string[] };
   semanticTokensProvider?: { legend: LspSemanticLegend; full?: boolean | object; range?: boolean };
   codeLensProvider?: { resolveProvider?: boolean };
@@ -841,14 +841,19 @@ async function runCodeAction(session: CsharpSession, action: LspCodeAction) {
   if (a.command) await session.request("workspace/executeCommand", { command: a.command.command, arguments: a.command.arguments });
 }
 
+/** Each model's version after its last edit that was not typing (an accepted completion, a paste), when it has no ghost text. */
+const untyped = new WeakMap<monaco.editor.ITextModel, number>();
+
 export function registerProviders(): void {
   if (registered) return;
   registered = true;
   const L = monaco.languages;
 
   const watchEdits = (m: monaco.editor.ITextModel) =>
-    m.onDidChangeContent(() => {
-      if (m.getLanguageId() === "csharp") bumpVisionGeneration();
+    m.onDidChangeContent((e) => {
+      if (m.getLanguageId() !== "csharp") return;
+      bumpVisionGeneration();
+      if (!typedEdit(e.changes)) untyped.set(m, e.versionId);
     });
   monaco.editor.getModels().forEach(watchEdits);
   monaco.editor.onDidCreateModel((m) => {
@@ -1249,7 +1254,9 @@ export function registerProviders(): void {
           sortText: it.sortText,
           filterText: it.filterText,
           preselect: it.preselect,
-          commitCharacters: it.commitCharacters,
+          // Roslyn leaves the usual commit characters off each item for the client to take from its capabilities:
+          // `Debug.Lo` then `(` gives `Debug.Log(`, as in Rider. An empty list (a new name being typed) commits only on Tab/Enter.
+          commitCharacters: it.commitCharacters ?? s.caps.completionProvider?.allCommitCharacters,
           insertText: it.textEdit?.newText ?? it.insertText ?? it.label,
           insertTextRules: it.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
           range: editRange ? toMonacoRange(editRange) : fallback,
@@ -1283,7 +1290,8 @@ export function registerProviders(): void {
       const word = model.getWordUntilPosition(position);
       // Not in the middle of a word.
       const next = model.getLineContent(position.lineNumber).charAt(position.column - 1);
-      if (!s || word.word.length < MIN_PREFIX || /\w/.test(next)) return { items: [] };
+      // Not right after a completion was accepted either: `GameObject` taken with Tab would offer `GameObjectUtility`.
+      if (!s || word.word.length < MIN_PREFIX || /\w/.test(next) || untyped.get(model) === model.getVersionId()) return { items: [] };
       const res = await s
         .request<{ items: LspCompletionItem[] } | LspCompletionItem[] | null>("textDocument/completion", { ...docParams(model, position), context: { triggerKind: 1 } }, token)
         .catch(() => null);
