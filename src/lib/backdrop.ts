@@ -111,9 +111,11 @@ function show(url: string | null, error: string | null): void {
 
 /** The size a blurred background is drawn at, and the blur radius there. */
 export function blurredSize(blur: number): { w: number; h: number; r: number } {
-  // Blurred, the image needs few pixels: drawn at a fraction of the screen's
-  // size, it is scaled up smoothly. Unblurred, the screen's own.
-  const scale = blur > 0 ? Math.min(1, 4 / blur) : window.devicePixelRatio || 1;
+  // Blurred, the image needs fewer pixels: drawn at a fraction of the screen's
+  // size, it is scaled up smoothly. Not too few: sharp detail (lights, edges)
+  // scaled up 3x or more shows as blocks, and so do the JPEG's own. Unblurred,
+  // the screen's own.
+  const scale = blur > 0 ? Math.min(1, 8 / blur) : window.devicePixelRatio || 1;
   return { w: Math.max(1, Math.round(screen.width * scale)), h: Math.max(1, Math.round(screen.height * scale)), r: blur > 0 ? blur * scale : 0 };
 }
 
@@ -135,6 +137,10 @@ export function drawBlurred(ctx: CanvasRenderingContext2D, src: CanvasImageSourc
   const k = Math.max((w + 4 * r) / sw, (h + 4 * r) / sh);
   const dw = sw * k;
   const dh = sh * k;
+  // The big step down to the canvas must average, or it aliases into detail
+  // the blur is too small to remove.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   if (r === 0 || canvasFilters) {
     ctx.filter = r > 0 ? `blur(${r}px)` : "none";
     ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
@@ -234,7 +240,7 @@ const clearStored = () => void idb("readwrite", (s) => s.clear());
 
 const toBlob = (canvas: HTMLCanvasElement) =>
   new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("could not process the image"))), "image/jpeg", 0.9),
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("could not process the image"))), "image/jpeg", 0.95),
   );
 
 // One at a time: emptying the cache after copying a video would drop the copy.
