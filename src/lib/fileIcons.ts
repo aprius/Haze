@@ -27,6 +27,7 @@ add("csv", "csv tsv");
 add("c", "c");
 add("cpp", "cpp cc cxx");
 add("h", "h hpp hh");
+add("shader", "shader hlsl hlsli cginc compute raytrace fx fxh usf ush glsl glslinc vert frag geom comp tesc tese vsh fsh shadergraph shadersubgraph");
 add("java", "java kt");
 add("patch", "patch diff");
 add("http", "http");

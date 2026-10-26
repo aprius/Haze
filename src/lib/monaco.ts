@@ -6,6 +6,7 @@ import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker";
 import { csharpLanguage } from "./csharpGrammar";
+import { registerShaderLanguages } from "./shaderGrammar";
 import { codeFontFamily, codeLineHeight, loadCodeFont, useFonts } from "./fonts";
 import { monacoTheme, useGlass, useTheme } from "./theme";
 import { useWorkspace } from "../store/workspace";
@@ -83,6 +84,9 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
       { token: "variable.cs", foreground: strip(c.fg) },
       { token: "comment.doc.tag", foreground: strip(c.gutterActive), fontStyle: "italic bold" },
       { token: "comment.doc.value", foreground: strip(c.orange), fontStyle: "italic" },
+      // Shader types (float4, Texture2D, vec3) read as C#'s do (shaderGrammar.ts).
+      { token: "type.hlsl", foreground: strip(c.blue), fontStyle: "" },
+      { token: "type.glsl", foreground: strip(c.blue), fontStyle: "" },
     ],
     colors: {
       "editor.background": c.bg,
@@ -155,6 +159,8 @@ defineMonokai("haze-light-glass", "vs", MONOKAI.light, true);
 // Replaces Monaco's grammar (registered tokenizers win over the lazy one;
 // the language configuration still comes from Monaco).
 monaco.languages.setMonarchTokensProvider("csharp", csharpLanguage);
+// Shaders: Monaco has no grammar for HLSL, GLSL or ShaderLab.
+registerShaderLanguages(monaco);
 
 // Comments are dim by design, too dim on a diff block's tint. Token classes
 // are numbered from the theme's colour map, so look up the comment's class

@@ -8,7 +8,8 @@ Icons in this directory are from JetBrains, licensed under the Apache License 2.
   https://github.com/JetBrains/resharper-unity/tree/master/rider/src/main/resources/expui
   Copyright JetBrains s.r.o.
 
-The files are unmodified. The license text follows.
+The files are unmodified. shader.svg and shader_dark.svg are Haze's own, drawn
+in the same style (MIT, like the rest of Haze). The license text follows.
 
 --------------------------------------------------------------------------------
 

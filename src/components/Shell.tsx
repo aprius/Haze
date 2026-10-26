@@ -17,6 +17,7 @@ import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
 import { useWorkspace, type BottomTab, type Project } from "../store/workspace";
+import { activeTabOf, openPaths } from "../lib/editorLayout";
 import { closeTabsWithPrompt, PathCrumbs, useCursor } from "./EditorArea";
 import { confirmAction, openMenu } from "./Overlays";
 import { disposeView, toggleTerminal } from "./TerminalPanel";
@@ -58,7 +59,7 @@ async function closeProject(project: Project) {
   const ui = useWorkspace.getState().ui[project.id];
   // Unsaved drafts are kept in the workspace file, so closing never loses them;
   // closing the tabs just asks first.
-  if (ui && !(await closeTabsWithPrompt(project.id, ui.tabs.map((t) => t.path)))) return;
+  if (ui && !(await closeTabsWithPrompt(project.id, openPaths(ui)))) return;
   useWorkspace.getState().closeProject(project.id);
 }
 
@@ -78,7 +79,7 @@ async function removeFromList(project: Project) {
   )
     return;
   const ui = useWorkspace.getState().ui[project.id];
-  if (ui && !(await closeTabsWithPrompt(project.id, ui.tabs.map((t) => t.path)))) return;
+  if (ui && !(await closeTabsWithPrompt(project.id, openPaths(ui)))) return;
   for (const id of ids) {
     disposeView(id);
     await closeTerminal(project.id, id);
@@ -404,7 +405,8 @@ export function StatusBar({ project }: { project: Project | null }) {
   const git = useTree((s) => (project ? s.git[project.id] : undefined));
   const operation = useGit((s) => (project ? s.repos[project.id]?.branches?.operation : null));
   const ui = useWorkspace((s) => (project ? s.ui[project.id] : undefined));
-  const meta = useBuffers((s) => (ui?.activeTab ? s.meta[ui.activeTab] : undefined));
+  const activeTab = ui ? activeTabOf(ui) : null;
+  const meta = useBuffers((s) => (activeTab ? s.meta[activeTab] : undefined));
   const cursor = useCursor();
   const commitOpen = useUi((s) => !!project && s.commitWindow === project.id);
   const zoom = useZoom((s) => s.zoom);
@@ -426,26 +428,26 @@ export function StatusBar({ project }: { project: Project | null }) {
           >
             <GitCommitHorizontal size={14} />
           </button>
-          {!ui?.activeTab && <span className="status-item">{project.name}</span>}
+          {!activeTab && <span className="status-item">{project.name}</span>}
           {git?.status.isRepo && (
             <button className="status-item status-btn" title={`Branches (${shortcutLabel("branches")})`} onClick={() => openBranchesPopup(project)}>
               <GitBranch size={14} /> {git.status.branch ?? "detached"}
               {operation && <span className="status-op">({operation} in progress)</span>}
             </button>
           )}
-          {ui?.activeTab &&
-            (parseDiffPath(ui.activeTab) ? (
-              <span className="status-item muted">{diffTitle(parseDiffPath(ui.activeTab)!)}</span>
-            ) : ui.activeTab.startsWith("haze-merge:") ? (
+          {activeTab &&
+            (parseDiffPath(activeTab) ? (
+              <span className="status-item muted">{diffTitle(parseDiffPath(activeTab)!)}</span>
+            ) : activeTab.startsWith("haze-merge:") ? (
               <span className="status-item muted">Merge</span>
             ) : (
-              <PathCrumbs project={project} path={ui.activeTab} />
+              <PathCrumbs project={project} path={activeTab} />
             ))}
         </>
       )}
       <span className="status-spacer" />
       <BackgroundTasks projectId={project?.id ?? null} />
-      {project && <ErrorsIndicator project={project} activeTab={ui?.activeTab} />}
+      {project && <ErrorsIndicator project={project} activeTab={activeTab} />}
       {meta?.status === "text" && (
         <>
           <span className="status-item">

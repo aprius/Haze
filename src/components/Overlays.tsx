@@ -445,6 +445,7 @@ export function FloatWindow({
   width,
   height,
   modal = false,
+  escapeCloses = true,
   onClose,
   children,
 }: {
@@ -454,6 +455,8 @@ export function FloatWindow({
   height: number;
   /** In-app fallback only: dims and blocks the app behind. */
   modal?: boolean;
+  /** Escape closes it; not in an editor window, where Escape means much else. */
+  escapeCloses?: boolean;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -467,7 +470,9 @@ export function FloatWindow({
   // Take focus so Escape closes it; the content may move focus further in.
   useEffect(() => {
     if (external) external.win.focus();
-    ref.current?.focus();
+    // Not away from content that took it already (an editor window's editor).
+    const el = ref.current;
+    if (el && !el.contains(el.ownerDocument.activeElement)) el.focus();
   }, [external]);
 
   // Its shortcut again (Ctrl+K) while it is open, maybe behind Haze's window: bring it to the front.
@@ -512,7 +517,7 @@ export function FloatWindow({
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     // Monaco handles its own Escape (closing find, suggestions) first.
-    if (e.key === "Escape" && !e.defaultPrevented) onClose();
+    if (escapeCloses && e.key === "Escape" && !e.defaultPrevented) onClose();
     // Keep Ctrl+W, Ctrl+Tab… away from the editor tabs behind; saving still works.
     if (!matches(e.nativeEvent, "saveAll")) e.stopPropagation();
   };

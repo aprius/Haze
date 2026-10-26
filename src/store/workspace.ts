@@ -2,7 +2,10 @@
 // tabs. Everything here is persisted (see persist.ts) so Haze reopens exactly
 // where it was left.
 import { create } from "zustand";
+import * as L from "../lib/editorLayout";
 import { basename } from "../lib/path";
+
+export type { EditorTab } from "../lib/editorLayout";
 
 /** Where Unity's performance-critical context is marked: every method run each frame, the one at the caret, or none. */
 export type PerfContextMode = "everywhere" | "current" | "never";
@@ -17,26 +20,19 @@ export interface Project {
   lastOpenedAt: number;
 }
 
-export interface EditorTab {
-  path: string;
-  /** A preview tab is replaced by the next single-click open. */
-  preview: boolean;
-}
-
 /** Project view modes: Unity (Assets and Packages, no .meta) and File System (everything, flat). */
 export type TreeView = "unity" | "files";
 
 /** Tool windows of the bottom dock; Unity and Tests only in Unity projects. */
 export type BottomTab = "build" | "git" | "unity" | "tests" | "find";
 
-export interface ProjectUi {
+/** Editor tabs live in groups (splits and detached windows): see lib/editorLayout. */
+export interface ProjectUi extends L.Editors {
   expanded: string[];
   /** null: Unity for Unity projects, File System otherwise. */
   treeView: TreeView | null;
   /** Unity view also lists the project root's other folders and Unity-hidden assets (`.x`, `x~`). */
   treeShowAll: boolean;
-  tabs: EditorTab[];
-  activeTab: string | null;
   sidebarVisible: boolean;
   sidebarWidth: number;
   terminalVisible: boolean;
@@ -67,6 +63,8 @@ export interface ProjectUi {
 }
 
 export interface Reveal {
+  /** The group asked to show it. */
+  group: string;
   path: string;
   line: number;
   column: number;
@@ -74,11 +72,10 @@ export interface Reveal {
 }
 
 export const defaultUi = (): ProjectUi => ({
+  ...L.defaultEditors(),
   expanded: [],
   treeView: null,
   treeShowAll: false,
-  tabs: [],
-  activeTab: null,
   sidebarVisible: true,
   sidebarWidth: 300,
   terminalVisible: false,
@@ -137,9 +134,13 @@ interface WorkspaceState {
   moveProject(id: string, delta: number): void;
   updateUi(id: string, patch: Partial<ProjectUi> | ((ui: ProjectUi) => Partial<ProjectUi>)): void;
 
-  openFile(projectId: string, path: string, opts?: { preview?: boolean; line?: number; column?: number }): void;
+  /** Opens in `group`, by default the active group. */
+  openFile(projectId: string, path: string, opts?: { preview?: boolean; line?: number; column?: number; group?: string }): void;
   pinTab(projectId: string, path: string): void;
-  closeTabs(projectId: string, paths: string[]): void;
+  /** Closes the tabs in `group`, or in every group. */
+  closeTabs(projectId: string, paths: string[], group?: string): void;
+  /** Applies an editor group operation (split, move, detach…) from lib/editorLayout. */
+  editors(projectId: string, op: (e: L.Editors) => L.Editors): void;
   /** Rewrites tab paths after a rename or move in the file tree. */
   renamePaths(from: string, to: string): void;
 }
@@ -244,52 +245,30 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   openFile(projectId, path, opts = {}) {
-    const preview = opts.preview ?? false;
+    let group = "";
     get().updateUi(projectId, (ui) => {
-      let tabs = ui.tabs;
-      const existing = tabs.find((t) => t.path === path);
-      if (existing) {
-        if (!preview && existing.preview) {
-          tabs = tabs.map((t) => (t.path === path ? { ...t, preview: false } : t));
-        }
-      } else {
-        const tab = { path, preview };
-        const previewIdx = preview ? tabs.findIndex((t) => t.preview) : -1;
-        if (previewIdx >= 0) {
-          tabs = tabs.map((t, i) => (i === previewIdx ? tab : t));
-        } else {
-          const at = ui.activeTab ? tabs.findIndex((t) => t.path === ui.activeTab) + 1 : tabs.length;
-          tabs = [...tabs.slice(0, at), tab, ...tabs.slice(at)];
-        }
-      }
+      const e = L.openTab(ui, path, opts.preview ?? false, opts.group);
+      group = e.activeGroup;
       const recentFiles = path.startsWith("haze-") || path.startsWith("csharp:")
         ? ui.recentFiles
         : [path, ...ui.recentFiles.filter((p) => p !== path)].slice(0, 50);
-      return { tabs, activeTab: path, recentFiles };
+      return { ...e, recentFiles };
     });
     if (opts.line) {
-      set({ reveal: { path, line: opts.line, column: opts.column ?? 1, nonce: Date.now() } });
+      set({ reveal: { group, path, line: opts.line, column: opts.column ?? 1, nonce: Date.now() } });
     }
   },
 
   pinTab(projectId, path) {
-    get().updateUi(projectId, (ui) => ({
-      tabs: ui.tabs.map((t) => (t.path === path ? { ...t, preview: false } : t)),
-    }));
+    get().updateUi(projectId, (ui) => L.pinTab(ui, path));
   },
 
-  closeTabs(projectId, paths) {
-    const closing = new Set(paths);
-    get().updateUi(projectId, (ui) => {
-      const idx = ui.tabs.findIndex((t) => t.path === ui.activeTab);
-      const tabs = ui.tabs.filter((t) => !closing.has(t.path));
-      let activeTab = ui.activeTab;
-      if (activeTab && closing.has(activeTab)) {
-        // Activate the tab to the left of the closed one.
-        activeTab = tabs.length ? tabs[Math.max(0, Math.min(idx - 1, tabs.length - 1))].path : null;
-      }
-      return { tabs, activeTab };
-    });
+  closeTabs(projectId, paths, group) {
+    get().updateUi(projectId, (ui) => L.closeTabs(ui, paths, group));
+  },
+
+  editors(projectId, op) {
+    get().updateUi(projectId, (ui) => op(ui));
   },
 
   renamePaths(from, to) {
@@ -305,8 +284,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       for (const [id, u] of Object.entries(s.ui)) {
         ui[id] = {
           ...u,
-          tabs: u.tabs.map((t) => ({ ...t, path: map(t.path) })),
-          activeTab: u.activeTab ? map(u.activeTab) : null,
+          ...L.mapTabPaths(u, map),
           expanded: u.expanded.map(map),
           recentFiles: u.recentFiles.map(map),
         };

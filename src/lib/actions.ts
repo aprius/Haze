@@ -1,5 +1,5 @@
 // Commands shown in Search Everywhere's "Actions" tab (Ctrl+Shift+A).
-import { closeTabsWithPrompt, copyContext, revealInTree, saveAll } from "../components/EditorArea";
+import { closeTabsWithPrompt, copyContext, revealInTree, runEditorCommand, saveAll, type EditorCommand } from "../components/EditorArea";
 import { openSettings } from "../components/SettingsDialog";
 import { toggleTerminal } from "../components/TerminalPanel";
 import { openFolder } from "../components/Shell";
@@ -11,6 +11,7 @@ import type { Command } from "./keymap";
 import { toggleThemeMode } from "./theme";
 import { resetZoom, zoomIn, zoomOut } from "./zoom";
 import { activeProject, useWorkspace } from "../store/workspace";
+import { activeGroupOf, activeTabOf, openPaths, unsplitAll } from "./editorLayout";
 
 export interface Action {
   id: string;
@@ -54,8 +55,9 @@ export const actions: Action[] = [
     command: "closeTab",
     needsProject: true,
     run: withProject((id) => {
-      const tab = useWorkspace.getState().ui[id]?.activeTab;
-      if (tab) void closeTabsWithPrompt(id, [tab]);
+      const ui = useWorkspace.getState().ui[id];
+      const g = ui && activeGroupOf(ui);
+      if (g?.activeTab) void closeTabsWithPrompt(id, [g.activeTab], g.id);
     }),
   },
   {
@@ -63,9 +65,25 @@ export const actions: Action[] = [
     label: "Close All Tabs",
     needsProject: true,
     run: withProject((id) => {
-      const tabs = useWorkspace.getState().ui[id]?.tabs ?? [];
-      void closeTabsWithPrompt(id, tabs.map((t) => t.path));
+      const ui = useWorkspace.getState().ui[id];
+      if (ui) void closeTabsWithPrompt(id, openPaths(ui));
     }),
+  },
+  ...(
+    [
+      ["splitVertically", "Split Vertically"],
+      ["splitHorizontally", "Split Horizontally"],
+      ["unsplit", "Unsplit"],
+      ["moveToOppositeGroup", "Move to Opposite Group"],
+      ["nextSplitter", "Go to Next Splitter"],
+      ["openInNewWindow", "Open in New Window"],
+    ] as [EditorCommand, string][]
+  ).map(([id, label]): Action => ({ id, label, command: id, needsProject: true, run: withProject((p) => runEditorCommand(id, p)) })),
+  {
+    id: "unsplitAll",
+    label: "Unsplit All",
+    needsProject: true,
+    run: withProject((id) => useWorkspace.getState().editors(id, (e) => unsplitAll(e, activeGroupOf(e).id))),
   },
   { id: "copyContext", label: "Copy Context (code with path and lines)", command: "copyContext", needsProject: true, run: () => copyContext() },
   {
@@ -75,7 +93,8 @@ export const actions: Action[] = [
     needsProject: true,
     run: () => {
       const p = activeProject();
-      const tab = p && useWorkspace.getState().ui[p.id]?.activeTab;
+      const ui = p && useWorkspace.getState().ui[p.id];
+      const tab = ui && activeTabOf(ui);
       if (p && tab) revealInTree(p, tab);
     },
   },

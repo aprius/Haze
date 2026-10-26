@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useRef } from "react";
-import { closeTabsWithPrompt, EditorArea, revealInTree, saveAll, selectedText, triggerEditorAction } from "./components/EditorArea";
+import { EditorArea, EditorWindows, revealInTree, runEditorShortcut, saveAll, selectedText, triggerEditorAction } from "./components/EditorArea";
+import { activeTabOf, focusMain } from "./lib/editorLayout";
 import { FileTree, ProjectViewHeader } from "./components/FileTree";
 import { FindInFiles } from "./components/FindInFiles";
 import { SearchEverywhere } from "./components/SearchEverywhere";
@@ -156,7 +157,8 @@ function useGlobalShortcuts(project: Project | null) {
       else if ((is("findInFiles") || is("replaceInFiles")) && project) {
         openFindInFiles({ replace: is("replaceInFiles"), query: selectedText(), directory: selectedTreeDir(project) });
       } else if (is("selectInProject") && project) {
-        const tab = useWorkspace.getState().ui[project.id]?.activeTab;
+        const ui = useWorkspace.getState().ui[project.id];
+        const tab = ui && activeTabOf(ui);
         if (tab) revealInTree(project, tab);
       } else handled = false;
       if (handled) {
@@ -210,19 +212,8 @@ function useGlobalShortcuts(project: Project | null) {
         requestAnimationFrame(() => (document.querySelector(".tree-scroll") as HTMLElement | null)?.focus());
         return;
       }
-      if (matches(e, "closeTab")) {
-        e.preventDefault();
-        if (ui.activeTab) void closeTabsWithPrompt(project.id, [ui.activeTab]);
-        return;
-      }
-      const step = matches(e, "nextTab") ? 1 : matches(e, "previousTab") ? -1 : 0;
-      if (step && ui.tabs.length > 1) {
-        e.preventDefault();
-        const i = ui.tabs.findIndex((t) => t.path === ui.activeTab);
-        const n = ui.tabs.length;
-        const next = ui.tabs[(i + step + n) % n];
-        ws.updateUi(project.id, { activeTab: next.path });
-      }
+      // Close Tab, Next Tab, splits… in the active group.
+      if (runEditorShortcut(e, project.id)) e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -253,13 +244,24 @@ export default function App() {
   const projects = useWorkspace((s) => s.projects);
   const activeId = useWorkspace((s) => s.activeProjectId);
   const active = projects.find((p) => p.id === activeId && p.open) ?? null;
-  const activeTab = useWorkspace((s) => (activeId ? s.ui[activeId]?.activeTab : null));
+  const activeTab = useWorkspace((s) => (activeId && s.ui[activeId] ? activeTabOf(s.ui[activeId]) : null));
 
   useEffect(() => {
     void startTerminals(restore());
   }, []);
 
   useEffect(() => (loaded ? startUpdateChecks() : undefined), [loaded]);
+
+  // Back in the main window from a detached editor window: files opened here go to the main window.
+  useEffect(() => {
+    if (!active) return;
+    const onFocus = () => {
+      const ui = useWorkspace.getState().ui[active.id];
+      if (ui && focusMain(ui) !== ui) useWorkspace.getState().editors(active.id, focusMain);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [active]);
 
   useEffect(() => {
     const un = onCheckUpdatesMenu(() => void checkForUpdates(true));
@@ -385,6 +387,7 @@ export default function App() {
       <RebaseDialog project={active} />
       <CommitWindow project={active} />
       <DiffWindow />
+      <EditorWindows />
       <SettingsDialog />
       <ContextMenu />
       <Dialogs />

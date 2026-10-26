@@ -236,6 +236,7 @@ Haze is not a Rider replacement. It keeps the Rider workflow for reviewing and s
 | Editor | Rider keymap, Search Everywhere, Find/Replace in Files | ✅ | ✅ |
 | | Change markers, inline blame, rainbow brackets | ✅ | ✅ (blame via plugin) |
 | | Never silently overwrites files the agent changed on disk | ✅ | ⚠️ |
+| | Split editors, detached editor windows | ✅ | ✅ |
 | | Copy Context (`path:line` + code fence for agents) | ✅ | ❌ |
 | C# | Go to Definition, Find Usages, Rename, quick fixes | ✅ (Roslyn) | ✅ (ReSharper) |
 | | Code Vision, inline completion | ✅ | ✅ |

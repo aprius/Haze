@@ -12,6 +12,7 @@ import { revealInTree } from "./EditorArea";
 import { showHistory } from "./GitPanel";
 import { isIgnored, loadDir, loadUnityPackages, refreshDirs, refreshGit, setSelection, useTree, type GitView } from "../store/tree";
 import { useWorkspace, type Project, type TreeView } from "../store/workspace";
+import { activeTabOf, openBeside, openInNewWindow, openPaths } from "../lib/editorLayout";
 import { matches, shortcutLabel } from "../lib/keymap";
 import { buildRows, isUnityProject, resolveView, type Row } from "../lib/treeRows";
 import { confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
@@ -90,7 +91,7 @@ export function FileTree({ project }: { project: Project }) {
 
   // Always Select Opened File: follow the active tab. A click in
   // the tree already selected what it opens.
-  const activeTab = ui?.activeTab;
+  const activeTab = ui ? activeTabOf(ui) : null;
   const followTab = useWorkspace((s) => s.selectOpenedFile);
   useEffect(() => {
     if (!followTab || !activeTab || !isWithin(activeTab, project.path)) return;
@@ -225,7 +226,7 @@ export function FileTree({ project }: { project: Project }) {
     if (ok === null) return;
     const ws = useWorkspace.getState();
     for (const [id, u] of Object.entries(ws.ui)) {
-      const closing = u.tabs.filter((t) => gone(t.path)).map((t) => t.path);
+      const closing = openPaths(u).filter(gone);
       if (closing.length) ws.closeTabs(id, closing);
     }
     Object.keys(useBuffers.getState().meta).filter(gone).forEach(disposeBuffer);
@@ -273,6 +274,10 @@ export function FileTree({ project }: { project: Project }) {
 
   const copyText = (text: string) => void navigator.clipboard.writeText(text).then(() => toast("Copied to clipboard"));
 
+  // Rider's Project view: Shift+Enter opens the file in the split to the right, Shift+F4 in a window of its own.
+  const openInRightSplit = (path: string) => useWorkspace.getState().editors(project.id, (e) => openBeside(e, path, e.mainGroup));
+  const openInWindow = (path: string) => useWorkspace.getState().editors(project.id, (e) => openInNewWindow(e, path));
+
   const menuFor = (entry: DirEntry): MenuItem[] => {
     const dir = targetDir(entry);
     const entries = selectedEntries(entry);
@@ -291,6 +296,13 @@ export function FileTree({ project }: { project: Project }) {
       { label: "Rename…", shortcut: "Shift+F6", disabled: isRoot, action: () => void rename(entry) },
       { label: "Delete…", shortcut: shortcutLabel("delete"), disabled: isRoot, danger: true, action: () => void remove(entries) },
       { separator: true },
+      ...(entry.isDir
+        ? []
+        : [
+            { label: "Open in Right Split", shortcut: "Shift+Enter", action: () => openInRightSplit(entry.path) },
+            { label: "Open in New Window", shortcut: shortcutLabel("openInNewWindow"), action: () => openInWindow(entry.path) },
+            { separator: true },
+          ]),
       { label: "Open in Terminal", action: () => void newTerminal(project.id, dir, { title: basename(dir) }) },
       { separator: true },
       { label: "Git: Show History", action: () => showHistory(project, entry.path) },
@@ -361,7 +373,9 @@ export function FileTree({ project }: { project: Project }) {
       else {
         for (let i = idx - 1; i >= 0; i--) if (rows[i].depth < row.depth) return select(i);
       }
-    } else if (e.key === "Enter" && row) onRowDoubleClick(row);
+    } else if (e.key === "Enter" && e.shiftKey && row && !row.entry.isDir) openInRightSplit(row.entry.path);
+    else if (matches(e.nativeEvent, "openInNewWindow") && row && !row.entry.isDir) openInWindow(row.entry.path);
+    else if (e.key === "Enter" && row) onRowDoubleClick(row);
     else if (matches(e.nativeEvent, "delete") && row) void remove(selectedEntries(row.entry));
     else if ((e.key === "F2" || (e.shiftKey && e.key === "F6")) && row) void rename(row.entry);
     else if (e.altKey && e.key === "Insert" && row) {
@@ -532,7 +546,7 @@ export function ProjectViewHeader({ project, onHide }: { project: Project; onHid
   const view = resolveView(ui?.treeView, unity);
 
   const locate = () => {
-    const tab = ui?.activeTab;
+    const tab = ui ? activeTabOf(ui) : null;
     if (tab && isWithin(tab, project.path)) revealInTree(project, tab);
   };
 
@@ -571,7 +585,7 @@ export function ProjectViewHeader({ project, onHide }: { project: Project; onHid
           <Eye size={16} />
         </button>
       )}
-      <button className="icon-btn" title="Select Opened File" disabled={!ui?.activeTab} onClick={locate}>
+      <button className="icon-btn" title="Select Opened File" disabled={!ui || !activeTabOf(ui)} onClick={locate}>
         <LocateFixed size={16} />
       </button>
       <button className="icon-btn" title="Collapse All" onClick={() => updateUi(project.id, { expanded: [project.path] })}>

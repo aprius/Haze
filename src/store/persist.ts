@@ -3,6 +3,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { collectDrafts, ensureBuffer, getModel, isVirtualPath, onDraftsChanged } from "../lib/buffers";
 import { api } from "../lib/ipc";
+import { closeTabs, MAIN_GROUP, normalizeEditors, type EditorTab } from "../lib/editorLayout";
 import { restoreUpdateCheck, savedUpdateCheck, useUpdates, type SavedUpdateCheck } from "./updates";
 import { defaultUi, useWorkspace, type PerfContextMode, type Project, type ProjectUi } from "./workspace";
 
@@ -94,13 +95,15 @@ async function doRestore(): Promise<void> {
   if (data && data.version === VERSION) {
     const ui: Record<string, ProjectUi> = {};
     for (const p of data.projects ?? []) {
-      ui[p.id] = { ...defaultUi(), ...(data.ui?.[p.id] ?? {}) };
+      const saved = (data.ui?.[p.id] ?? {}) as Partial<ProjectUi> & { tabs?: EditorTab[]; activeTab?: string | null };
+      const { tabs: oldTabs, activeTab: oldActive, ...rest } = saved;
+      ui[p.id] = { ...defaultUi(), ...rest };
+      // Before editor splits: one list of tabs, now the main window's group.
+      if (!saved.groups && oldTabs) ui[p.id].groups = [{ id: MAIN_GROUP, tabs: oldTabs, activeTab: oldActive ?? null }];
+      Object.assign(ui[p.id], normalizeEditors(ui[p.id]));
       // Decompiled code is read from the C# server, which is not up yet: those tabs are not reopened.
-      const tabs = ui[p.id].tabs.filter((t) => !isVirtualPath(t.path));
-      if (tabs.length !== ui[p.id].tabs.length) {
-        const activeTab = tabs.some((t) => t.path === ui[p.id].activeTab) ? ui[p.id].activeTab : (tabs[0]?.path ?? null);
-        ui[p.id] = { ...ui[p.id], tabs, activeTab };
-      }
+      const virtual = ui[p.id].groups.flatMap((g) => g.tabs.map((t) => t.path)).filter(isVirtualPath);
+      if (virtual.length) Object.assign(ui[p.id], closeTabs(ui[p.id], virtual));
       // The terminal used to share the bottom panel.
       if ((ui[p.id].bottomTab as string) === "terminal") ui[p.id].bottomTab = "build";
       // Find results are not kept.

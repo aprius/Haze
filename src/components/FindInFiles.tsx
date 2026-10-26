@@ -17,6 +17,7 @@ import { keepSearchFocus } from "../lib/popupFocus";
 import { closeFindInFiles, useUi } from "../store/ui";
 import { solutionDirs, useDotnet } from "../store/dotnet";
 import { useWorkspace, type Project } from "../store/workspace";
+import { openPaths } from "../lib/editorLayout";
 import { FileIcon } from "./FileIcon";
 import { toast } from "./Overlays";
 
@@ -295,7 +296,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
       versions.current.set(path, model.getAlternativeVersionId());
       if (m.dirty) overrides[path] = model.getValue();
     }
-    const openTabs = Object.values(useWorkspace.getState().ui).flatMap((u) => u.tabs.map((t) => t.path));
+    const openTabs = Object.values(useWorkspace.getState().ui).flatMap(openPaths);
     const info = useDotnet.getState().info[project.id];
     const projects = info?.projects ?? [];
     const kind = effectiveScope(o.scope, projects.length > 0);

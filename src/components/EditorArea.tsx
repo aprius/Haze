@@ -1,6 +1,7 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { AlertCircle, AlertTriangle, Check, ChevronDown, Lightbulb, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { DefinitionAction, SymbolNavigationAction } from "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js";
 import { disposeBuffer, ensureBuffer, getModel, isVirtualPath, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
@@ -17,17 +18,18 @@ import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
 import { loadDir, setSelection, useTree } from "../store/tree";
 import { activeProject, projectForPath, useWorkspace, type Project } from "../store/workspace";
+import * as L from "../lib/editorLayout";
 import { absPath, repo, useGit } from "../store/git";
 import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
-import { choose, openMenu, prompt, toast } from "./Overlays";
+import { choose, FloatWindow, openMenu, prompt, toast, type MenuItem } from "./Overlays";
 import { showAssetUsages, showDeclarations, showLocations } from "./UsagesPopup";
 import type { AssetUsage } from "../lib/ipc";
 import { runUnityTests } from "../store/unity";
 import { generateUnityMember, registerUnityCompletion } from "../lib/unity/generate";
 import { installUnityPerf } from "../lib/unity/perfDecorations";
-import { isMac, shortcutLabel } from "../lib/keymap";
+import { isMac, matches, shortcutLabel } from "../lib/keymap";
 
 export const useCursor = create<{ line: number; column: number; selected: number }>(() => ({
   line: 1,
@@ -35,11 +37,30 @@ export const useCursor = create<{ line: number; column: number; selected: number
   selected: 0,
 }));
 
+// Scroll and caret per group and file, kept while the tab is open.
 const viewStates = new Map<string, monaco.editor.ICodeEditorViewState | null>();
+const viewKey = (group: string, path: string) => `${group}\n${path}`;
 
-// The editor of the visible project, for commands run from outside (actions, shortcuts).
+// The editor of the active group, for commands run from outside (actions, shortcuts).
 let currentEditor: monaco.editor.IStandaloneCodeEditor | null = null;
 let currentPath: string | null = null;
+
+/** The project and group each editor shows: navigation from it opens in its own group. */
+const editorGroups = new Map<monaco.editor.ICodeEditor, { projectId: string; group: string }>();
+
+function setCurrentEditor(editor: monaco.editor.IStandaloneCodeEditor, path: string | null) {
+  currentEditor = editor;
+  currentPath = path;
+  const sel = editor.getSelection();
+  const model = editor.getModel();
+  if (sel) useCursor.setState({ line: sel.positionLineNumber, column: sel.positionColumn, selected: model ? model.getValueLengthInRange(sel) : 0 });
+}
+
+/** Makes `group` the active one, without a store update when it already is. */
+function focusGroup(projectId: string, group: string) {
+  const ui = useWorkspace.getState().ui[projectId];
+  if (ui && L.focusGroup(ui, group) !== ui) useWorkspace.getState().editors(projectId, (e) => L.focusGroup(e, group));
+}
 
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"];
 export const isImagePath = (path: string) => IMAGE_EXTS.includes(extname(path));
@@ -165,12 +186,16 @@ function installIdeKeymap() {
   registerUnityCompletion();
   // Navigating to another file (Ctrl+click, F12…) opens it in Haze's tabs.
   monaco.editor.registerEditorOpener({
-    openCodeEditor(_source, resource, selectionOrPosition) {
+    openCodeEditor(source, resource, selectionOrPosition) {
       const path = tabPath(resource);
       if (!path) return false;
-      // The editor asking is the visible project's; opening the file in another
+      // In the project and group of the editor asking: opening the file in another
       // project (one nested in this folder, say) would show nothing.
-      const project = activeProject() ?? (isVirtualPath(path) ? null : projectForPath(path));
+      const from = editorGroups.get(source);
+      const project =
+        (from && useWorkspace.getState().projects.find((p) => p.id === from.projectId)) ??
+        activeProject() ??
+        (isVirtualPath(path) ? null : projectForPath(path));
       if (!project) return false;
       const pos =
         selectionOrPosition && "startLineNumber" in selectionOrPosition
@@ -178,7 +203,7 @@ function installIdeKeymap() {
           : selectionOrPosition
             ? { line: selectionOrPosition.lineNumber, column: selectionOrPosition.column }
             : {};
-      useWorkspace.getState().openFile(project.id, path, pos);
+      useWorkspace.getState().openFile(project.id, path, { ...pos, group: from?.projectId === project.id ? from.group : undefined });
       return true;
     },
   });
@@ -724,13 +749,42 @@ function editedFile(tab: string): string | null {
   return tab.startsWith("haze-") ? null : tab;
 }
 
-/** Closes tabs, asking about unsaved changes. Returns false if cancelled. */
-export async function closeTabsWithPrompt(projectId: string, paths: string[]): Promise<boolean> {
+/** Closes tabs (in `group`, or in every group), asking about unsaved changes. Returns false if cancelled. */
+export async function closeTabsWithPrompt(projectId: string, paths: string[], group?: string): Promise<boolean> {
   const closing = new Set(paths);
-  // Files another tab still shows (here or in another project) keep their buffer.
+  return closeWithPrompt(
+    projectId,
+    (g, p) => (!group || g === group) && closing.has(p),
+    paths,
+    () => useWorkspace.getState().closeTabs(projectId, paths, group),
+  );
+}
+
+/** Closes a detached editor window and its tabs; cancelled, they go back to the main window. */
+export async function closeEditorWindow(projectId: string, windowId: string): Promise<void> {
+  const ui = useWorkspace.getState().ui[projectId];
+  const win = ui?.windows.find((w) => w.id === windowId);
+  if (!ui || !win) return;
+  const ids = new Set(L.layoutGroups(win.layout));
+  const groups = ui.groups.filter((g) => ids.has(g.id));
+  const closed = await closeWithPrompt(
+    projectId,
+    (g) => ids.has(g),
+    groups.flatMap((g) => g.tabs.map((t) => t.path)),
+    () => useWorkspace.getState().editors(projectId, (e) => groups.reduce((acc, g) => L.closeTabs(acc, g.tabs.map((t) => t.path), g.id), e)),
+  );
+  if (!closed) useWorkspace.getState().editors(projectId, (e) => L.dockWindow(e, windowId));
+}
+
+/**
+ * Asks about unsaved changes in the files of the tabs closing (`closing` by
+ * group and path), then closes them with `close`. Returns false if cancelled.
+ */
+async function closeWithPrompt(projectId: string, closing: (group: string, path: string) => boolean, paths: string[], close: () => void): Promise<boolean> {
+  // Files another tab still shows (another group, another project) keep their buffer.
   const kept = new Set(
     Object.entries(useWorkspace.getState().ui).flatMap(([id, u]) =>
-      u.tabs.filter((t) => id !== projectId || !closing.has(t.path)).map((t) => editedFile(t.path)),
+      u.groups.flatMap((g) => g.tabs.filter((t) => id !== projectId || !closing(g.id, t.path)).map((t) => editedFile(t.path))),
     ),
   );
   const files = [...new Set(paths.map(editedFile))].filter((f): f is string => !!f && !kept.has(f));
@@ -763,35 +817,197 @@ export async function closeTabsWithPrompt(projectId: string, paths: string[]): P
       }
     }
   }
-  useWorkspace.getState().closeTabs(projectId, paths);
+  close();
   for (const f of files) {
     recoveredDrafts.delete(f);
     disposeBuffer(f);
-    viewStates.delete(f);
   }
+  // View states of tabs no group shows any more.
+  const shown = new Set(Object.values(useWorkspace.getState().ui).flatMap((u) => u.groups.flatMap((g) => g.tabs.map((t) => viewKey(g.id, t.path)))));
+  for (const key of [...viewStates.keys()]) if (!shown.has(key)) viewStates.delete(key);
   return true;
 }
 
-function TabBar({ project }: { project: Project }) {
-  const ui = useWorkspace((s) => s.ui[project.id]);
-  const meta = useBuffers((s) => s.meta);
-  const tabs = ui?.tabs ?? [];
+/** Rider's split actions for a tab, in its context menu and Find Action. */
+function splitMenu(project: Project, group: string, path: string): MenuItem[] {
+  const ui = useWorkspace.getState().ui[project.id];
+  if (!ui) return [];
+  const op = (f: (e: L.Editors) => L.Editors) => () => useWorkspace.getState().editors(project.id, f);
+  const win = L.windowOf(ui, group);
+  const inWindow = L.layoutGroups(win ? win.layout : ui.layout);
+  const single = (L.groupById(ui, group)?.tabs.length ?? 0) < 2;
+  const opposite = L.neighbourGroup(win ? win.layout : ui.layout, group);
+  return [
+    { label: "Split Vertically", shortcut: shortcutLabel("splitVertically"), action: op((e) => L.splitTab(e, group, path, "right", false)) },
+    { label: "Split Horizontally", shortcut: shortcutLabel("splitHorizontally"), action: op((e) => L.splitTab(e, group, path, "bottom", false)) },
+    { label: "Split and Move Right", disabled: single, action: op((e) => L.splitTab(e, group, path, "right", true)) },
+    { label: "Split and Move Down", disabled: single, action: op((e) => L.splitTab(e, group, path, "bottom", true)) },
+    {
+      label: "Move to Opposite Group",
+      shortcut: shortcutLabel("moveToOppositeGroup"),
+      disabled: !opposite,
+      action: op((e) => (opposite ? L.moveTab(e, group, path, opposite) : e)),
+    },
+    { label: "Unsplit", shortcut: shortcutLabel("unsplit"), disabled: inWindow.length < 2, action: op((e) => L.unsplit(e, group)) },
+    { label: "Unsplit All", disabled: inWindow.length < 2, action: op((e) => L.unsplitAll(e, group)) },
+    { separator: true },
+    { label: "Open in New Window", shortcut: shortcutLabel("openInNewWindow"), action: op((e) => L.detachTab(e, group, path)) },
+    ...(win ? [{ label: "Move to Main Window", action: op((e) => L.moveTab(e, group, path, e.mainGroup)) }] : []),
+  ];
+}
 
-  const tabMenu = (path: string) => [
-    { label: "Close", shortcut: shortcutLabel("closeTab"), action: () => void closeTabsWithPrompt(project.id, [path]) },
+/** Where a dragged tab would land: a place in a tab bar, a side of a group to split, or a window of its own. */
+type TabDrop =
+  | { kind: "tab"; group: string; index: number; rect: DOMRect }
+  | { kind: "group"; group: string; side: L.Side | null; rect: DOMRect }
+  | { kind: "window" };
+
+/** The drop under the pointer, in the document the drag happens in. */
+function tabDropAt(doc: Document, x: number, y: number): TabDrop | null {
+  const win = doc.defaultView!;
+  if (x < 0 || y < 0 || x > win.innerWidth || y > win.innerHeight) return { kind: "window" };
+  const el = doc.elementFromPoint(x, y);
+  const tab = el?.closest<HTMLElement>(".editor-tab");
+  const bar = el?.closest<HTMLElement>(".editor-tabs");
+  if (bar?.dataset.group) {
+    const tabs = [...bar.querySelectorAll<HTMLElement>(".editor-tab:not(.overflowed)")];
+    if (tab && !tab.classList.contains("overflowed")) {
+      const r = tab.getBoundingClientRect();
+      const after = x > r.left + r.width / 2;
+      const index = Number(tab.dataset.index) + (after ? 1 : 0);
+      return { kind: "tab", group: bar.dataset.group, index, rect: new DOMRect(after ? r.right - 1 : r.left - 1, r.top, 2, r.height) };
+    }
+    const last = tabs[tabs.length - 1]?.getBoundingClientRect();
+    const r = bar.getBoundingClientRect();
+    const index = tabs.length ? Number(tabs[tabs.length - 1].dataset.index) + 1 : 0;
+    return { kind: "tab", group: bar.dataset.group, index, rect: new DOMRect(last ? last.right - 1 : r.left, r.top, 2, r.height) };
+  }
+  const stack = el?.closest<HTMLElement>(".editor-group");
+  if (!stack?.dataset.group) return null;
+  const body = stack.querySelector(".editor-stack")?.getBoundingClientRect() ?? stack.getBoundingClientRect();
+  const fx = (x - body.left) / body.width;
+  const fy = (y - body.top) / body.height;
+  // The outer quarter on each side splits there; the middle moves the tab into the group.
+  const edges: [L.Side, number][] = [
+    ["left", fx],
+    ["right", 1 - fx],
+    ["top", fy],
+    ["bottom", 1 - fy],
+  ];
+  const [side, dist] = edges.reduce((a, b) => (b[1] < a[1] ? b : a));
+  if (dist > 0.25) return { kind: "group", group: stack.dataset.group, side: null, rect: body };
+  const { left, top, width, height } = body;
+  const rect =
+    side === "left" ? new DOMRect(left, top, width / 2, height)
+    : side === "right" ? new DOMRect(left + width / 2, top, width / 2, height)
+    : side === "top" ? new DOMRect(left, top, width, height / 2)
+    : new DOMRect(left, top + height / 2, width, height / 2);
+  return { kind: "group", group: stack.dataset.group, side, rect };
+}
+
+/** Applies a tab drop: reorder, move to another group, split, or a window of its own. */
+function dropTab(project: Project, from: string, path: string, drop: TabDrop) {
+  useWorkspace.getState().editors(project.id, (e) => {
+    if (drop.kind === "window") return L.detachTab(e, from, path);
+    if (drop.kind === "tab") {
+      // Within its own bar, the index counts the tab itself.
+      const g = L.groupById(e, drop.group);
+      const at = g?.tabs.findIndex((t) => t.path === path) ?? -1;
+      const index = drop.group === from && at >= 0 && at < drop.index ? drop.index - 1 : drop.index;
+      return L.moveTab(e, from, path, drop.group, index);
+    }
+    if (drop.side) {
+      // Its only tab beside its own group: nothing would change.
+      if (drop.group === from && (L.groupById(e, from)?.tabs.length ?? 0) < 2) return e;
+      return L.splitTab(e, from, path, drop.side, true, drop.group);
+    }
+    return drop.group === from ? e : L.moveTab(e, from, path, drop.group);
+  });
+}
+
+function TabDragGhost({ doc, label, x, y, drop }: { doc: Document; label: string; x: number; y: number; drop: TabDrop | null }) {
+  const r = drop && drop.kind !== "window" ? drop.rect : null;
+  return createPortal(
+    <>
+      {r && <div className={"tab-drop-zone" + (drop?.kind === "tab" ? " caret" : "")} style={{ left: r.left, top: r.top, width: r.width, height: r.height }} />}
+      <div className="tab-drag-ghost" style={{ left: x + 12, top: y + 8 }}>
+        {label}
+        {drop?.kind === "window" && <span className="muted"> · Open in New Window</span>}
+      </div>
+    </>,
+    doc.body,
+  );
+}
+
+function TabBar({ project, group }: { project: Project; group: L.EditorGroup }) {
+  const meta = useBuffers((s) => s.meta);
+  const tabs = group.tabs;
+  const active = useWorkspace((s) => s.ui[project.id]?.activeGroup === group.id);
+  const activate = (path: string) => useWorkspace.getState().editors(project.id, (e) => L.activateTab(e, group.id, path));
+
+  const tabMenu = (path: string): MenuItem[] => [
+    { label: "Close", shortcut: shortcutLabel("closeTab"), action: () => void closeTabsWithPrompt(project.id, [path], group.id) },
     {
       label: "Close Others",
-      action: () => void closeTabsWithPrompt(project.id, tabs.filter((t) => t.path !== path).map((t) => t.path)),
+      action: () => void closeTabsWithPrompt(project.id, tabs.filter((t) => t.path !== path).map((t) => t.path), group.id),
     },
-    { label: "Close All", action: () => void closeTabsWithPrompt(project.id, tabs.map((t) => t.path)) },
+    { label: "Close All", action: () => void closeTabsWithPrompt(project.id, tabs.map((t) => t.path), group.id) },
     { separator: true },
     { label: "Keep Open (Pin Preview)", action: () => useWorkspace.getState().pinTab(project.id, path) },
+    { separator: true },
+    ...splitMenu(project, group.id, path),
     { separator: true },
     { label: "Copy Path", action: () => void navigator.clipboard.writeText(path) },
     { label: "Copy Relative Path", action: () => void navigator.clipboard.writeText(relative(project.path, path)) },
     { label: "Select in Project View", shortcut: shortcutLabel("selectInProject"), action: () => revealInTree(project, path) },
     { label: "Reveal in File Manager", action: () => void revealItemInDir(path) },
   ];
+
+  // Dragging a tab: to another place in a bar, another group, a side of a group
+  // (a new split), or out of the window (a window of its own).
+  const [drag, setDrag] = useState<{ doc: Document; label: string; x: number; y: number; drop: TabDrop | null } | null>(null);
+  const dragged = useRef(false);
+  const onTabPointerDown = (e: React.PointerEvent<HTMLDivElement>, path: string) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest(".tab-close")) return;
+    const el = e.currentTarget;
+    const doc = el.ownerDocument;
+    const [startX, startY] = [e.clientX, e.clientY];
+    let started = false;
+    let drop: TabDrop | null = null;
+    // Keeps the events coming to the tab wherever the pointer goes, outside the window too.
+    el.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      if (!started && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+      started = true;
+      drop = tabDropAt(doc, ev.clientX, ev.clientY);
+      setDrag({ doc, label: tabTitle(path), x: ev.clientX, y: ev.clientY, drop });
+    };
+    const end = (apply: boolean) => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", cancel);
+      el.removeEventListener("lostpointercapture", cancel);
+      doc.defaultView?.removeEventListener("keydown", key, true);
+      if (!started) return;
+      dragged.current = true;
+      setTimeout(() => (dragged.current = false));
+      setDrag(null);
+      if (apply && drop) dropTab(project, group.id, path, drop);
+    };
+    const up = () => end(true);
+    const cancel = () => end(false);
+    const key = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape" || !started) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      end(false);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", cancel);
+    el.addEventListener("lostpointercapture", cancel);
+    doc.defaultView?.addEventListener("keydown", key, true);
+  };
 
   // A single row: tabs that don't fit are hidden behind a ▾ list instead of scrolled,
   // and the row shifts just enough to keep the active tab in it.
@@ -800,7 +1016,9 @@ function TabBar({ project }: { project: Project }) {
   const [range, setRange] = useState({ first: 0, last: Infinity });
   const [, relayout] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
-    const ro = new ResizeObserver(relayout);
+    // From the bar's own window: a detached one's resizing is not seen by the main window's observer.
+    const win = (barRef.current!.ownerDocument.defaultView ?? window) as Window & typeof globalThis;
+    const ro = new win.ResizeObserver(relayout);
     ro.observe(barRef.current!);
     return () => ro.disconnect();
   }, []);
@@ -815,7 +1033,7 @@ function TabBar({ project }: { project: Project }) {
     let next = { first: 0, last: widths.length - 1 };
     if (widths.length && span(0, widths.length - 1) > avail) {
       avail -= OVERFLOW_BUTTON + gap;
-      const active = tabs.findIndex((t) => t.path === ui?.activeTab);
+      const active = tabs.findIndex((t) => t.path === group.activeTab);
       let first = Math.min(range.first, widths.length - 1);
       if (active >= 0 && active < first) first = active;
       const fill = (a: number) => {
@@ -838,26 +1056,28 @@ function TabBar({ project }: { project: Project }) {
   const hidden = tabs.filter((_, i) => i < range.first || i > range.last);
 
   return (
-    <div className="editor-tabs" ref={barRef}>
+    <div className={"editor-tabs" + (active ? " active-group" : "")} ref={barRef} data-group={group.id}>
       <div className="editor-tabs-strip" ref={stripRef}>
         {tabs.map((t, i) => {
           const m = meta[t.path];
           return (
             <div
               key={t.path}
+              data-index={i}
               className={
                 "editor-tab" +
-                (t.path === ui?.activeTab ? " active" : "") +
+                (t.path === group.activeTab ? " active" : "") +
                 (t.preview ? " preview" : "") +
                 (i < range.first || i > range.last ? " overflowed" : "")
               }
               title={t.path}
-              onClick={() => useWorkspace.getState().updateUi(project.id, { activeTab: t.path })}
+              onPointerDown={(e) => onTabPointerDown(e, t.path)}
+              onClick={() => !dragged.current && activate(t.path)}
               onDoubleClick={() => useWorkspace.getState().pinTab(project.id, t.path)}
               onMouseDown={(e) => {
                 if (e.button === 1) {
                   e.preventDefault();
-                  void closeTabsWithPrompt(project.id, [t.path]);
+                  void closeTabsWithPrompt(project.id, [t.path], group.id);
                 }
               }}
               onContextMenu={(e) => {
@@ -873,7 +1093,7 @@ function TabBar({ project }: { project: Project }) {
                 className="tab-close"
                 onClick={(e) => {
                   e.stopPropagation();
-                  void closeTabsWithPrompt(project.id, [t.path]);
+                  void closeTabsWithPrompt(project.id, [t.path], group.id);
                 }}
               >
                 <X size={15} />
@@ -892,7 +1112,7 @@ function TabBar({ project }: { project: Project }) {
               { clientX: r.left, clientY: r.bottom, target: e.currentTarget },
               hidden.map((t) => ({
                 label: tabTitle(t.path),
-                action: () => useWorkspace.getState().updateUi(project.id, { activeTab: t.path }),
+                action: () => activate(t.path),
               })),
             );
           }}
@@ -901,6 +1121,7 @@ function TabBar({ project }: { project: Project }) {
           {hidden.length}
         </button>
       )}
+      {drag && <TabDragGhost {...drag} />}
     </div>
   );
 }
@@ -1029,18 +1250,19 @@ function DiskBanner({ path }: { path: string }) {
   );
 }
 
-export function EditorArea({ project }: { project: Project }) {
-  const ui = useWorkspace((s) => s.ui[project.id]);
+/** One editor group: its tab bar and an editor (or a diff, image, preview…) for its active tab. */
+function EditorGroupView({ project, group }: { project: Project; group: L.EditorGroup }) {
+  const isActive = useWorkspace((s) => s.ui[project.id]?.activeGroup === group.id);
   const reveal = useWorkspace((s) => s.reveal);
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
   const codeVision = useWorkspace((s) => s.codeVision);
-  const active = ui?.activeTab ?? null;
+  const active = group.activeTab;
   const meta = useBuffers((s) => (active ? s.meta[active] : undefined));
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const shownPath = useRef<string | null>(null);
 
-  // One editor instance per project view; models are swapped on tab change.
+  // One editor instance per group; models are swapped on tab change.
   useEffect(() => {
     if (!host.current) return;
     installIdeKeymap();
@@ -1059,7 +1281,13 @@ export function EditorArea({ project }: { project: Project }) {
       "semanticHighlighting.enabled": true,
       theme: monacoTheme(),
     });
+    editorGroups.set(editor, { projectId: project.id, group: group.id });
+    editor.onDidFocusEditorWidget(() => {
+      setCurrentEditor(editor, shownPath.current);
+      focusGroup(project.id, group.id);
+    });
     editor.onDidChangeCursorSelection((e) => {
+      if (currentEditor !== editor) return;
       const model = editor.getModel();
       const sel = e.selection;
       useCursor.setState({
@@ -1073,7 +1301,7 @@ export function EditorArea({ project }: { project: Project }) {
       if (reloadingFromDisk()) return;
       const path = shownPath.current;
       const ws = useWorkspace.getState();
-      if (path && ws.ui[project.id]?.tabs.find((t) => t.path === path)?.preview) ws.pinTab(project.id, path);
+      if (path && ws.ui[project.id]?.groups.some((g) => g.tabs.some((t) => t.path === path && t.preview))) ws.pinTab(project.id, path);
     });
     editor.addAction({
       id: "haze.copyContext",
@@ -1128,13 +1356,14 @@ export function EditorArea({ project }: { project: Project }) {
     const unityPerf = installUnityPerf(editor);
     const wheel = zedWheel(editor);
     editorRef.current = editor;
-    currentEditor = editor;
+    if (!currentEditor || useWorkspace.getState().ui[project.id]?.activeGroup === group.id) currentEditor = editor;
     return () => {
       lineBlame.dispose();
       changes.dispose();
       unityPerf.dispose();
       wheel.dispose();
-      if (shownPath.current) viewStates.set(shownPath.current, editor.saveViewState());
+      if (shownPath.current) viewStates.set(viewKey(group.id, shownPath.current), editor.saveViewState());
+      editorGroups.delete(editor);
       editor.dispose();
       editorRef.current = null;
       if (currentEditor === editor) {
@@ -1142,7 +1371,13 @@ export function EditorArea({ project }: { project: Project }) {
         currentPath = null;
       }
     };
-  }, [project.id]);
+  }, [project.id, group.id]);
+
+  // The active group's editor is the one commands act on.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (isActive && editor) setCurrentEditor(editor, shownPath.current);
+  }, [isActive]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ stickyScroll: { enabled: stickyScroll } });
@@ -1167,24 +1402,26 @@ export function EditorArea({ project }: { project: Project }) {
     const editor = editorRef.current;
     if (!editor) return;
     const prev = shownPath.current;
-    if (prev && prev !== active) viewStates.set(prev, editor.saveViewState());
+    if (prev && prev !== active) viewStates.set(viewKey(group.id, prev), editor.saveViewState());
     const model = active && ready ? getModel(active) : null;
     if (editor.getModel() !== model) {
       editor.setModel(model);
       // Decompiled and generated code is shown, never edited.
       editor.updateOptions({ readOnly: !!active && isVirtualPath(active), readOnlyMessage: { value: "Decompiled or generated code: read-only" } });
       shownPath.current = model ? active : null;
-      currentPath = shownPath.current;
-      const vs = active ? viewStates.get(active) : null;
+      if (currentEditor === editor) currentPath = shownPath.current;
+      // A file split off keeps its place: the state of the group it came from, until it has one here.
+      const vs = active ? (viewStates.get(viewKey(group.id, active)) ?? lastViewState(active)) : null;
       if (model && vs) editor.restoreViewState(vs);
     }
-    if (model) editor.focus();
+    // Only the active group takes focus: the others are just shown (a split restored at startup).
+    if (model && useWorkspace.getState().ui[project.id]?.activeGroup === group.id) editor.focus();
   }, [active, ready]);
 
   // Jump to a requested line (terminal links, later: navigation).
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor || !reveal || reveal.path !== active || !ready) return;
+    if (!editor || !reveal || reveal.group !== group.id || reveal.path !== active || !ready) return;
     const pos = { lineNumber: reveal.line, column: reveal.column };
     editor.setPosition(pos);
     editor.revealPositionInCenter(pos);
@@ -1201,8 +1438,12 @@ export function EditorArea({ project }: { project: Project }) {
   const special = !!diff || !!merge;
 
   return (
-    <div className="editor-area">
-      <TabBar project={project} />
+    <div
+      className={"editor-group" + (isActive ? " active" : "")}
+      data-group={group.id}
+      onPointerDownCapture={() => focusGroup(project.id, group.id)}
+    >
+      <TabBar project={project} group={group} />
       {active && isMarkdown && (
         <div className="editor-toolbar">
           <div className="seg small">
@@ -1251,4 +1492,200 @@ export function EditorArea({ project }: { project: Project }) {
       </div>
     </div>
   );
+}
+
+/** The latest view state of `path` in any group, for the first time another group shows it. */
+function lastViewState(path: string): monaco.editor.ICodeEditorViewState | null {
+  if (currentPath === path && currentEditor) return currentEditor.saveViewState();
+  for (const [key, vs] of viewStates) if (key.endsWith("\n" + path)) return vs;
+  return null;
+}
+
+/** A split's children side by side or stacked, sized by fractions, with a handle between each two. */
+function SplitView({ project, node, path }: { project: Project; node: L.EditorLayout; path: number[] }) {
+  const groups = useWorkspace((s) => s.ui[project.id]?.groups);
+  const ref = useRef<HTMLDivElement>(null);
+  if ("group" in node) {
+    const g = groups?.find((x) => x.id === node.group);
+    return g ? <EditorGroupView key={g.id} project={project} group={g} /> : null;
+  }
+  const row = node.split === "row";
+  const resize = (e: React.PointerEvent<HTMLDivElement>, i: number) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const box = ref.current!.getBoundingClientRect();
+    const total = row ? box.width : box.height;
+    const start = row ? e.clientX : e.clientY;
+    const sizes = [...node.sizes];
+    const pair = sizes[i] + sizes[i + 1];
+    const min = Math.min(pair / 2, 120 / total);
+    const panes = [...ref.current!.children].filter((c) => !c.classList.contains("split-handle")) as HTMLElement[];
+    const move = (ev: PointerEvent) => {
+      const d = ((row ? ev.clientX : ev.clientY) - start) / total;
+      sizes[i] = Math.max(min, Math.min(pair - min, node.sizes[i] + d));
+      sizes[i + 1] = pair - sizes[i];
+      // Live on the elements; the store once dropped.
+      panes[i].style.flexGrow = String(sizes[i]);
+      panes[i + 1].style.flexGrow = String(sizes[i + 1]);
+    };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("lostpointercapture", up);
+      useWorkspace.getState().updateUi(project.id, (ui) => resizeIn(ui, path, sizes));
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("lostpointercapture", up);
+  };
+  return (
+    <div ref={ref} className={"editor-split " + node.split}>
+      {node.children.map((child, i) => (
+        <SplitPane key={"group" in child ? child.group : `split-${i}`} grow={node.sizes[i]} handle={i > 0 ? (e) => resize(e, i - 1) : null} row={row}>
+          <SplitView project={project} node={child} path={[...path, i]} />
+        </SplitPane>
+      ))}
+    </div>
+  );
+}
+
+function SplitPane({ grow, handle, row, children }: { grow: number; handle: ((e: React.PointerEvent<HTMLDivElement>) => void) | null; row: boolean; children: React.ReactNode }) {
+  return (
+    <>
+      {handle && <div className={"split-handle " + (row ? "vertical" : "horizontal")} onPointerDown={handle} />}
+      <div className="editor-split-pane" style={{ flexGrow: grow }}>
+        {children}
+      </div>
+    </>
+  );
+}
+
+/** `path` starts with the window: -1 for the main window, else the index of a detached one. */
+function resizeIn(ui: L.Editors, path: number[], sizes: number[]): Partial<L.Editors> {
+  const [w, ...rest] = path;
+  if (w < 0) return { layout: L.resizeSplit(ui.layout, rest, sizes) };
+  return { windows: ui.windows.map((win, i) => (i === w ? { ...win, layout: L.resizeSplit(win.layout, rest, sizes) } : win)) };
+}
+
+/** The main window's editors: one group, or Rider-style splits of several. */
+export function EditorArea({ project }: { project: Project }) {
+  const layout = useWorkspace((s) => s.ui[project.id]?.layout);
+  if (!layout) return null;
+  return (
+    <div className="editor-area">
+      <SplitView project={project} node={layout} path={[-1]} />
+    </div>
+  );
+}
+
+/** A detached editor window (Open in New Window), with splits of its own. */
+function EditorWindowView({ project, index, win }: { project: Project; index: number; win: L.EditorWindow }) {
+  const title = useWorkspace((s) => {
+    const ui = s.ui[project.id];
+    const ids = L.layoutGroups(win.layout);
+    const g = ui && (ids.includes(ui.activeGroup) ? L.groupById(ui, ui.activeGroup) : L.groupById(ui, ids[0]));
+    return g?.activeTab ? tabTitle(g.activeTab) : project.name;
+  });
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (runEditorShortcut(e.nativeEvent, project.id)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+  return (
+    <FloatWindow
+      className="editor-window"
+      title={`${title} — ${project.name}`}
+      width={900}
+      height={700}
+      escapeCloses={false}
+      onClose={() => void closeEditorWindow(project.id, win.id)}
+    >
+      <div className="editor-area" onKeyDown={onKeyDown}>
+        <SplitView project={project} node={win.layout} path={[index]} />
+      </div>
+    </FloatWindow>
+  );
+}
+
+/** Detached editor windows of every open project. */
+export function EditorWindows() {
+  const projects = useWorkspace((s) => s.projects);
+  const ui = useWorkspace((s) => s.ui);
+  return (
+    <>
+      {projects
+        .filter((p) => p.open)
+        .flatMap((p) => (ui[p.id]?.windows ?? []).map((w, i) => <EditorWindowView key={w.id} project={p} index={i} win={w} />))}
+    </>
+  );
+}
+
+const EDITOR_COMMANDS = ["closeTab", "nextTab", "previousTab", "splitVertically", "splitHorizontally", "unsplit", "moveToOppositeGroup", "openInNewWindow", "nextSplitter"] as const;
+export type EditorCommand = (typeof EDITOR_COMMANDS)[number];
+
+/**
+ * Editor tab and split shortcuts, for the active group of `projectId`: from the
+ * main window and from detached ones. Returns whether `e` was one.
+ */
+export function runEditorShortcut(e: KeyboardEvent, projectId: string): boolean {
+  const cmd = EDITOR_COMMANDS.find((c) => matches(e, c));
+  if (!cmd) return false;
+  runEditorCommand(cmd, projectId);
+  return true;
+}
+
+/** Runs a tab or split command on the active group of `projectId`. */
+export function runEditorCommand(cmd: EditorCommand, projectId: string): void {
+  const ws = useWorkspace.getState();
+  const ui = ws.ui[projectId];
+  if (!ui) return;
+  const g = L.activeGroupOf(ui);
+  const tab = g.activeTab;
+  const op = (f: (e: L.Editors) => L.Editors) => ws.editors(projectId, f);
+  const win = L.windowOf(ui, g.id);
+  const layout = win ? win.layout : ui.layout;
+  switch (cmd) {
+    case "closeTab":
+      if (tab) void closeTabsWithPrompt(projectId, [tab], g.id);
+      break;
+    case "nextTab":
+    case "previousTab": {
+      if (g.tabs.length < 2) break;
+      const step = cmd === "nextTab" ? 1 : -1;
+      const i = g.tabs.findIndex((t) => t.path === tab);
+      const n = g.tabs.length;
+      op((x) => L.activateTab(x, g.id, g.tabs[(i + step + n) % n].path));
+      break;
+    }
+    case "splitVertically":
+    case "splitHorizontally":
+      if (tab) op((x) => L.splitTab(x, g.id, tab, cmd === "splitVertically" ? "right" : "bottom", false));
+      break;
+    case "unsplit":
+      op((x) => L.unsplit(x, g.id));
+      break;
+    case "moveToOppositeGroup": {
+      const to = L.neighbourGroup(layout, g.id);
+      if (tab && to) op((x) => L.moveTab(x, g.id, tab, to));
+      break;
+    }
+    case "openInNewWindow":
+      if (tab) op((x) => L.detachTab(x, g.id, tab));
+      break;
+    case "nextSplitter": {
+      const ids = L.layoutGroups(layout);
+      const next = ids[(ids.indexOf(g.id) + 1) % ids.length];
+      if (next !== g.id) focusGroupEditor(projectId, next);
+      break;
+    }
+  }
+}
+
+/** Activates a group and puts the caret in its editor. */
+function focusGroupEditor(projectId: string, group: string) {
+  focusGroup(projectId, group);
+  for (const [editor, at] of editorGroups) if (at.projectId === projectId && at.group === group) editor.focus();
 }

@@ -10,6 +10,8 @@ describe("iconName", () => {
     expect(iconName("Game.asmdef", false)).toBe("Asmdef");
     expect(iconName(".gitignore", false)).toBe("gitignore");
     expect(iconName("Dockerfile", false)).toBe("docker");
+    expect(iconName("Lit.shader", false)).toBe("shader");
+    expect(iconName("Common.hlsl", false)).toBe("shader");
     expect(iconName("model.fbx", false)).toBe("unknown");
   });
 
