@@ -29,6 +29,7 @@ import type { AssetUsage } from "../lib/ipc";
 import { runUnityTests } from "../store/unity";
 import { generateUnityMember, registerUnityCompletion } from "../lib/unity/generate";
 import { installUnityPerf } from "../lib/unity/perfDecorations";
+import { installUnityInspections } from "../lib/unity/inspectionMarkers";
 import { isMac, matches, shortcutLabel } from "../lib/keymap";
 
 export const useCursor = create<{ line: number; column: number; selected: number }>(() => ({
@@ -1443,6 +1444,7 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
     const lineBlame = installLineBlame(project, editor);
     const changes = installLineChanges(project, editor);
     const unityPerf = installUnityPerf(editor);
+    const unityInspections = installUnityInspections(editor);
     const wheel = zedWheel(editor);
     editorRef.current = editor;
     if (!currentEditor || useWorkspace.getState().ui[project.id]?.activeGroup === group.id) currentEditor = editor;
@@ -1450,6 +1452,7 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       lineBlame.dispose();
       changes.dispose();
       unityPerf.dispose();
+      unityInspections.dispose();
       wheel.dispose();
       if (shownPath.current) viewStates.set(viewKey(group.id, shownPath.current), editor.saveViewState());
       editorGroups.delete(editor);

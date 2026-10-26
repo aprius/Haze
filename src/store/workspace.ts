@@ -123,6 +123,8 @@ interface WorkspaceState {
   unityPerfContext: PerfContextMode;
   /** Expensive calls (GetComponent, Find…) in that context are underlined. */
   unityPerfHints: boolean;
+  /** Unknown tags, layers, scenes… in scripts and broken assembly definition references are reported. */
+  unityInspections: boolean;
   /** Looks for a newer Haze release at startup and every few hours. */
   checkUpdates: boolean;
 
@@ -164,6 +166,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   unityAutoRefresh: true,
   unityPerfContext: "everywhere",
   unityPerfHints: true,
+  unityInspections: true,
   checkUpdates: true,
 
   addProject(path) {

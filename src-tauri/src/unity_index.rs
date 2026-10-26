@@ -1,7 +1,8 @@
 //! What Haze knows of a Unity project without Unity running, from the project's
 //! files: the C# classes and their base classes (to tell which derive from
 //! MonoBehaviour, through user and package code), and which scenes, prefabs
-//! and assets use a script or call a method from a UnityEvent.
+//! and assets use a script or call a method from a UnityEvent; also what the
+//! project's settings and assets name (unity_data.rs).
 //!
 //! Built when the project opens (or on first use) and kept up to date from
 //! file changes: changed files are read again on the next query.
@@ -15,6 +16,7 @@ use parking_lot::{Mutex, MutexGuard};
 use regex::Regex;
 use serde::Serialize;
 
+use crate::unity_data::{self, DataFile, ProjectData};
 use crate::watcher::FsChange;
 
 /// Text-serialized Unity files that reference scripts.
@@ -244,6 +246,7 @@ impl<T: Send> Part<T> {
 struct Index {
     scripts: Part<Vec<ClassDecl>>,
     assets: Part<AssetFile>,
+    data: Part<DataFile>,
 }
 
 impl Index {
@@ -282,6 +285,13 @@ impl Index {
             text.starts_with("%YAML").then(|| parse_asset(&text))
         })
     }
+
+    fn data(&self, root: &Path) -> MutexGuard<'_, Files<DataFile>> {
+        self.data.current(
+            || unity_data::list(root, |d, f| walk(d, f)),
+            unity_data::parse,
+        )
+    }
 }
 
 #[derive(Default)]
@@ -306,8 +316,10 @@ impl UnityIndexes {
         if change.overflow || change.lost {
             index.scripts.changed_all();
             index.assets.changed_all();
+            index.data.changed_all();
             return;
         }
+        let root = Path::new(&change.root);
         for f in change
             .files
             .iter()
@@ -320,6 +332,13 @@ impl UnityIndexes {
             } else if is_asset(p) {
                 index.assets.changed(p);
             }
+            if unity_data::is_data_file(root, p) {
+                index.data.changed(p);
+            } else if let Some(asmdef) = f.strip_suffix(".meta").filter(|a| a.ends_with(".asmdef"))
+            {
+                // A new GUID for the assembly.
+                index.data.changed(Path::new(asmdef));
+            }
         }
     }
 
@@ -327,11 +346,19 @@ impl UnityIndexes {
         self.roots.lock().remove(root);
     }
 
-    /// Reads a project's scripts, then its assets, so that queries answer at once.
+    /// Reads a project's scripts, its settings, then its assets, so that queries answer at once.
     pub fn warm(&self, root: &Path) {
         let index = self.index(root);
         drop(index.scripts(root));
+        drop(index.data(root));
         drop(index.assets(root));
+    }
+
+    /// What the project's settings and assets name: tags, layers, scenes, assemblies…
+    pub fn project_data(&self, root: &Path) -> ProjectData {
+        let index = self.index(root);
+        let data = index.data(root);
+        unity_data::collect(root, data.parsed.iter(), |d, f| walk(d, f))
     }
 
     /// Every class of the project and its packages, with the bases each declaration lists.
@@ -729,5 +756,109 @@ MonoBehaviour:
             indexes.classes(root)["Enemy"],
             vec!["MonoBehaviour".to_string()]
         );
+    }
+
+    #[test]
+    fn reads_project_data_and_follows_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let write = |rel: &str, text: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        };
+        write(
+            "ProjectSettings/TagManager.asset",
+            "%YAML 1.1\nTagManager:\n  tags:\n  - Enemy\n  layers:\n  - Default\n  - Ground\n",
+        );
+        write(
+            "ProjectSettings/EditorBuildSettings.asset",
+            "%YAML 1.1\nEditorBuildSettings:\n  m_Scenes:\n  - enabled: 1\n    path: Assets/Scenes/Menu.unity\n",
+        );
+        write("Assets/Scenes/Menu.unity", "%YAML 1.1\n");
+        write("Assets/Scenes/Test.unity", "%YAML 1.1\n");
+        write("Assets/Resources/UI/Icon.png", "png");
+        write("Assets/Resources/UI/Icon.png.meta", "guid: 1");
+        write(
+            "Assets/Art/Hero.controller",
+            "%YAML 1.1\n--- !u!1102 &1\nAnimatorState:\n  m_Name: Run\n",
+        );
+        write("Assets/Shaders/Water.shader", "Shader \"Custom/Water\" {}");
+        write(
+            "Assets/Game/Game.asmdef",
+            r#"{"name": "Game", "references": []}"#,
+        );
+        write(
+            "Assets/Game/Game.asmdef.meta",
+            "guid: 0123456789abcdef0123456789abcdef\n",
+        );
+        write(
+            "Library/PackageCache/com.unity.textmeshpro/Resources/TMP Settings.asset",
+            "%YAML 1.1\n",
+        );
+        write("Library/ScriptAssemblies/Unity.TextMeshPro.dll", "");
+        // A built-in package of the Unity Editor the projects reference.
+        let editor = root.join("Editor/Data");
+        write(
+            "Editor/Data/Resources/PackageManager/BuiltInPackages/com.unity.ugui/Runtime/UnityEngine.UI.asmdef",
+            r#"{"name": "UnityEngine.UI"}"#,
+        );
+        let dll = editor.join("Managed/UnityEngine/UnityEngine.dll");
+        write(
+            "Game.csproj",
+            &format!(
+                "<Project><Reference><HintPath>{}</HintPath></Reference></Project>",
+                dll.display()
+            ),
+        );
+
+        let indexes = UnityIndexes::default();
+        let data = indexes.project_data(root);
+        assert!(data.tags.as_ref().unwrap().contains(&"Enemy".to_string()));
+        assert!(data
+            .tags
+            .as_ref()
+            .unwrap()
+            .contains(&"Untagged".to_string()));
+        assert_eq!(data.layers.as_deref().unwrap(), ["Default", "Ground"]);
+        assert_eq!(data.axes, None);
+        assert_eq!(data.build_scenes.as_ref().unwrap().len(), 1);
+        assert_eq!(
+            data.scenes,
+            ["Assets/Scenes/Menu.unity", "Assets/Scenes/Test.unity"]
+        );
+        assert_eq!(data.resources, ["TMP Settings.asset", "UI/Icon.png"]);
+        assert_eq!(data.animator_states.as_deref().unwrap(), ["Run"]);
+        assert_eq!(data.shaders, ["Custom/Water"]);
+        let names: Vec<_> = data.assemblies.iter().map(|a| a.name.as_str()).collect();
+        assert!(names.contains(&"Game") && names.contains(&"UnityEngine.UI"));
+        let game = data.assemblies.iter().find(|a| a.name == "Game").unwrap();
+        assert_eq!(
+            game.guid.as_deref(),
+            Some("0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(data.compiled, ["Unity.TextMeshPro"]);
+        assert!(data.assemblies_complete);
+
+        // A tag added in Unity, a scene deleted.
+        write(
+            "ProjectSettings/TagManager.asset",
+            "%YAML 1.1\nTagManager:\n  tags:\n  - Enemy\n  - Boss\n  layers:\n  - Default\n",
+        );
+        std::fs::remove_file(root.join("Assets/Scenes/Test.unity")).unwrap();
+        let path = |rel: &str| root.join(rel).to_string_lossy().into_owned();
+        indexes.changed(&FsChange {
+            root: root.to_string_lossy().into_owned(),
+            dirs: vec![],
+            files: vec![path("ProjectSettings/TagManager.asset")],
+            created: vec![],
+            removed: vec![path("Assets/Scenes/Test.unity")],
+            overflow: false,
+            lost: false,
+            git: false,
+        });
+        let data = indexes.project_data(root);
+        assert!(data.tags.as_ref().unwrap().contains(&"Boss".to_string()));
+        assert_eq!(data.scenes, ["Assets/Scenes/Menu.unity"]);
     }
 }

@@ -5,6 +5,7 @@
 //! Also the outline of a C# file (types and members), for Code Vision: at
 //! once, where a language server answers only once its projects compiled.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde::Serialize;
@@ -306,11 +307,27 @@ pub struct PerfMethod {
     pub calls: Vec<PerfCall>,
     /// Well-known expensive operations.
     pub expensive: Vec<PerfCall>,
+    /// `x == null` and `x != null`, with the type `x` is declared with
+    /// (lib/unity/perf.ts tells whether it is a UnityEngine.Object).
+    pub null_checks: Vec<TypedSite>,
+    /// `grid[x, y]` on a multidimensional array.
+    pub array_access: Vec<Range>,
+}
+
+/// An expression and the declared type of what it works on.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypedSite {
+    /// "Transform", "Enemy": no namespace, no type arguments.
+    pub type_name: String,
+    pub range: Range,
 }
 
 const FIND_ANYWHERE: &[&str] = &[
     "FindObjectOfType",
     "FindObjectsOfType",
+    "FindObjectsOfTypeAll",
+    "FindObjectsOfTypeIncludingAssets",
     "FindAnyObjectByType",
     "FindFirstObjectByType",
     "FindObjectsByType",
@@ -323,6 +340,7 @@ const BY_NAME: &[&str] = &[
     "Invoke",
     "InvokeRepeating",
     "CancelInvoke",
+    "IsInvoking",
     "StartCoroutine",
     "StopCoroutine",
 ];
@@ -364,7 +382,9 @@ impl Outliner<'_> {
         if name == "AddComponent" {
             return Some("AddComponent");
         }
-        if FIND_ANYWHERE.contains(&name) || (name == "Find" && receiver == Some("GameObject")) {
+        if FIND_ANYWHERE.contains(&name)
+            || (name == "Find" && matches!(receiver, Some("GameObject" | "transform")))
+        {
             return Some("Find");
         }
         if (receiver == Some("Debug") && name.starts_with("Log"))
@@ -387,8 +407,39 @@ impl Outliner<'_> {
         None
     }
 
-    fn collect_calls(&self, n: tree_sitter::Node, m: &mut PerfMethod) {
+    fn collect_calls(&self, n: tree_sitter::Node, m: &mut PerfMethod, scopes: &Scopes) {
         match n.kind() {
+            "binary_expression" => {
+                let op = n.child_by_field_name("operator").map(|o| self.text(o));
+                if matches!(op, Some("==" | "!=")) {
+                    let (l, r) = (
+                        n.child_by_field_name("left"),
+                        n.child_by_field_name("right"),
+                    );
+                    let other = match (l, r) {
+                        (Some(l), Some(r)) if r.kind() == "null_literal" => Some(l),
+                        (Some(l), Some(r)) if l.kind() == "null_literal" => Some(r),
+                        _ => None,
+                    };
+                    if let Some(type_name) = other.and_then(|e| self.type_of(e, scopes)) {
+                        m.null_checks.push(TypedSite {
+                            type_name: simple_type(&type_name).to_string(),
+                            range: self.range(n),
+                        });
+                    }
+                }
+            }
+            "element_access_expression" => {
+                let args = n
+                    .child_by_field_name("subscript")
+                    .map_or(0, |s| s.named_child_count());
+                let array = n
+                    .child_by_field_name("expression")
+                    .and_then(|e| self.type_of(e, scopes));
+                if args > 1 && array.is_some_and(|t| t.contains("[,")) {
+                    m.array_access.push(self.range(n));
+                }
+            }
             "invocation_expression" => {
                 if let Some(f) = n.child_by_field_name("function") {
                     if let Some((receiver, name)) = self.callee(f) {
@@ -428,7 +479,7 @@ impl Outliner<'_> {
         }
         let mut c = n.walk();
         for child in n.named_children(&mut c) {
-            self.collect_calls(child, m);
+            self.collect_calls(child, m, scopes);
         }
     }
 
@@ -436,6 +487,7 @@ impl Outliner<'_> {
         &self,
         parent: tree_sitter::Node,
         class: Option<&str>,
+        scopes: &mut Scopes,
         out: &mut Vec<PerfMethod>,
     ) {
         let mut c = parent.walk();
@@ -444,7 +496,9 @@ impl Outliner<'_> {
                 "class_declaration" | "struct_declaration" | "record_declaration" => {
                     let name = n.child_by_field_name("name").map(|x| self.text(x));
                     if let Some(body) = n.child_by_field_name("body") {
-                        self.perf_members(body, name, out);
+                        scopes.push(self.members_scope(body));
+                        self.perf_members(body, name, scopes, out);
+                        scopes.pop();
                     }
                 }
                 "method_declaration" => {
@@ -463,9 +517,13 @@ impl Outliner<'_> {
                             .is_some_and(|t| last_segment(self.text(t)) == "IEnumerator"),
                         calls: vec![],
                         expensive: vec![],
+                        null_checks: vec![],
+                        array_access: vec![],
                     };
                     if let Some(body) = n.child_by_field_name("body") {
-                        self.collect_calls(body, &mut m);
+                        scopes.push(self.locals_scope(n));
+                        self.collect_calls(body, &mut m, scopes);
+                        scopes.pop();
                     }
                     out.push(m);
                 }
@@ -474,12 +532,695 @@ impl Outliner<'_> {
                     || k.starts_with("preproc")
                     || k == "ERROR" =>
                 {
-                    self.perf_members(n, class, out)
+                    self.perf_members(n, class, scopes, out)
                 }
                 _ => {}
             }
         }
     }
+}
+
+// ------------------------------------------------------------------ Unity scripts
+
+/// What names in scope are declared as: type text without spaces ("Transform",
+/// "int[,]", "List<Enemy>"), and for constants their string value. Innermost
+/// scope last. No types are resolved: `var` takes what its initializer shows.
+#[derive(Default)]
+struct Scope {
+    types: HashMap<String, String>,
+    strings: HashMap<String, String>,
+}
+
+type Scopes = Vec<Scope>;
+
+/// The innermost scope's answer.
+fn lookup<'s>(
+    scopes: &'s Scopes,
+    f: impl Fn(&'s Scope) -> Option<&'s String>,
+) -> Option<&'s String> {
+    scopes.iter().rev().find_map(f)
+}
+
+/// `UnityEngine.Transform` → `Transform`, `List<Enemy>?` → `List`.
+fn simple_type(t: &str) -> &str {
+    let t = t.trim_end_matches('?');
+    let t = t.split('<').next().unwrap_or(t);
+    t.rsplit(['.', ':']).next().unwrap_or(t)
+}
+
+/// Generic methods whose type argument is what they return.
+const RETURNS_TYPE_ARG: &[&str] = &[
+    "GetComponent",
+    "GetComponentInChildren",
+    "GetComponentInParent",
+    "AddComponent",
+    "FindObjectOfType",
+    "FindAnyObjectByType",
+    "FindFirstObjectByType",
+    "Instantiate",
+    "Load",
+    "CreateInstance",
+];
+
+/// A string a script passes to Unity that names something of the project.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UnityRef {
+    /// "tag", "layer", "axis", "scene", "sceneIndex", "editorScene",
+    /// "resource", "resourceFolder", "animatorState" or "shader".
+    pub kind: &'static str,
+    /// The string (or for "sceneIndex" the number).
+    pub value: String,
+    /// The literal, or the constant naming it.
+    pub range: Range,
+}
+
+/// `Instantiate(prefab)` and the parent set right after, which Instantiate could have set.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParentAfterInstantiate {
+    /// The statement setting the parent.
+    pub range: Range,
+    pub instantiate: Range,
+    /// What is instantiated, as written.
+    pub original: String,
+    /// The new parent, as written.
+    pub parent: String,
+    /// Whether the world position stays (`SetParent(p)`, `.parent = p`); None
+    /// when an expression decides.
+    pub world: Option<bool>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnityCode {
+    pub refs: Vec<UnityRef>,
+    pub set_parent: Vec<ParentAfterInstantiate>,
+}
+
+/// Methods taking a tag, a layer, an input axis…: (receiver, name prefix or name, kind, every argument).
+const NAMING: &[(Option<&str>, &str, &str, bool)] = &[
+    (None, "CompareTag", "tag", false),
+    (Some("GameObject"), "FindWithTag", "tag", false),
+    (Some("GameObject"), "FindGameObjectWithTag", "tag", false),
+    (Some("GameObject"), "FindGameObjectsWithTag", "tag", false),
+    (Some("LayerMask"), "NameToLayer", "layer", false),
+    (Some("LayerMask"), "GetMask", "layer", true),
+    (Some("Input"), "GetAxis", "axis", false),
+    (Some("Input"), "GetAxisRaw", "axis", false),
+    (Some("Input"), "GetButton", "axis", false),
+    (Some("Input"), "GetButtonDown", "axis", false),
+    (Some("Input"), "GetButtonUp", "axis", false),
+    (Some("SceneManager"), "LoadScene", "scene", false),
+    (Some("SceneManager"), "LoadSceneAsync", "scene", false),
+    (
+        Some("EditorSceneManager"),
+        "OpenScene",
+        "editorScene",
+        false,
+    ),
+    (Some("Resources"), "Load", "resource", false),
+    (Some("Resources"), "LoadAsync", "resource", false),
+    (Some("Resources"), "LoadAll", "resourceFolder", false),
+    (Some("Shader"), "Find", "shader", false),
+];
+
+/// Animator methods taking a state name.
+const ANIMATOR_STATE: &[&str] = &[
+    "Play",
+    "PlayInFixedTime",
+    "CrossFade",
+    "CrossFadeInFixedTime",
+];
+
+/// Members of a transform that a parent set after them would move: Instantiate
+/// with the parent would not keep them the same way.
+const PLACES: &[&str] = &[
+    "position",
+    "localPosition",
+    "rotation",
+    "localRotation",
+    "localScale",
+    "SetPositionAndRotation",
+    "SetLocalPositionAndRotation",
+    "Translate",
+    "Rotate",
+    "LookAt",
+    "parent",
+    "SetParent",
+];
+
+impl Outliner<'_> {
+    /// The type a declaration's initializer shows, for `var`.
+    fn initializer_type(&self, e: tree_sitter::Node) -> Option<String> {
+        match e.kind() {
+            "parenthesized_expression" => self.initializer_type(e.named_child(0)?),
+            "cast_expression" => Some(self.type_text(e.child_by_field_name("type")?)),
+            "as_expression" => Some(self.type_text(e.child_by_field_name("right")?)),
+            "object_creation_expression" => Some(self.type_text(e.child_by_field_name("type")?)),
+            "array_creation_expression" => Some(self.type_text(e.child_by_field_name("type")?)),
+            "invocation_expression" => {
+                let f = e.child_by_field_name("function")?;
+                let name = match f.kind() {
+                    "member_access_expression" => f.child_by_field_name("name")?,
+                    _ => f,
+                };
+                if name.kind() != "generic_name" {
+                    return None;
+                }
+                let method = self.text(name.named_child(0)?);
+                let args = name.named_child(1)?;
+                if !RETURNS_TYPE_ARG.contains(&method) || args.named_child_count() != 1 {
+                    return None;
+                }
+                Some(self.type_text(args.named_child(0)?))
+            }
+            _ => self.known_member_type(e),
+        }
+    }
+
+    /// `x.gameObject`, `transform`, `Camera.main`: what Unity's own members are.
+    fn known_member_type(&self, e: tree_sitter::Node) -> Option<String> {
+        let name = match e.kind() {
+            "member_access_expression" => {
+                let expr = e.child_by_field_name("expression").map(|x| self.text(x));
+                let name = self.text(e.child_by_field_name("name")?);
+                if name == "main" && expr.map(last_segment) == Some("Camera") {
+                    return Some("Camera".into());
+                }
+                name
+            }
+            "identifier" => self.text(e),
+            _ => return None,
+        };
+        match name {
+            "gameObject" => Some("GameObject".into()),
+            "transform" => Some("Transform".into()),
+            _ => None,
+        }
+    }
+
+    fn type_text(&self, t: tree_sitter::Node) -> String {
+        self.text(t).split_whitespace().collect()
+    }
+
+    /// Declares the variables of a `variable_declaration` (a field or a local).
+    fn declare_variables(&self, decl: tree_sitter::Node, scope: &mut Scope, constant: bool) {
+        let Some(t) = decl.child_by_field_name("type") else {
+            return;
+        };
+        let declared = (t.kind() != "implicit_type").then(|| self.type_text(t));
+        let mut c = decl.walk();
+        for v in decl.named_children(&mut c) {
+            if v.kind() != "variable_declarator" {
+                continue;
+            }
+            let Some(name) = v.child_by_field_name("name").or_else(|| v.named_child(0)) else {
+                continue;
+            };
+            // The initializer is the declarator's last part (once inside `= …`).
+            let init = v
+                .named_child(v.named_child_count().saturating_sub(1) as u32)
+                .filter(|i| i.id() != name.id())
+                .map(|i| match i.kind() {
+                    "equals_value_clause" => i.named_child(0).unwrap_or(i),
+                    _ => i,
+                });
+            let name = self.text(name).to_string();
+            if constant {
+                if let Some(value) = init.and_then(|i| self.string_value(i)) {
+                    scope.strings.insert(name.clone(), value);
+                }
+            }
+            if let Some(t) = declared
+                .clone()
+                .or_else(|| init.and_then(|i| self.initializer_type(i)))
+            {
+                scope.types.insert(name, t);
+            }
+        }
+    }
+
+    /// The fields and properties of a type's body.
+    fn members_scope(&self, body: tree_sitter::Node) -> Scope {
+        let mut scope = Scope::default();
+        let mut c = body.walk();
+        for n in body.named_children(&mut c) {
+            match n.kind() {
+                "field_declaration" => {
+                    let constant = self.is_const(n);
+                    let mut d = n.walk();
+                    for decl in n.named_children(&mut d) {
+                        if decl.kind() == "variable_declaration" {
+                            self.declare_variables(decl, &mut scope, constant);
+                        }
+                    }
+                }
+                "property_declaration" => {
+                    if let (Some(t), Some(name)) =
+                        (n.child_by_field_name("type"), n.child_by_field_name("name"))
+                    {
+                        scope
+                            .types
+                            .insert(self.text(name).into(), self.type_text(t));
+                    }
+                }
+                _ => {}
+            }
+        }
+        scope
+    }
+
+    /// The parameters and locals of a method (nested types left out).
+    fn locals_scope(&self, member: tree_sitter::Node) -> Scope {
+        let mut scope = Scope::default();
+        self.collect_locals(member, &mut scope);
+        scope
+    }
+
+    fn collect_locals(&self, n: tree_sitter::Node, scope: &mut Scope) {
+        match n.kind() {
+            "parameter" => {
+                if let (Some(t), Some(name)) =
+                    (n.child_by_field_name("type"), n.child_by_field_name("name"))
+                {
+                    scope
+                        .types
+                        .insert(self.text(name).into(), self.type_text(t));
+                }
+            }
+            "variable_declaration" => {
+                let constant = n.parent().is_some_and(|p| self.is_const(p));
+                self.declare_variables(n, scope, constant);
+            }
+            "foreach_statement" => {
+                if let (Some(t), Some(name)) =
+                    (n.child_by_field_name("type"), n.child_by_field_name("left"))
+                {
+                    if t.kind() != "implicit_type" && name.kind() == "identifier" {
+                        scope
+                            .types
+                            .insert(self.text(name).into(), self.type_text(t));
+                    }
+                }
+            }
+            _ => {}
+        }
+        let mut c = n.walk();
+        for child in n.named_children(&mut c) {
+            if matches!(
+                child.kind(),
+                "class_declaration"
+                    | "struct_declaration"
+                    | "record_declaration"
+                    | "interface_declaration"
+            ) {
+                continue;
+            }
+            self.collect_locals(child, scope);
+        }
+    }
+
+    /// `const string Tag = "Enemy";`: a field or local declaration with the `const` modifier.
+    fn is_const(&self, decl: tree_sitter::Node) -> bool {
+        let mut c = decl.walk();
+        let found = decl
+            .children(&mut c)
+            .any(|k| k.kind() == "modifier" && self.text(k) == "const");
+        found
+    }
+
+    /// The declared type of what an expression names: a local, parameter,
+    /// field or property of the file, or one of Unity's well-known members.
+    fn type_of(&self, e: tree_sitter::Node, scopes: &Scopes) -> Option<String> {
+        let name = match e.kind() {
+            "identifier" => self.text(e),
+            "member_access_expression" => {
+                let expr = e.child_by_field_name("expression")?;
+                let name = e.child_by_field_name("name")?;
+                if expr.kind() != "this_expression" && expr.kind() != "this" {
+                    return self.known_member_type(e);
+                }
+                self.text(name)
+            }
+            "parenthesized_expression" => return self.type_of(e.named_child(0)?, scopes),
+            "invocation_expression" => return self.initializer_type(e),
+            _ => return None,
+        };
+        lookup(scopes, |s| s.types.get(name))
+            .cloned()
+            .or_else(|| self.known_member_type(e))
+    }
+
+    /// The value of a string literal, or of a constant naming one.
+    fn string_value(&self, n: tree_sitter::Node) -> Option<String> {
+        let t = self.text(n);
+        match n.kind() {
+            "string_literal" => {
+                let inner = t.strip_prefix('"')?;
+                let inner = inner
+                    .strip_suffix("\"u8")
+                    .or_else(|| inner.strip_suffix('"'))?;
+                Some(unescape(inner))
+            }
+            "verbatim_string_literal" => Some(
+                t.strip_prefix("@\"")?
+                    .strip_suffix('"')?
+                    .replace("\"\"", "\""),
+            ),
+            _ => None,
+        }
+    }
+
+    fn constant_value(&self, n: tree_sitter::Node, scopes: &Scopes) -> Option<String> {
+        if n.kind() != "identifier" {
+            return self.string_value(n);
+        }
+        let name = self.text(n);
+        lookup(scopes, |s| s.strings.get(name)).cloned()
+    }
+
+    /// The expressions of an invocation's arguments, named ones included.
+    fn arguments<'n>(&self, call: tree_sitter::Node<'n>) -> Vec<tree_sitter::Node<'n>> {
+        let Some(list) = call.child_by_field_name("arguments") else {
+            return vec![];
+        };
+        let mut c = list.walk();
+        list.named_children(&mut c)
+            .filter(|a| a.kind() == "argument")
+            .filter_map(|a| a.named_child(a.named_child_count().saturating_sub(1) as u32))
+            .collect()
+    }
+
+    fn unity_invocation(&self, call: tree_sitter::Node, scopes: &Scopes, out: &mut UnityCode) {
+        let Some(f) = call.child_by_field_name("function") else {
+            return;
+        };
+        let Some((receiver, name)) = self.callee(f) else {
+            return;
+        };
+        let receiver_node = (f.kind() == "member_access_expression")
+            .then(|| f.child_by_field_name("expression"))
+            .flatten();
+        let args = self.arguments(call);
+        let mut push = |kind: &'static str, arg: tree_sitter::Node| {
+            let value = match kind {
+                "sceneIndex" => Some(self.text(arg).to_string()),
+                _ => self.constant_value(arg, scopes),
+            };
+            if let Some(value) = value {
+                out.refs.push(UnityRef {
+                    kind,
+                    value,
+                    range: self.range(arg),
+                });
+            }
+        };
+        for &(on, method, kind, all) in NAMING {
+            let receiver_ok = match on {
+                None => true,
+                Some(t) => receiver.map(last_segment) == Some(t),
+            };
+            if !receiver_ok || name != method {
+                continue;
+            }
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 && !all {
+                    break;
+                }
+                if kind == "scene" && arg.kind() == "integer_literal" {
+                    push("sceneIndex", *arg);
+                } else {
+                    push(kind, *arg);
+                }
+            }
+            return;
+        }
+        if ANIMATOR_STATE.contains(&name) {
+            let animator = receiver_node
+                .and_then(|r| self.type_of(r, scopes))
+                .is_some_and(|t| simple_type(&t) == "Animator");
+            if let (true, Some(first)) = (animator, args.first()) {
+                push("animatorState", *first);
+            }
+        }
+    }
+
+    /// `x.tag == "Enemy"`, `x.tag = "Enemy"`.
+    fn unity_tag_comparison(&self, n: tree_sitter::Node, scopes: &Scopes, out: &mut UnityCode) {
+        let op = n.child_by_field_name("operator").map(|o| self.text(o));
+        if !matches!(op, Some("==" | "!=" | "=")) {
+            return;
+        }
+        let (Some(l), Some(r)) = (
+            n.child_by_field_name("left"),
+            n.child_by_field_name("right"),
+        ) else {
+            return;
+        };
+        let is_tag = |e: tree_sitter::Node| {
+            e.kind() == "member_access_expression"
+                && e.child_by_field_name("name")
+                    .is_some_and(|x| self.text(x) == "tag")
+        };
+        let literal = if is_tag(l) {
+            r
+        } else if is_tag(r) && op != Some("=") {
+            l
+        } else {
+            return;
+        };
+        if let Some(value) = self.constant_value(literal, scopes) {
+            out.refs.push(UnityRef {
+                kind: "tag",
+                value,
+                range: self.range(literal),
+            });
+        }
+    }
+
+    /// The single-argument `Instantiate(x)` an expression is, through casts and `as`.
+    fn instantiate_call<'n>(&self, e: tree_sitter::Node<'n>) -> Option<tree_sitter::Node<'n>> {
+        match e.kind() {
+            "parenthesized_expression" => self.instantiate_call(e.named_child(0)?),
+            "cast_expression" => self.instantiate_call(e.child_by_field_name("value")?),
+            "as_expression" => self.instantiate_call(e.child_by_field_name("left")?),
+            "invocation_expression" => {
+                let (receiver, name) = self.callee(e.child_by_field_name("function")?)?;
+                let receiver_ok = receiver
+                    .is_none_or(|r| matches!(last_segment(r), "Object" | "GameObject" | "this"));
+                (name == "Instantiate" && receiver_ok && self.arguments(e).len() == 1).then_some(e)
+            }
+            _ => None,
+        }
+    }
+
+    /// `v.transform.SetParent(p)`, `v.SetParent(p, false)`, `v.transform.parent = p`.
+    fn parent_set(&self, stmt: tree_sitter::Node, v: &str) -> Option<(String, Option<bool>)> {
+        if stmt.kind() != "expression_statement" {
+            return None;
+        }
+        let e = stmt.named_child(0)?;
+        let target_ok = |t: tree_sitter::Node| {
+            let t = self.text(t);
+            t == v || t == format!("{v}.transform")
+        };
+        match e.kind() {
+            "invocation_expression" => {
+                let f = e.child_by_field_name("function")?;
+                if f.kind() != "member_access_expression"
+                    || self.text(f.child_by_field_name("name")?) != "SetParent"
+                    || !target_ok(f.child_by_field_name("expression")?)
+                {
+                    return None;
+                }
+                let args = self.arguments(e);
+                let world = match args.get(1).map(|a| self.text(*a)) {
+                    None | Some("true") => Some(true),
+                    Some("false") => Some(false),
+                    Some(_) => None,
+                };
+                Some((self.text(*args.first()?).to_string(), world))
+            }
+            "assignment_expression" => {
+                let l = e.child_by_field_name("left")?;
+                if self.text(e.child_by_field_name("operator")?) != "="
+                    || l.kind() != "member_access_expression"
+                    || self.text(l.child_by_field_name("name")?) != "parent"
+                    || !target_ok(l.child_by_field_name("expression")?)
+                {
+                    return None;
+                }
+                Some((
+                    self.text(e.child_by_field_name("right")?).to_string(),
+                    Some(true),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a statement mentions `v` near a member that places it.
+    fn moves(&self, stmt: tree_sitter::Node, v: &str) -> bool {
+        let text = self.text(stmt);
+        let words: Vec<&str> = text
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .collect();
+        words.contains(&v) && words.iter().any(|w| PLACES.contains(w))
+    }
+
+    fn unity_block(&self, block: tree_sitter::Node, out: &mut UnityCode) {
+        let mut c = block.walk();
+        let stmts: Vec<_> = block.named_children(&mut c).collect();
+        for (i, s) in stmts.iter().enumerate() {
+            // `var v = Instantiate(x);` or `v = Instantiate(x);`
+            let (v, call) = match s.kind() {
+                "local_declaration_statement" => {
+                    let Some(decl) = s.named_child(0) else {
+                        continue;
+                    };
+                    let mut d = decl.walk();
+                    let declarators: Vec<_> = decl
+                        .named_children(&mut d)
+                        .filter(|n| n.kind() == "variable_declarator")
+                        .collect();
+                    let [v] = declarators[..] else { continue };
+                    let Some(name) = v.child_by_field_name("name").or_else(|| v.named_child(0))
+                    else {
+                        continue;
+                    };
+                    let init = v
+                        .named_child(v.named_child_count().saturating_sub(1) as u32)
+                        .map(|i| match i.kind() {
+                            "equals_value_clause" => i.named_child(0).unwrap_or(i),
+                            _ => i,
+                        });
+                    let Some(call) = init.and_then(|i| self.instantiate_call(i)) else {
+                        continue;
+                    };
+                    (self.text(name).to_string(), call)
+                }
+                "expression_statement" => {
+                    let Some(e) = s
+                        .named_child(0)
+                        .filter(|e| e.kind() == "assignment_expression")
+                    else {
+                        continue;
+                    };
+                    let (Some(l), Some(r)) = (
+                        e.child_by_field_name("left"),
+                        e.child_by_field_name("right"),
+                    ) else {
+                        continue;
+                    };
+                    let Some(call) = self.instantiate_call(r) else {
+                        continue;
+                    };
+                    if l.kind() != "identifier" {
+                        continue;
+                    }
+                    (self.text(l).to_string(), call)
+                }
+                _ => continue,
+            };
+            for next in &stmts[i + 1..] {
+                if let Some((parent, world)) = self.parent_set(*next, &v) {
+                    let original = self
+                        .arguments(call)
+                        .first()
+                        .map(|a| self.text(*a).to_string())
+                        .unwrap_or_default();
+                    out.set_parent.push(ParentAfterInstantiate {
+                        range: self.range(*next),
+                        instantiate: self.range(call),
+                        original,
+                        parent,
+                        world,
+                    });
+                    break;
+                }
+                if self.moves(*next, &v) {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn unity_walk(&self, n: tree_sitter::Node, scopes: &mut Scopes, out: &mut UnityCode) {
+        let pushed = match n.kind() {
+            "class_declaration" | "struct_declaration" | "record_declaration" => {
+                let body = n.child_by_field_name("body");
+                body.map(|b| scopes.push(self.members_scope(b))).is_some()
+            }
+            "method_declaration"
+            | "constructor_declaration"
+            | "local_function_statement"
+            | "property_declaration"
+            | "indexer_declaration"
+            | "operator_declaration" => {
+                scopes.push(self.locals_scope(n));
+                true
+            }
+            _ => false,
+        };
+        match n.kind() {
+            "invocation_expression" => self.unity_invocation(n, scopes, out),
+            "binary_expression" | "assignment_expression" => {
+                self.unity_tag_comparison(n, scopes, out)
+            }
+            "block" => self.unity_block(n, out),
+            _ => {}
+        }
+        let mut c = n.walk();
+        for child in n.named_children(&mut c) {
+            self.unity_walk(child, scopes, out);
+        }
+        if pushed {
+            scopes.pop();
+        }
+    }
+}
+
+/// C# escapes in a regular string literal.
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('0') => out.push('\0'),
+            Some(o) => out.push(o),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// The strings a script passes to Unity that name tags, layers, scenes…, and
+/// `Instantiate` calls followed by setting the parent.
+pub fn csharp_unity(text: &str) -> UnityCode {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_c_sharp::LANGUAGE.into())
+        .is_err()
+    {
+        return UnityCode::default();
+    }
+    let Some(tree) = parser.parse(text, None) else {
+        return UnityCode::default();
+    };
+    let line_starts = std::iter::once(0)
+        .chain(text.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+    let o = Outliner { text, line_starts };
+    let mut out = UnityCode::default();
+    o.unity_walk(tree.root_node(), &mut vec![], &mut out);
+    out
 }
 
 /// Every method of the classes in C# source, with its calls, for Unity's
@@ -500,7 +1241,7 @@ pub fn csharp_perf(text: &str) -> Vec<PerfMethod> {
         .collect();
     let o = Outliner { text, line_starts };
     let mut out = vec![];
-    o.perf_members(tree.root_node(), None, &mut out);
+    o.perf_members(tree.root_node(), None, &mut vec![], &mut out);
     out
 }
 
@@ -563,6 +1304,145 @@ namespace Game {
             (get.start.line, get.start.character, get.end.character),
             (6, 15, 38)
         );
+    }
+
+    #[test]
+    fn finds_null_checks_and_multidimensional_arrays() {
+        let src = r#"
+class Grid : MonoBehaviour {
+  [SerializeField] Transform target;
+  int[,] cells;
+  int[][] jagged;
+  int count;
+  void Update() {
+    var body = GetComponent<Rigidbody>();
+    if (target == null || null != body) {}
+    if (count == null) {}
+    if (gameObject != null && this.target != null) {}
+    var a = cells[1, 2] + jagged[1][2];
+    transform.Find("Child");
+  }
+}
+"#;
+        let m = &csharp_perf(src)[0];
+        let nulls: Vec<_> = m.null_checks.iter().map(|n| n.type_name.as_str()).collect();
+        assert_eq!(
+            nulls,
+            ["Transform", "Rigidbody", "int", "GameObject", "Transform"]
+        );
+        assert_eq!(m.array_access.len(), 1);
+        assert_eq!(m.array_access[0].start.line, 11);
+        let costly: Vec<_> = m.expensive.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(costly, ["GetComponent", "Find"]);
+    }
+
+    #[test]
+    fn finds_strings_naming_unity_things() {
+        let src = r#"
+using UnityEngine.SceneManagement;
+class Player : MonoBehaviour {
+  const string EnemyTag = "Enemy";
+  static readonly int Ground = LayerMask.NameToLayer("Ground");
+  Animator anim;
+  void OnTriggerEnter(Collider other) {
+    if (other.CompareTag(EnemyTag) || other.tag == "Boss" || CompareTag(@"Pick""up")) {}
+    other.gameObject.tag = "Dead";
+    var mask = LayerMask.GetMask("Water", "UI");
+    float h = Input.GetAxis("Horizontal") + (Input.GetButtonDown("Jump") ? 1 : 0);
+    SceneManager.LoadScene("Level\t2");
+    SceneManager.LoadSceneAsync(3);
+    UnityEditor.SceneManagement.EditorSceneManager.OpenScene("Assets/Test.unity");
+    var icon = Resources.Load<Sprite>("UI/Icon");
+    Resources.LoadAll("Levels");
+    anim.Play("Run");
+    GetComponent<Animator>().CrossFade(stateName: "Jump", 0.1f);
+    audio.Play("NotAState");
+    var s = Shader.Find("Custom/Water");
+    var dynamic = Resources.Load(path);
+    GameObject.FindWithTag(nameTag);
+  }
+}
+"#;
+        let got = csharp_unity(src);
+        let refs: Vec<_> = got
+            .refs
+            .iter()
+            .map(|r| format!("{}:{}", r.kind, r.value))
+            .collect();
+        assert_eq!(
+            refs,
+            [
+                "layer:Ground",
+                "tag:Enemy",
+                "tag:Boss",
+                "tag:Pick\"up",
+                "tag:Dead",
+                "layer:Water",
+                "layer:UI",
+                "axis:Horizontal",
+                "axis:Jump",
+                "scene:Level\t2",
+                "sceneIndex:3",
+                "editorScene:Assets/Test.unity",
+                "resource:UI/Icon",
+                "resourceFolder:Levels",
+                "animatorState:Run",
+                "animatorState:Jump",
+                "shader:Custom/Water",
+            ]
+        );
+        // The constant is reported where it is used.
+        let enemy = &got.refs[1].range;
+        let line = src.lines().nth(enemy.start.line as usize).unwrap();
+        assert_eq!(
+            &line[enemy.start.character as usize..enemy.end.character as usize],
+            "EnemyTag"
+        );
+    }
+
+    #[test]
+    fn finds_the_parent_set_after_instantiate() {
+        let src = r#"
+class Spawner : MonoBehaviour {
+  void Spawn(GameObject prefab, Transform root) {
+    var a = Instantiate(prefab);
+    a.name = "A";
+    a.transform.SetParent(root);
+
+    var b = (GameObject)Object.Instantiate(prefab);
+    b.transform.SetParent(root, false);
+
+    GameObject c;
+    c = Instantiate(prefab) as GameObject;
+    c.transform.parent = root;
+
+    var d = Instantiate(prefab);
+    d.transform.position = Vector3.zero;
+    d.transform.SetParent(root);
+
+    var e = Instantiate(prefab, root);
+    e.transform.SetParent(root);
+
+    var f = Instantiate(prefab);
+    if (root) { f.transform.SetParent(root); }
+  }
+}
+"#;
+        let got = csharp_unity(src).set_parent;
+        let found: Vec<_> = got
+            .iter()
+            .map(|p| (p.range.start.line, p.parent.as_str(), p.world))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (5, "root", Some(true)),
+                (8, "root", Some(false)),
+                (12, "root", Some(true))
+            ]
+        );
+        assert_eq!(got[0].instantiate.start.line, 3);
+        assert_eq!(got[0].original, "prefab");
     }
 
     #[test]

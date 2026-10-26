@@ -339,6 +339,58 @@ export interface PerfMethod {
   coroutine: boolean;
   calls: PerfCall[];
   expensive: PerfCall[];
+  /** `x == null` / `x != null`, with the type `x` is declared with ("Transform"). */
+  nullChecks: { typeName: string; range: SourceRange }[];
+  /** `grid[x, y]` on a multidimensional array. */
+  arrayAccess: SourceRange[];
+}
+
+/** A string a script passes to Unity that names a tag, a layer, a scene… (syntax.rs). */
+export interface UnityRef {
+  kind: "tag" | "layer" | "axis" | "scene" | "sceneIndex" | "editorScene" | "resource" | "resourceFolder" | "animatorState" | "shader";
+  value: string;
+  range: SourceRange;
+}
+
+/** `Instantiate(prefab)` followed by setting the parent, which Instantiate could have done. */
+export interface ParentAfterInstantiate {
+  range: SourceRange;
+  instantiate: SourceRange;
+  /** What is instantiated, as written. */
+  original: string;
+  parent: string;
+  /** Whether the world position stays; null when an expression decides. */
+  world: boolean | null;
+}
+
+export interface UnityCode {
+  refs: UnityRef[];
+  setParent: ParentAfterInstantiate[];
+}
+
+export interface UnityAssembly {
+  name: string;
+  guid: string | null;
+  path: string;
+}
+
+/** What a Unity project's settings and assets name (unity_data.rs). A null list could not be read: its check is skipped. */
+export interface UnityProjectData {
+  tags: string[] | null;
+  layers: string[] | null;
+  axes: string[] | null;
+  buildScenes: { path: string; enabled: boolean }[] | null;
+  /** Every scene: "Assets/Scenes/Main.unity". */
+  scenes: string[];
+  /** Assets in Resources folders by their path inside it, extension kept: "UI/Icon.png". */
+  resources: string[];
+  animatorStates: string[] | null;
+  shaders: string[];
+  assemblies: UnityAssembly[];
+  /** Assemblies Unity compiled (Library/ScriptAssemblies). */
+  compiled: string[];
+  /** Whether every assembly a definition can reference is known. */
+  assembliesComplete: boolean;
 }
 
 /** Messages from one Unity Editor, a burst at a time. */
@@ -573,10 +625,12 @@ export const api = {
   unityClasses: (root: string) => invoke<Record<string, string[]>>("unity_classes", { root }),
   unityAssetUsages: (root: string, script: string, classes: string[]) => invoke<AssetUsages>("unity_asset_usages", { root, script, classes }),
   unityWarmIndex: (root: string) => invoke<void>("unity_warm_index", { root }),
+  unityProjectData: (root: string) => invoke<UnityProjectData>("unity_project_data", { root }),
   /** Adds a script no generated `.csproj` lists to its assembly's project; the project changed, or null. */
   unityAddToProject: (root: string, file: string) => invoke<string | null>("unity_add_to_project", { root, file }),
   csharpOutline: (text: string) => invoke<OutlineSymbol[]>("csharp_outline", { text }),
   csharpPerf: (text: string) => invoke<PerfMethod[]>("csharp_perf", { text }),
+  csharpUnity: (text: string) => invoke<UnityCode>("csharp_unity", { text }),
   lspFindServer: () => invoke<ServerCommand | null>("lsp_find_server"),
   lspStart: (cwd: string) => invoke<{ id: number; kind: ServerCommand["kind"] }>("lsp_start", { cwd }),
   lspSend: (id: number, message: unknown) => invoke<void>("lsp_send", { id, message }),
