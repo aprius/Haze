@@ -23,7 +23,7 @@ import { absPath, repo, useGit } from "../store/git";
 import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
-import { choose, FloatWindow, openMenu, prompt, toast, type MenuItem } from "./Overlays";
+import { choose, externalWindows, FloatWindow, openMenu, prompt, toast, windowFocusedAt, type MenuItem } from "./Overlays";
 import { showAssetUsages, showDeclarations, showLocations } from "./UsagesPopup";
 import type { AssetUsage } from "../lib/ipc";
 import { runUnityTests } from "../store/unity";
@@ -862,14 +862,79 @@ type TabDrop =
   | { kind: "group"; group: string; side: L.Side | null; rect: DOMRect }
   | { kind: "window" };
 
-/** The drop under the pointer, in the document the drag happens in. */
-function tabDropAt(doc: Document, x: number, y: number): TabDrop | null {
+/** The pointer during a tab drag: the window and document it is over, there, and the drop it would make. */
+interface TabDragAt {
+  doc: Document;
+  /** Tauri label of the window it is over, when not the drag's own. */
+  label: string | null;
+  x: number;
+  y: number;
+  drop: TabDrop | null;
+}
+
+/** One of Haze's windows on screen: its content's top left in logical pixels, and CSS pixels to those (page zoom). */
+interface WindowBox {
+  win: Window;
+  label: string;
+  left: number;
+  top: number;
+  zoom: number;
+}
+
+/**
+ * Where Haze's windows are, to carry a tab dragged out of one into another,
+ * the last focused first (no z-order is to be had; it is the nearest guess at
+ * which is in front). Minimized and hidden ones are left out. Empty outside
+ * Tauri, where the editor windows are panels in the main one.
+ */
+async function windowBoxes(): Promise<WindowBox[]> {
+  if (!("__TAURI_INTERNALS__" in window)) return [];
+  const { WebviewWindow, getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const at = (w: Window) => windowFocusedAt.get(w) ?? 0;
+  const all: [Window, string][] = [...externalWindows, [window, getCurrentWebviewWindow().label] as [Window, string]].sort(([a], [b]) => at(b) - at(a));
+  const boxes = await Promise.all(
+    all.map(async ([win, label]) => {
+      const w = win.closed ? null : await WebviewWindow.getByLabel(label);
+      if (!w) return null;
+      const [pos, size, scale, minimized, visible] = await Promise.all([w.innerPosition(), w.innerSize(), w.scaleFactor(), w.isMinimized(), w.isVisible()]);
+      if (minimized || !visible) return null;
+      return { win, label, left: pos.x / scale, top: pos.y / scale, zoom: size.width / scale / (win.innerWidth || 1) };
+    }),
+  );
+  return boxes.filter((b): b is WindowBox => !!b);
+}
+
+/**
+ * The drop under the pointer at `x`, `y` in `doc`, the document the drag
+ * started in. Outside its window, in another of Haze's windows (`boxes`) the
+ * pointer is over; outside all of them, a window of its own.
+ */
+function tabDropAt(projectId: string, doc: Document, x: number, y: number, boxes: WindowBox[]): TabDragAt {
   const win = doc.defaultView!;
-  if (x < 0 || y < 0 || x > win.innerWidth || y > win.innerHeight) return { kind: "window" };
+  const owns = (group: string) => !!useWorkspace.getState().ui[projectId]?.groups.some((g) => g.id === group);
+  if (x >= 0 && y >= 0 && x <= win.innerWidth && y <= win.innerHeight) return { doc, label: null, x, y, drop: tabDropIn(doc, x, y, owns) };
+  const from = boxes.find((b) => b.win === win);
+  if (from) {
+    const sx = from.left + x * from.zoom;
+    const sy = from.top + y * from.zoom;
+    for (const b of boxes) {
+      if (b === from || b.win.closed) continue;
+      const cx = (sx - b.left) / b.zoom;
+      const cy = (sy - b.top) / b.zoom;
+      if (cx < 0 || cy < 0 || cx > b.win.innerWidth || cy > b.win.innerHeight) continue;
+      return { doc: b.win.document, label: b.label, x: cx, y: cy, drop: tabDropIn(b.win.document, cx, cy, owns) };
+    }
+  }
+  return { doc, label: null, x, y, drop: { kind: "window" } };
+}
+
+/** The drop at `x`, `y` in `doc`, on a group of the project (`owns`). */
+function tabDropIn(doc: Document, x: number, y: number, owns: (group: string) => boolean): TabDrop | null {
   const el = doc.elementFromPoint(x, y);
   const tab = el?.closest<HTMLElement>(".editor-tab");
   const bar = el?.closest<HTMLElement>(".editor-tabs");
   if (bar?.dataset.group) {
+    if (!owns(bar.dataset.group)) return null;
     const tabs = [...bar.querySelectorAll<HTMLElement>(".editor-tab:not(.overflowed)")];
     if (tab && !tab.classList.contains("overflowed")) {
       const r = tab.getBoundingClientRect();
@@ -883,7 +948,7 @@ function tabDropAt(doc: Document, x: number, y: number): TabDrop | null {
     return { kind: "tab", group: bar.dataset.group, index, rect: new DOMRect(last ? last.right - 1 : r.left, r.top, 2, r.height) };
   }
   const stack = el?.closest<HTMLElement>(".editor-group");
-  if (!stack?.dataset.group) return null;
+  if (!stack?.dataset.group || !owns(stack.dataset.group)) return null;
   const body = stack.querySelector(".editor-stack")?.getBoundingClientRect() ?? stack.getBoundingClientRect();
   const fx = (x - body.left) / body.width;
   const fy = (y - body.top) / body.height;
@@ -905,10 +970,16 @@ function tabDropAt(doc: Document, x: number, y: number): TabDrop | null {
   return { kind: "group", group: stack.dataset.group, side, rect };
 }
 
-/** Applies a tab drop: reorder, move to another group, split, or a window of its own. */
+/** A tab dragged out of a window of its own (its only tab) would just get another one. */
+function aloneInWindow(e: L.Editors, group: string): boolean {
+  const win = L.windowOf(e, group);
+  return !!win && L.layoutGroups(win.layout).length === 1 && (L.groupById(e, group)?.tabs.length ?? 0) < 2;
+}
+
+/** Applies a tab drop: reorder, move to another group (in another window too), split, or a window of its own. */
 function dropTab(project: Project, from: string, path: string, drop: TabDrop) {
   useWorkspace.getState().editors(project.id, (e) => {
-    if (drop.kind === "window") return L.detachTab(e, from, path);
+    if (drop.kind === "window") return aloneInWindow(e, from) ? e : L.detachTab(e, from, path);
     if (drop.kind === "tab") {
       // Within its own bar, the index counts the tab itself.
       const g = L.groupById(e, drop.group);
@@ -925,14 +996,16 @@ function dropTab(project: Project, from: string, path: string, drop: TabDrop) {
   });
 }
 
-function TabDragGhost({ doc, label, x, y, drop }: { doc: Document; label: string; x: number; y: number; drop: TabDrop | null }) {
+/** Drawn in the window the pointer is over: the drop's place, and the tab's name by the pointer. */
+function TabDragGhost({ label, at, newWindow }: { label: string; at: TabDragAt; newWindow: boolean }) {
+  const { doc, x, y, drop } = at;
   const r = drop && drop.kind !== "window" ? drop.rect : null;
   return createPortal(
     <>
       {r && <div className={"tab-drop-zone" + (drop?.kind === "tab" ? " caret" : "")} style={{ left: r.left, top: r.top, width: r.width, height: r.height }} />}
       <div className="tab-drag-ghost" style={{ left: x + 12, top: y + 8 }}>
         {label}
-        {drop?.kind === "window" && <span className="muted"> · Open in New Window</span>}
+        {newWindow && <span className="muted"> · Open in New Window</span>}
       </div>
     </>,
     doc.body,
@@ -965,7 +1038,7 @@ function TabBar({ project, group }: { project: Project; group: L.EditorGroup }) 
 
   // Dragging a tab: to another place in a bar, another group, a side of a group
   // (a new split), or out of the window (a window of its own).
-  const [drag, setDrag] = useState<{ doc: Document; label: string; x: number; y: number; drop: TabDrop | null } | null>(null);
+  const [drag, setDrag] = useState<{ label: string; at: TabDragAt; newWindow: boolean } | null>(null);
   const dragged = useRef(false);
   const onTabPointerDown = (e: React.PointerEvent<HTMLDivElement>, path: string) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest(".tab-close")) return;
@@ -975,14 +1048,19 @@ function TabBar({ project, group }: { project: Project; group: L.EditorGroup }) 
     const doc = el.ownerDocument;
     const [startX, startY] = [e.clientX, e.clientY];
     let started = false;
-    let drop: TabDrop | null = null;
+    let at: TabDragAt | null = null;
+    // Haze's windows don't move during a drag: where they are is asked once.
+    let boxes: WindowBox[] = [];
+    void windowBoxes().then((b) => (boxes = b)).catch(() => {});
     // Keeps the events coming to the tab wherever the pointer goes, outside the window too.
     el.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
       if (!started && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
       started = true;
-      drop = tabDropAt(doc, ev.clientX, ev.clientY);
-      setDrag({ doc, label: tabTitle(path), x: ev.clientX, y: ev.clientY, drop });
+      at = tabDropAt(project.id, doc, ev.clientX, ev.clientY, boxes);
+      const ui = useWorkspace.getState().ui[project.id];
+      const newWindow = at.drop?.kind === "window" && !!ui && !aloneInWindow(ui, group.id);
+      setDrag({ label: tabTitle(path), at, newWindow });
     };
     const end = (apply: boolean) => {
       el.removeEventListener("pointermove", move);
@@ -994,7 +1072,14 @@ function TabBar({ project, group }: { project: Project; group: L.EditorGroup }) 
       dragged.current = true;
       setTimeout(() => (dragged.current = false));
       setDrag(null);
-      if (apply && drop) dropTab(project, group.id, path, drop);
+      const done = at as TabDragAt | null;
+      if (!apply || !done?.drop) return;
+      dropTab(project, group.id, path, done.drop);
+      // Dropped in another window: it comes to the front, as its editor has the tab now.
+      if (done.label) {
+        const label = done.label;
+        void import("@tauri-apps/api/webviewWindow").then(async ({ WebviewWindow }) => (await WebviewWindow.getByLabel(label))?.setFocus()).catch(() => {});
+      }
     };
     const up = () => end(true);
     const cancel = () => end(false);
