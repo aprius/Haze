@@ -969,6 +969,8 @@ function TabBar({ project, group }: { project: Project; group: L.EditorGroup }) 
   const dragged = useRef(false);
   const onTabPointerDown = (e: React.PointerEvent<HTMLDivElement>, path: string) => {
     if (e.button !== 0 || (e.target as HTMLElement).closest(".tab-close")) return;
+    // Without this the drag also starts a native text selection that sweeps across the editor.
+    e.preventDefault();
     const el = e.currentTarget;
     const doc = el.ownerDocument;
     const [startX, startY] = [e.clientX, e.clientY];
@@ -1075,6 +1077,8 @@ function TabBar({ project, group }: { project: Project; group: L.EditorGroup }) 
               onClick={() => !dragged.current && activate(t.path)}
               onDoubleClick={() => useWorkspace.getState().pinTab(project.id, t.path)}
               onMouseDown={(e) => {
+                // The selection a drag would start (see onTabPointerDown): WebKit starts it on mousedown.
+                if (e.button === 0) e.preventDefault();
                 if (e.button === 1) {
                   e.preventDefault();
                   void closeTabsWithPrompt(project.id, [t.path], group.id);
