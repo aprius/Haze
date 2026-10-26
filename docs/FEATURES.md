@@ -19,7 +19,7 @@ The full feature reference. For an overview, see the [README](../README.md).
 
 - Preview tabs (single click opens a temporary tab; double-click or editing pins it). Tabs that do not fit go behind a ▾ list, like Rider.
 - **Split editors**, like Rider: *Split Vertically/Horizontally*, *Split and Move Right/Down*, *Move to Opposite Group*, *Unsplit* and *Unsplit All* in the tab menu and Find Action, and splits within splits, resized by dragging between them. Drag a tab to another tab bar, onto a side of an editor to split there, or out of the window. `Shift+Enter` in the Project view opens the file in the split to the right. Assign keys in Settings → Keymap → Editor Splits (Go to Next Splitter too).
-- **Editor windows**: *Open in New Window* (`Shift+F4`, from a tab or the Project view, or a tab dragged out of the window) moves a tab into an OS window of its own, with its own tabs and splits; closing it closes its tabs. Splits and windows are restored with the session.
+- **Editor windows**: *Open in New Window* (`Shift+F4`, from a tab or the Project view, or a tab dragged out of the window) moves a tab into an OS window of its own, with its own tabs and splits. Drag its tabs back onto the main window's (or another editor window's) tab bars and editors to move or split them there, or use *Move to Main Window*; a window left without tabs closes. Closing it closes its tabs. Splits and windows are restored with the session.
 - **Rainbow brackets** and rainbow scope guides (Settings → Editor).
 - **Change markers** beside the line numbers, like Rider: added lines (green), modified (blue) and deletions since `HEAD`, following unsaved edits.
 - **Inline blame** at the end of the caret line (`Author, 2 days ago • summary`, details on hover), like GitToolBox.

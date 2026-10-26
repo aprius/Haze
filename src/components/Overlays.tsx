@@ -244,6 +244,9 @@ function inDoc(doc: Document, node: ReactNode): ReactNode {
 let floatSeq = 0;
 const isTauri = "__TAURI_INTERNALS__" in window;
 
+/** The windows of their own (editor, commit, diff) our React tree renders into, with their Tauri labels. */
+export const externalWindows = new Map<Window, string>();
+
 // Monaco keys its render frames by `vscodeWindowId` (Haze's window is 1). Windows
 // without one share the key `undefined`: one frame lost there (a window closed
 // or its document swapped before it ran) and editors in every later Commit or
@@ -339,6 +342,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
     // The native side places it over the main window.
     const win = window.open(`about:blank#${label}`, label, `width=${w},height=${h}`);
     if (!win) return setHost(null);
+    externalWindows.set(win, label);
     let doc = win.document;
     if (!doc.body) {
       doc.open();
@@ -419,6 +423,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
     setHost({ win, root, label });
     return () => {
       closing = true;
+      externalWindows.delete(win);
       clearInterval(poll);
       unmirror();
       unlisten?.();
