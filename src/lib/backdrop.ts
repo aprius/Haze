@@ -168,7 +168,12 @@ async function blurred(src: CanvasImageSource, sw: number, sh: number, blur: num
   canvas.width = w;
   canvas.height = h;
   drawBlurred(canvas.getContext("2d")!, src, sw, sh, r);
-  return toBlob(canvas);
+  try {
+    return await toBlob(canvas);
+  } finally {
+    // WebKit keeps a canvas's backing store until it is collected.
+    canvas.width = canvas.height = 0;
+  }
 }
 
 /** A video's first frame, as a source to draw. */
@@ -181,7 +186,7 @@ async function videoFrame(url: string): Promise<{ src: HTMLVideoElement; w: numb
   video.crossOrigin = "anonymous";
   video.src = url;
   // Without load(), the element keeps its decoder and connection until collected.
-  const done = () => (video.removeAttribute("src"), video.load());
+  const done = () => (video.pause(), video.removeAttribute("src"), video.load());
   try {
     await new Promise<void>((resolve, reject) => {
       video.onloadeddata = () => resolve();
@@ -273,7 +278,11 @@ async function readBase(path: string): Promise<Stored> {
     const ctx = canvas.getContext("2d")!;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return { path, blob: await toBlob(canvas) };
+    try {
+      return { path, blob: await toBlob(canvas) };
+    } finally {
+      canvas.width = canvas.height = 0;
+    }
   } finally {
     img.close();
   }

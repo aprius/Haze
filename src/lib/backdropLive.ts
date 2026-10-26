@@ -69,6 +69,7 @@ function layout(): void {
 }
 
 function setMedia(url: string | null): void {
+  clearTimeout(retry);
   clearTimeout(sampler);
   sampler = undefined;
   video?.pause();
