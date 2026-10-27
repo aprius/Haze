@@ -24,7 +24,8 @@ import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
 import { choose, externalWindows, FloatWindow, openMenu, prompt, toast, windowFocusedAt, type MenuItem } from "./Overlays";
-import { showAssetUsages, showDeclarations, showLocations } from "./UsagesPopup";
+import { forgetFindWindow, WithFindWindow } from "./FindPanel";
+import { showAssetUsages, showDeclarations, showLocations, type UsagesAnchor } from "./UsagesPopup";
 import type { AssetUsage } from "../lib/ipc";
 import { runUnityTests } from "../store/unity";
 import { generateUnityMember, registerUnityCompletion } from "../lib/unity/generate";
@@ -108,11 +109,12 @@ export function copyContext(): void {
   void navigator.clipboard.writeText(text).then(() => toast("Copied with path and line numbers"));
 }
 
-// Popups closing leave focus on <body>; give it back to the editor.
+// Popups closing leave focus on <body>; give it back to the editor, in whichever window it is.
 window.addEventListener("haze:popup-closed", () =>
   requestAnimationFrame(() => {
-    const el = document.activeElement;
-    if (!el || el === document.body) currentEditor?.focus();
+    const doc = currentEditor?.getDomNode()?.ownerDocument ?? document;
+    const el = doc.activeElement;
+    if (!el || el === doc.body) currentEditor?.focus();
   }),
 );
 
@@ -252,7 +254,7 @@ function installResultLists() {
     result.dispose();
     const anchor = anchorBelow(editor, { lineNumber: pos.lineNumber, column: word.startColumn });
     const project = (isVirtualPath(path) ? null : projectForPath(path)) ?? activeProject();
-    if (!usages) void showDeclarations(word.word, found, anchor);
+    if (!usages) void showDeclarations(project, word.word, found, anchor);
     else if (project) void showLocations(project, `Usages of ${word.word}`, async () => found, false, anchor);
     return Promise.resolve();
   };
@@ -441,13 +443,13 @@ setCodeVisionAuthor(async (model, from, to) => {
   };
 });
 
-/** Viewport point just under `pos`, where the usages list opens. */
-function anchorBelow(editor: monaco.editor.ICodeEditor, pos: monaco.IPosition): { x: number; y: number } | null {
+/** Viewport point just under `pos`, where the usages list opens: in the editor's window. */
+function anchorBelow(editor: monaco.editor.ICodeEditor, pos: monaco.IPosition): UsagesAnchor | null {
   const at = editor.getScrolledVisiblePosition(pos);
   const dom = editor.getDomNode();
   if (!at || !dom) return null;
   const r = dom.getBoundingClientRect();
-  return { x: r.left + at.left, y: r.top + at.top + at.height };
+  return { x: r.left + at.left, y: r.top + at.top + at.height, doc: dom.ownerDocument };
 }
 
 // A Code Vision usages count opens the usages list for that symbol, under its name.
@@ -462,8 +464,8 @@ monaco.editor.registerCommand("haze.codeVisionUsages", (_accessor, path: string,
 });
 
 // Unity Code Vision: asset usages of a script or method, and running tests in Unity.
-monaco.editor.registerCommand("haze.unityAssetUsages", (_accessor, _path: string, title: string, usages: AssetUsage[]) => {
-  showAssetUsages(title, usages, null);
+monaco.editor.registerCommand("haze.unityAssetUsages", (_accessor, path: string, title: string, usages: AssetUsage[]) => {
+  showAssetUsages(projectForPath(path), title, usages, null);
 });
 
 monaco.editor.registerCommand("haze.unityRunTests", (_accessor, path: string, pattern: string, label: string) => {
@@ -1674,6 +1676,7 @@ export function EditorArea({ project }: { project: Project }) {
 
 /** A detached editor window (Open in New Window), with splits of its own. */
 function EditorWindowView({ project, index, win }: { project: Project; index: number; win: L.EditorWindow }) {
+  useEffect(() => () => forgetFindWindow(win.id), [win.id]);
   const title = useWorkspace((s) => {
     const ui = s.ui[project.id];
     const ids = L.layoutGroups(win.layout);
@@ -1695,9 +1698,11 @@ function EditorWindowView({ project, index, win }: { project: Project; index: nu
       escapeCloses={false}
       onClose={() => void closeEditorWindow(project.id, win.id)}
     >
-      <div className="editor-area" onKeyDown={onKeyDown}>
-        <SplitView project={project} node={win.layout} path={[index]} />
-      </div>
+      <WithFindWindow project={project} windowId={win.id}>
+        <div className="editor-area" onKeyDown={onKeyDown}>
+          <SplitView project={project} node={win.layout} path={[index]} />
+        </div>
+      </WithFindWindow>
     </FloatWindow>
   );
 }

@@ -236,8 +236,13 @@ export function Dialogs() {
 const useHost = create<{ doc: Document }>(() => ({ doc: document }));
 window.addEventListener("focus", () => useHost.setState({ doc: document }));
 
+/** The document of the window last focused, where a popup opened now belongs. */
+export function hostDocument(): Document {
+  return useHost.getState().doc;
+}
+
 /** Renders `node` into `doc` when that is another window's document. */
-function inDoc(doc: Document, node: ReactNode): ReactNode {
+export function inDoc(doc: Document, node: ReactNode): ReactNode {
   return doc === document || !doc.defaultView || doc.defaultView.closed ? node : createPortal(node, doc.body);
 }
 

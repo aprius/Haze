@@ -380,7 +380,7 @@ export default function App() {
       <StatusBar project={active} />
       <SearchEverywhere project={active} />
       <FindInFiles project={active} />
-      <UsagesPopup project={active} />
+      <UsagesPopup active={active} />
       <BranchesPopup project={active} />
       <PushDialog project={active} />
       <PullDialog project={active} />

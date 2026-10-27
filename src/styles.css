@@ -3666,6 +3666,14 @@ button.toggle.on {
   background: var(--editor-bg);
 }
 
+/* Its editors, and its own Find window under them. */
+.find-docked {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* In a window of its own: the native frame is the border and title bar. */
 html:has(.float-external),
 html:has(.float-external) body {

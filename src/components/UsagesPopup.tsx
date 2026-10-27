@@ -6,6 +6,7 @@ import { PanelBottom } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { getModel, isVirtualPath } from "../lib/buffers";
+import * as L from "../lib/editorLayout";
 import { api, errorMessage, type AssetUsage } from "../lib/ipc";
 import type { FoundLocation } from "../lib/lsp/csharp";
 import { basename, dirname, relative } from "../lib/path";
@@ -15,7 +16,7 @@ import { useWorkspace, type Project } from "../store/workspace";
 import { CodeLine } from "./CodePreview";
 import { FileIcon } from "./FileIcon";
 import { openInFindWindow } from "./FindPanel";
-import { toast } from "./Overlays";
+import { hostDocument, inDoc, toast } from "./Overlays";
 
 export interface Usage extends FoundLocation {
   text: string;
@@ -24,8 +25,19 @@ export interface Usage extends FoundLocation {
   fileId?: string | null;
 }
 
+/** Viewport point in `doc`'s window, under the symbol. */
+export interface UsagesAnchor {
+  x: number;
+  y: number;
+  doc: Document;
+}
+
 interface UsagesState {
   open: boolean;
+  /** The project searched: not always the main window's, from a detached editor window. */
+  projectId: string | null;
+  /** The window it shows in: the one it was asked from. */
+  doc: Document;
   /** Declarations are listed one row per place ("Declarations of …"). */
   kind: "usages" | "declarations" | "assets";
   title: string;
@@ -33,12 +45,28 @@ interface UsagesState {
   error: string | null;
   items: Usage[];
   /** Viewport point to open under (the symbol), else centred like Search Everywhere. */
-  anchor: { x: number; y: number } | null;
+  anchor: UsagesAnchor | null;
   /** Searches again, for the Find window's Rerun. */
   rerun: (() => Promise<Usage[]>) | null;
 }
 
-const useUsages = create<UsagesState>(() => ({ open: false, kind: "usages", title: "", loading: false, error: null, items: [], anchor: null, rerun: null }));
+const useUsages = create<UsagesState>(() => ({
+  open: false,
+  projectId: null,
+  doc: document,
+  kind: "usages",
+  title: "",
+  loading: false,
+  error: null,
+  items: [],
+  anchor: null,
+  rerun: null,
+}));
+
+/** Where a popup opened now shows: under the symbol's editor, else in the window last focused. */
+function placed(projectId: string | null, anchor: UsagesAnchor | null) {
+  return { open: true, projectId, doc: anchor?.doc ?? hostDocument(), anchor, loading: true, error: null, items: [] };
+}
 
 function close() {
   useUsages.setState({ open: false });
@@ -51,10 +79,10 @@ export async function showLocations(
   title: string,
   query: () => Promise<FoundLocation[]>,
   jumpIfSingle = false,
-  anchor: { x: number; y: number } | null = null,
+  anchor: UsagesAnchor | null = null,
 ): Promise<void> {
   const rerun = async () => sortUsages(await withText(await query()));
-  useUsages.setState({ open: true, kind: "usages", title, loading: true, error: null, items: [], anchor, rerun });
+  useUsages.setState({ ...placed(project.id, anchor), kind: "usages", title, rerun });
   try {
     const found = await query();
     if (jumpIfSingle && found.length === 1) {
@@ -73,8 +101,8 @@ function sortUsages(items: Usage[]): Usage[] {
 }
 
 /** Lists the declarations of `name` to choose from, titled with its kind when they agree ("Declarations of class 'Foo'"). */
-export async function showDeclarations(name: string, found: FoundLocation[], anchor: { x: number; y: number } | null): Promise<void> {
-  useUsages.setState({ open: true, kind: "declarations", title: `Declarations of '${name}'`, loading: true, error: null, items: [], anchor, rerun: null });
+export async function showDeclarations(project: Project | null, name: string, found: FoundLocation[], anchor: UsagesAnchor | null): Promise<void> {
+  useUsages.setState({ ...placed(project?.id ?? null, anchor), kind: "declarations", title: `Declarations of '${name}'`, rerun: null });
   try {
     const items = (await withText(found)).sort((a, b) => basename(a.path).localeCompare(basename(b.path)) || a.path.localeCompare(b.path) || a.line - b.line);
     const kinds = new Set(items.map((u) => declKind(u.text, name)));
@@ -86,9 +114,9 @@ export async function showDeclarations(name: string, found: FoundLocation[], anc
 }
 
 /** Lists scenes, prefabs and assets using a script or method; picking one selects it in Unity when it is linked. */
-export function showAssetUsages(title: string, usages: AssetUsage[], anchor: { x: number; y: number } | null): void {
+export function showAssetUsages(project: Project | null, title: string, usages: AssetUsage[], anchor: UsagesAnchor | null): void {
   const items = usages.map((u) => ({ path: u.path, line: u.line, column: 1, endLine: u.line, endColumn: 1, text: "", object: u.object, fileId: u.fileId }));
-  useUsages.setState({ open: true, kind: "assets", title, loading: false, error: null, items, anchor, rerun: null });
+  useUsages.setState({ ...placed(project?.id ?? null, anchor), kind: "assets", title, loading: false, items, rerun: null });
 }
 
 /** What `name` is declared as on `line` ("class", "method"), as far as the text tells. */
@@ -120,8 +148,10 @@ async function withText(found: FoundLocation[]): Promise<Usage[]> {
   return found.map((f) => ({ ...f, text: getModel(f.path)?.getLineContent(f.line) ?? lookup.get(`${f.path}:${f.line}`) ?? "" }));
 }
 
-export function UsagesPopup({ project }: { project: Project | null }) {
-  const { open, kind, title, loading, error, items, anchor, rerun } = useUsages();
+/** `active`: the main window's project, for a popup not tied to one. */
+export function UsagesPopup({ active }: { active: Project | null }) {
+  const { open, projectId, doc, kind, title, loading, error, items, anchor, rerun } = useUsages();
+  const project = useWorkspace((s) => s.projects.find((p) => p.id === projectId && p.open)) ?? active;
   const [selected, setSelected] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -130,10 +160,11 @@ export function UsagesPopup({ project }: { project: Project | null }) {
   useLayoutEffect(() => {
     const el = popupRef.current;
     if (!el || !anchor) return;
+    const win = el.ownerDocument.defaultView ?? window;
     const { width, height } = el.getBoundingClientRect();
     const below = anchor.y + 4;
-    const top = below + height <= window.innerHeight - 8 ? below : Math.max(8, anchor.y - height - 24);
-    el.style.left = `${Math.max(8, Math.min(anchor.x, window.innerWidth - width - 8))}px`;
+    const top = below + height <= win.innerHeight - 8 ? below : Math.max(8, anchor.y - height - 24);
+    el.style.left = `${Math.max(8, Math.min(anchor.x, win.innerWidth - width - 8))}px`;
     el.style.top = `${top}px`;
   });
 
@@ -162,12 +193,16 @@ export function UsagesPopup({ project }: { project: Project | null }) {
   };
   const toFindWindow = () => {
     close();
-    openInFindWindow(project.id, title, items, rerun);
+    // Asked from a detached editor window: to that window's own Find window.
+    const ui = useWorkspace.getState().ui[project.id];
+    const win = doc !== document && ui ? L.windowOf(ui, ui.activeGroup) : null;
+    openInFindWindow(project.id, title, items, rerun, win?.id ?? null);
   };
   const files = new Set(items.map((i) => i.path)).size;
   let lastFile = "";
 
-  return (
+  return inDoc(
+    doc,
     <div className={"modal-backdrop se-backdrop" + (anchor ? " anchored" : "")} onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div
         ref={popupRef}
@@ -255,6 +290,6 @@ export function UsagesPopup({ project }: { project: Project | null }) {
             ))}
         </div>
       </div>
-    </div>
+    </div>,
   );
 }

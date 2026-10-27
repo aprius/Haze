@@ -1,11 +1,14 @@
 // The Find tool window in the bottom panel: usages moved there from the
 // usages popup stay listed, one tab per search, as a tree of files and lines.
+// A detached editor window has one of its own, under its editors.
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Pin, RotateCcw, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
 import { errorMessage } from "../lib/ipc";
 import { basename, dirname, relative } from "../lib/path";
+import * as L from "../lib/editorLayout";
 import { useWorkspace, type Project } from "../store/workspace";
+import { Splitter } from "./Shell";
 import { ToolTabs } from "./BuildPanel";
 import { FileIcon } from "./FileIcon";
 import { UsageCode, type Usage } from "./UsagesPopup";
@@ -21,72 +24,123 @@ interface FindTab {
   rerun: (() => Promise<Usage[]>) | null;
 }
 
+/**
+ * Tabs are kept per Find window: the main window's, keyed by its project, and
+ * each detached editor window's, keyed by that window's id.
+ */
 interface FindState {
   tabs: Record<string, FindTab[]>;
   active: Record<string, number>;
+  /** Detached windows' Find windows: shown, and their height. */
+  docked: Record<string, { visible: boolean; height: number }>;
 }
 
-export const useFind = create<FindState>(() => ({ tabs: {}, active: {} }));
+export const useFind = create<FindState>(() => ({ tabs: {}, active: {}, docked: {} }));
 
 let nextId = 1;
 
-function updateTab(projectId: string, id: number, patch: Partial<FindTab>): void {
-  useFind.setState((s) => ({ tabs: { ...s.tabs, [projectId]: (s.tabs[projectId] ?? []).map((t) => (t.id === id ? { ...t, ...patch } : t)) } }));
+function updateTab(key: string, id: number, patch: Partial<FindTab>): void {
+  useFind.setState((s) => ({ tabs: { ...s.tabs, [key]: (s.tabs[key] ?? []).map((t) => (t.id === id ? { ...t, ...patch } : t)) } }));
 }
 
-/** Shows `items` in the Find window, in place of its unpinned tab. */
-export function openInFindWindow(projectId: string, title: string, items: Usage[], rerun: (() => Promise<Usage[]>) | null): void {
+function setDocked(windowId: string, patch: Partial<{ visible: boolean; height: number }>): void {
+  useFind.setState((s) => ({ docked: { ...s.docked, [windowId]: { ...(s.docked[windowId] ?? { visible: false, height: 240 }), ...patch } } }));
+}
+
+/**
+ * Shows `items` in the Find window, in place of its unpinned tab: the main
+ * window's, or with `windowId` the one in that detached editor window.
+ */
+export function openInFindWindow(projectId: string, title: string, items: Usage[], rerun: (() => Promise<Usage[]>) | null, windowId: string | null = null): void {
+  const key = windowId ?? projectId;
   const tab: FindTab = { id: nextId++, title, items, loading: false, error: null, pinned: false, rerun };
   useFind.setState((s) => {
-    const tabs = s.tabs[projectId] ?? [];
+    const tabs = s.tabs[key] ?? [];
     const at = tabs.findIndex((t) => !t.pinned);
     const next = at < 0 ? [...tabs, tab] : tabs.map((t, i) => (i === at ? tab : t));
-    return { tabs: { ...s.tabs, [projectId]: next }, active: { ...s.active, [projectId]: tab.id } };
+    return { tabs: { ...s.tabs, [key]: next }, active: { ...s.active, [key]: tab.id } };
   });
-  useWorkspace.getState().updateUi(projectId, { bottomVisible: true, bottomTab: "find" });
+  if (windowId) setDocked(windowId, { visible: true });
+  else useWorkspace.getState().updateUi(projectId, { bottomVisible: true, bottomTab: "find" });
 }
 
-function closeTab(projectId: string, id: number): void {
+/** Drops a closed detached window's Find window. */
+export function forgetFindWindow(windowId: string): void {
   useFind.setState((s) => {
-    const tabs = s.tabs[projectId] ?? [];
+    const { [windowId]: _t, ...tabs } = s.tabs;
+    const { [windowId]: _a, ...active } = s.active;
+    const { [windowId]: _d, ...docked } = s.docked;
+    return { tabs, active, docked };
+  });
+}
+
+function closeTab(projectId: string, windowId: string | null, id: number): void {
+  const key = windowId ?? projectId;
+  useFind.setState((s) => {
+    const tabs = s.tabs[key] ?? [];
     const at = tabs.findIndex((t) => t.id === id);
     const next = tabs.filter((t) => t.id !== id);
-    const active = s.active[projectId] === id ? (next[Math.min(at, next.length - 1)]?.id ?? 0) : s.active[projectId];
-    return { tabs: { ...s.tabs, [projectId]: next }, active: { ...s.active, [projectId]: active } };
+    const active = s.active[key] === id ? (next[Math.min(at, next.length - 1)]?.id ?? 0) : s.active[key];
+    return { tabs: { ...s.tabs, [key]: next }, active: { ...s.active, [key]: active } };
   });
-  if (!useFind.getState().tabs[projectId]?.length) useWorkspace.getState().updateUi(projectId, { bottomTab: "build" });
+  if (useFind.getState().tabs[key]?.length) return;
+  if (windowId) setDocked(windowId, { visible: false });
+  else useWorkspace.getState().updateUi(projectId, { bottomTab: "build" });
 }
 
-async function rerunTab(projectId: string, tab: FindTab): Promise<void> {
+async function rerunTab(key: string, tab: FindTab): Promise<void> {
   if (!tab.rerun) return;
-  updateTab(projectId, tab.id, { loading: true, error: null });
+  updateTab(key, tab.id, { loading: true, error: null });
   try {
-    updateTab(projectId, tab.id, { loading: false, items: await tab.rerun() });
+    updateTab(key, tab.id, { loading: false, items: await tab.rerun() });
   } catch (e) {
-    updateTab(projectId, tab.id, { loading: false, error: errorMessage(e) });
+    updateTab(key, tab.id, { loading: false, error: errorMessage(e) });
   }
+}
+
+/** A detached editor window's editors, with its Find window under them when shown. */
+export function WithFindWindow({ project, windowId, children }: { project: Project; windowId: string; children: ReactNode }) {
+  const docked = useFind((s) => s.docked[windowId]);
+  const ref = useRef<HTMLDivElement>(null);
+  // Its own window's height, not the main window's.
+  const height = (ref.current?.ownerDocument.defaultView ?? window).innerHeight;
+  return (
+    <div ref={ref} className="find-docked">
+      {children}
+      {docked?.visible && (
+        <>
+          <Splitter vertical={false} value={docked.height} min={100} max={Math.max(200, height - 160)} invert onChange={(v) => setDocked(windowId, { height: v })} />
+          <div className="bottom" style={{ height: docked.height }}>
+            <FindPanel project={project} windowId={windowId} />
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 type Row = { kind: "file"; path: string; count: number } | { kind: "usage"; usage: Usage; index: number };
 
 const rowKey = (r: Row) => (r.kind === "file" ? `f:${r.path}` : `u:${r.index}`);
 
-export function FindPanel({ project }: { project: Project }) {
-  const tabs = useFind((s) => s.tabs[project.id]) ?? [];
-  const activeId = useFind((s) => s.active[project.id]);
+/** `windowId`: the Find window of that detached editor window, else the main window's. */
+export function FindPanel({ project, windowId = null }: { project: Project; windowId?: string | null }) {
+  const key = windowId ?? project.id;
+  const tabs = useFind((s) => s.tabs[key]) ?? [];
+  const activeId = useFind((s) => s.active[key]);
   const tab = tabs.find((t) => t.id === activeId) ?? tabs[0];
 
   return (
     <div className="terminal-panel build-panel fw-panel">
       <div className="panel-header">
-        <ToolTabs project={project} />
+        {windowId ? <span className="panel-title">Find</span> : <ToolTabs project={project} />}
         <div className="fw-tabs">
           {tabs.map((t) => (
             <div
               key={t.id}
               className={"fw-tab" + (t === tab ? " active" : "")}
-              onClick={() => useFind.setState((s) => ({ active: { ...s.active, [project.id]: t.id } }))}
-              onMouseDown={(e) => e.button === 1 && (e.preventDefault(), closeTab(project.id, t.id))}
+              onClick={() => useFind.setState((s) => ({ active: { ...s.active, [key]: t.id } }))}
+              onMouseDown={(e) => e.button === 1 && (e.preventDefault(), closeTab(project.id, windowId, t.id))}
               title={t.title}
             >
               {t.pinned && <Pin size={11} />}
@@ -96,7 +150,7 @@ export function FindPanel({ project }: { project: Project }) {
                 title="Close"
                 onClick={(e) => {
                   e.stopPropagation();
-                  closeTab(project.id, t.id);
+                  closeTab(project.id, windowId, t.id);
                 }}
               >
                 <X size={12} />
@@ -105,17 +159,22 @@ export function FindPanel({ project }: { project: Project }) {
           ))}
         </div>
         <div className="panel-actions">
-          <button className="icon-btn" title="Hide" onClick={() => useWorkspace.getState().updateUi(project.id, { bottomVisible: false })}>
+          <button
+            className="icon-btn"
+            title="Hide"
+            onClick={() => (windowId ? setDocked(windowId, { visible: false }) : useWorkspace.getState().updateUi(project.id, { bottomVisible: false }))}
+          >
             <ChevronDown size={16} />
           </button>
         </div>
       </div>
-      {tab ? <FindResults key={tab.id} project={project} tab={tab} /> : <div className="build-body fw-body se-empty">Find Usages, then Open in Find Window from the usages list</div>}
+      {tab ? <FindResults key={tab.id} project={project} windowId={windowId} tab={tab} /> : <div className="build-body fw-body se-empty">Find Usages, then Open in Find Window from the usages list</div>}
     </div>
   );
 }
 
-function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
+function FindResults({ project, windowId, tab }: { project: Project; windowId: string | null; tab: FindTab }) {
+  const key = windowId ?? project.id;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -148,7 +207,7 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
 
   const current = rows.find((r) => rowKey(r) === selected);
 
-  const open = (u: Usage) => useWorkspace.getState().openFile(project.id, u.path, { line: u.line, column: u.column });
+  const open = (u: Usage) => useWorkspace.getState().openFile(project.id, u.path, { line: u.line, column: u.column, group: groupIn(project.id, windowId) });
   const toggle = (path: string, collapse = !collapsed.has(path)) =>
     setCollapsed((c) => {
       const next = new Set(c);
@@ -195,7 +254,7 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
   return (
     <div className="build-body fw-body">
       <div className="fw-toolbar">
-        <button className="icon-btn" title="Rerun" disabled={!tab.rerun || tab.loading} onClick={() => void rerunTab(project.id, tab)}>
+        <button className="icon-btn" title="Rerun" disabled={!tab.rerun || tab.loading} onClick={() => void rerunTab(key, tab)}>
           <RotateCcw size={15} />
         </button>
         <button className="icon-btn" title="Expand All" onClick={() => setCollapsed(new Set())}>
@@ -210,7 +269,7 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
         <button className="icon-btn" title="Next Occurrence" disabled={!tab.items.length} onClick={() => step(1)}>
           <ArrowDown size={15} />
         </button>
-        <button className={"icon-btn" + (tab.pinned ? " on" : "")} title={tab.pinned ? "Unpin Tab" : "Pin Tab"} onClick={() => updateTab(project.id, tab.id, { pinned: !tab.pinned })}>
+        <button className={"icon-btn" + (tab.pinned ? " on" : "")} title={tab.pinned ? "Unpin Tab" : "Pin Tab"} onClick={() => updateTab(key, tab.id, { pinned: !tab.pinned })}>
           <Pin size={15} />
         </button>
       </div>
@@ -268,4 +327,13 @@ function FindResults({ project, tab }: { project: Project; tab: FindTab }) {
       </div>
     </div>
   );
+}
+
+/** Where a detached window's Find window opens usages: its group used last. Undefined for the main window's (the active group). */
+function groupIn(projectId: string, windowId: string | null): string | undefined {
+  const ui = useWorkspace.getState().ui[projectId];
+  const win = windowId && ui?.windows.find((w) => w.id === windowId);
+  if (!ui || !win) return undefined;
+  const ids = L.layoutGroups(win.layout);
+  return ids.includes(ui.activeGroup) ? ui.activeGroup : ids[0];
 }
