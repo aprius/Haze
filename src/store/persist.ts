@@ -27,6 +27,7 @@ interface Persisted {
   unityPerfContext?: PerfContextMode;
   unityPerfHints?: boolean;
   unityInspections?: boolean;
+  ignoredRules?: string[];
   checkUpdates?: boolean;
   updateCheck?: SavedUpdateCheck;
 }
@@ -58,6 +59,7 @@ function snapshot(): Persisted {
     unityPerfContext: s.unityPerfContext,
     unityPerfHints: s.unityPerfHints,
     unityInspections: s.unityInspections,
+    ignoredRules: s.ignoredRules,
     checkUpdates: s.checkUpdates,
     updateCheck: savedUpdateCheck(),
   };
@@ -136,6 +138,7 @@ async function doRestore(): Promise<void> {
       unityPerfContext: data.unityPerfContext ?? "everywhere",
       unityPerfHints: data.unityPerfHints ?? true,
       unityInspections: data.unityInspections ?? true,
+      ignoredRules: Array.isArray(data.ignoredRules) ? data.ignoredRules.filter((c) => typeof c === "string") : [],
       checkUpdates: data.checkUpdates ?? true,
     });
     restoreUpdateCheck(data.updateCheck);

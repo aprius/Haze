@@ -1,6 +1,8 @@
 // Transient UI state: which popups are open. Not persisted.
 import { create } from "zustand";
 import type { DiffSpec } from "../components/DiffView";
+import { hostDocument } from "../components/Overlays";
+import { useWorkspace } from "./workspace";
 
 export type SeTab = "all" | "files" | "symbols" | "actions" | "text";
 
@@ -13,6 +15,11 @@ interface UiState {
   commitWindow: string | null;
   /** Floating diff window (Ctrl+D in the Commit window). */
   diffWindow: { projectId: string; spec: DiffSpec } | null;
+  /**
+   * Where Search Everywhere, Find in Files and the Git popups show: the window
+   * they were opened from, and its project when that is a detached editor window.
+   */
+  popupHost: { doc: Document; projectId: string | null };
 }
 
 export const useUi = create<UiState>(() => ({
@@ -21,10 +28,26 @@ export const useUi = create<UiState>(() => ({
   findInFiles: { open: false, replace: false, initialQuery: null, directory: null, nonce: 0 },
   commitWindow: null,
   diffWindow: null,
+  popupHost: { doc: document, projectId: null },
 }));
+
+/** The detached editor window showing `doc`, and its project; null for the main window. */
+export function editorWindowAt(doc: Document): { projectId: string; windowId: string } | null {
+  const id = doc === document ? undefined : doc.querySelector<HTMLElement>("[data-editor-window]")?.dataset.editorWindow;
+  if (!id) return null;
+  for (const [projectId, ui] of Object.entries(useWorkspace.getState().ui)) if (ui.windows.some((w) => w.id === id)) return { projectId, windowId: id };
+  return null;
+}
+
+/** A popup opening now shows in the window last focused (see popupHost). */
+export function hostPopupHere(): void {
+  const doc = hostDocument();
+  useUi.setState({ popupHost: { doc, projectId: editorWindowAt(doc)?.projectId ?? null } });
+}
 
 /** `query` replaces the previous text when given (Ctrl+E passes "" to list recent files). */
 export function openSearchEverywhere(tab: SeTab = "all", query: string | null = null): void {
+  hostPopupHere();
   useUi.setState({ searchEverywhere: { open: true, tab, nonce: Date.now(), query } });
 }
 
@@ -43,6 +66,7 @@ export function closeSearchEverywhere(): void {
 }
 
 export function openFindInFiles(opts: { replace?: boolean; query?: string | null; directory?: string | null } = {}): void {
+  hostPopupHere();
   useUi.setState({
     findInFiles: {
       open: true,

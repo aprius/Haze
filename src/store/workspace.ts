@@ -125,6 +125,8 @@ interface WorkspaceState {
   unityPerfHints: boolean;
   /** Unknown tags, layers, scenes… in scripts and broken assembly definition references are reported. */
   unityInspections: boolean;
+  /** Warnings and suggestions not shown in any project, by rule ID (IDE0130, CS0168…). */
+  ignoredRules: string[];
   /** Looks for a newer Haze release at startup and every few hours. */
   checkUpdates: boolean;
 
@@ -167,6 +169,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   unityPerfContext: "everywhere",
   unityPerfHints: true,
   unityInspections: true,
+  ignoredRules: [],
   checkUpdates: true,
 
   addProject(path) {

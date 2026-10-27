@@ -19,7 +19,7 @@ import { solutionDirs, useDotnet } from "../store/dotnet";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openPaths } from "../lib/editorLayout";
 import { FileIcon } from "./FileIcon";
-import { toast } from "./Overlays";
+import { toast, windowOf } from "./Overlays";
 
 // Scopes: the solution, one of its projects (a `.csproj`), a directory.
 // Without a solution, "In Project" is the opened folder.
@@ -141,8 +141,8 @@ function rememberSearch() {
   }));
 }
 
-/** Keeps the popup's title bar on screen, whatever the window size is now. */
-function clampBounds(b: NonNullable<Layout["bounds"]>) {
+/** Keeps the popup's title bar on screen, whatever the size of the window it is in (`window`) is now. */
+function clampBounds(b: NonNullable<Layout["bounds"]>, window: Window) {
   const w = Math.min(Math.max(b.w, 480), window.innerWidth - 16);
   const h = Math.min(Math.max(b.h, 320), window.innerHeight - 16);
   return {
@@ -159,6 +159,8 @@ function drag(e: React.PointerEvent, onMove: (dx: number, dy: number) => void) {
   e.preventDefault();
   const x0 = e.clientX;
   const y0 = e.clientY;
+  // The popup's own window: it may be a detached editor window.
+  const window = windowOf(e.currentTarget);
   const move = (ev: PointerEvent) => onMove(ev.clientX - x0, ev.clientY - y0);
   const up = () => {
     window.removeEventListener("pointermove", move);
@@ -260,7 +262,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
     }
     set(patch);
     setHistoryOpen(false);
-    requestAnimationFrame(() => queryRef.current?.select());
+    windowOf(queryRef.current).requestAnimationFrame(() => queryRef.current?.select());
   }, [open, nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -364,13 +366,14 @@ export function FindInFiles({ project }: { project: Project | null }) {
   // Bounds saved for a bigger window than the current one.
   useEffect(() => {
     if (!open) return;
+    const win = windowOf(queryRef.current);
     const fit = () => {
       const b = useLayout.getState().bounds;
-      if (b) useLayout.setState({ bounds: clampBounds(b) });
+      if (b) useLayout.setState({ bounds: clampBounds(b, win) });
     };
     fit();
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
+    win.addEventListener("resize", fit);
+    return () => win.removeEventListener("resize", fit);
   }, [open]);
 
   function scrollIntoView(i: number) {
@@ -511,7 +514,7 @@ export function FindInFiles({ project }: { project: Project | null }) {
   const pickHistory = (q: string) => {
     set({ query: q });
     setHistoryOpen(false);
-    requestAnimationFrame(() => queryRef.current?.select());
+    windowOf(queryRef.current).requestAnimationFrame(() => queryRef.current?.select());
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -562,11 +565,11 @@ export function FindInFiles({ project }: { project: Project | null }) {
   const moveBy = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest("button, input, select, label")) return;
     const r = popupRef.current!.getBoundingClientRect();
-    drag(e, (dx, dy) => useLayout.setState({ bounds: clampBounds({ x: r.left + dx, y: r.top + dy, w: r.width, h: r.height }) }));
+    drag(e, (dx, dy) => useLayout.setState({ bounds: clampBounds({ x: r.left + dx, y: r.top + dy, w: r.width, h: r.height }, windowOf(popupRef.current)) }));
   };
   const resizeBy = (e: React.PointerEvent) => {
     const r = popupRef.current!.getBoundingClientRect();
-    drag(e, (dx, dy) => useLayout.setState({ bounds: clampBounds({ x: r.left, y: r.top, w: r.width + dx, h: r.height + dy }) }));
+    drag(e, (dx, dy) => useLayout.setState({ bounds: clampBounds({ x: r.left, y: r.top, w: r.width + dx, h: r.height + dy }, windowOf(popupRef.current)) }));
   };
   const splitBy = (e: React.PointerEvent) => {
     const body = bodyRef.current!.getBoundingClientRect();

@@ -7,7 +7,7 @@ import { FindInFiles } from "./components/FindInFiles";
 import { SearchEverywhere } from "./components/SearchEverywhere";
 import { Backdrop } from "./components/Backdrop";
 import { glowRef } from "./lib/ambient";
-import { ContextMenu, Dialogs, Toasts } from "./components/Overlays";
+import { ContextMenu, Dialogs, inDoc, keyboardIn, setAppShortcuts, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, toggleBottom, UpdateProgressCard, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
 import { TestsPanel, UnityPanel } from "./components/UnityPanel";
@@ -36,7 +36,7 @@ import { restore } from "./store/persist";
 import { startTerminals, syncSessions } from "./store/terminals";
 import { affectsGit, handleFsChange, refreshGit, useTree } from "./store/tree";
 import { checkForUpdates, startUpdateChecks } from "./store/updates";
-import { openCommitWindow, openFindInFiles, openSearchEverywhere, toggleCommitWindow, toggleSeIncludeAll, useUi } from "./store/ui";
+import { editorWindowAt, openCommitWindow, openFindInFiles, openSearchEverywhere, toggleCommitWindow, toggleSeIncludeAll, useUi } from "./store/ui";
 import { projectForPath, useWorkspace, type BottomTab, type Project } from "./store/workspace";
 
 function ProjectView({ project }: { project: Project }) {
@@ -110,89 +110,107 @@ function selectedTreeDir(project: Project): string | null {
   return st ? sel : null;
 }
 
+/**
+ * App-wide shortcuts, on the main window and on each detached editor window:
+ * for `projectOf()` there, the project the window shows. They run in the
+ * capture phase so Monaco and xterm cannot swallow them. Returns their removal.
+ */
+function installShortcuts(win: Window, projectOf: () => Project | null): () => void {
+  let lastShift = 0;
+  let otherKey = false;
+  const popupOpen = () => {
+    const ui = useUi.getState();
+    return ui.searchEverywhere.open || ui.findInFiles.open;
+  };
+  const onCapture = (e: KeyboardEvent) => {
+    if (e.key !== "Shift") otherKey = true;
+    // Popups it opens show in this window, for its project (see popupHost).
+    keyboardIn(win.document);
+    const project = projectOf();
+    const is = (cmd: Command) => matches(e, cmd);
+    let handled = true;
+    if (is("searchEverywhere")) openSearchEverywhere("all");
+    else if (is("gotoFile")) openSearchEverywhere("files");
+    else if (is("settings")) openSettings();
+    else if (is("zoomIn")) zoomIn();
+    else if (is("zoomOut")) zoomOut();
+    else if (is("resetZoom")) resetZoom();
+    // Monaco does not always receive Shift+F6 (WebKitGTK); route it to Rename ourselves.
+    else if (is("rename") && triggerEditorAction("haze.rename")) {
+      /* handled */
+    }
+    // Monaco only knows the default; a shortcut set in Settings › Keymap comes through here.
+    else if (is("copyContext") && triggerEditorAction("haze.copyContext")) {
+      /* handled */
+    }
+    // Capture phase: Monaco binds Alt+F12 to Peek Definition on Windows and macOS.
+    else if (is("terminal") && project) toggleTerminal(project.id);
+    else if (is("push") && project) openPushDialog(project);
+    else if (is("pull") && project) openPullDialog(project);
+    else if (is("commit") && project) openCommitWindow(project.id);
+    else if (is("updateProject") && project) void updateProject(project);
+    else if (is("branches") && project) openBranchesPopup(project);
+    else if (is("commitView") && project) toggleCommitWindow(project.id);
+    else if (is("gitView") && project) toggleBottom(project.id, "git");
+    else if (is("build") && project) void buildProject(project.id, project.path);
+    else if (is("run") && project) {
+      const configs = runConfigs(useDotnet.getState().info[project.id]);
+      const id = useWorkspace.getState().ui[project.id]?.runConfig;
+      const cfg = configs.find((c) => c.id === id) ?? configs[0];
+      if (cfg) void runConfig(project, cfg);
+    } else if (is("findAction")) openSearchEverywhere("actions");
+    else if (is("recentFiles") && project) openSearchEverywhere("files", "");
+    else if ((is("findInFiles") || is("replaceInFiles")) && project) {
+      openFindInFiles({ replace: is("replaceInFiles"), query: selectedText(), directory: selectedTreeDir(project) });
+    } else if (is("selectInProject") && project) {
+      const ui = useWorkspace.getState().ui[project.id];
+      const tab = ui && activeTabOf(ui);
+      if (tab) revealInTree(project, tab);
+    } else handled = false;
+    if (handled) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+  const onDown = (e: KeyboardEvent) => {
+    if (e.key === "Shift" && !e.repeat) otherKey = false;
+  };
+  const onUp = (e: KeyboardEvent) => {
+    if (e.key !== "Shift" || otherKey || isRecordingKeys()) return;
+    const now = Date.now();
+    // Double Shift: two lone Shift presses within 350 ms. Again in Search
+    // Everywhere toggles "Include non-solution items".
+    if (now - lastShift < 350 && useUi.getState().searchEverywhere.open) {
+      lastShift = 0;
+      toggleSeIncludeAll();
+    } else if (now - lastShift < 350 && !popupOpen()) {
+      lastShift = 0;
+      keyboardIn(win.document);
+      openSearchEverywhere("all");
+    } else {
+      lastShift = now;
+    }
+  };
+  win.addEventListener("keydown", onDown, true);
+  win.addEventListener("keydown", onCapture, true);
+  win.addEventListener("keyup", onUp, true);
+  return () => {
+    win.removeEventListener("keydown", onDown, true);
+    win.removeEventListener("keydown", onCapture, true);
+    win.removeEventListener("keyup", onUp, true);
+  };
+}
+
+// In a detached editor window, for its project.
+setAppShortcuts((win) =>
+  installShortcuts(win, () => {
+    const at = editorWindowAt(win.document);
+    return useWorkspace.getState().projects.find((p) => p.id === at?.projectId && p.open) ?? null;
+  }),
+);
+
 function useGlobalShortcuts(project: Project | null) {
-  // App-wide shortcuts run in the capture phase so Monaco and xterm cannot swallow them.
-  useEffect(() => {
-    let lastShift = 0;
-    let otherKey = false;
-    const popupOpen = () => {
-      const ui = useUi.getState();
-      return ui.searchEverywhere.open || ui.findInFiles.open;
-    };
-    const onCapture = (e: KeyboardEvent) => {
-      if (e.key !== "Shift") otherKey = true;
-      const is = (cmd: Command) => matches(e, cmd);
-      let handled = true;
-      if (is("searchEverywhere")) openSearchEverywhere("all");
-      else if (is("gotoFile")) openSearchEverywhere("files");
-      else if (is("settings")) openSettings();
-      else if (is("zoomIn")) zoomIn();
-      else if (is("zoomOut")) zoomOut();
-      else if (is("resetZoom")) resetZoom();
-      // Monaco does not always receive Shift+F6 (WebKitGTK); route it to Rename ourselves.
-      else if (is("rename") && triggerEditorAction("haze.rename")) {
-        /* handled */
-      }
-      // Monaco only knows the default; a shortcut set in Settings › Keymap comes through here.
-      else if (is("copyContext") && triggerEditorAction("haze.copyContext")) {
-        /* handled */
-      }
-      // Capture phase: Monaco binds Alt+F12 to Peek Definition on Windows and macOS.
-      else if (is("terminal") && project) toggleTerminal(project.id);
-      else if (is("push") && project) openPushDialog(project);
-      else if (is("pull") && project) openPullDialog(project);
-      else if (is("commit") && project) openCommitWindow(project.id);
-      else if (is("updateProject") && project) void updateProject(project);
-      else if (is("branches") && project) openBranchesPopup(project);
-      else if (is("commitView") && project) toggleCommitWindow(project.id);
-      else if (is("gitView") && project) toggleBottom(project.id, "git");
-      else if (is("build") && project) void buildProject(project.id, project.path);
-      else if (is("run") && project) {
-        const configs = runConfigs(useDotnet.getState().info[project.id]);
-        const id = useWorkspace.getState().ui[project.id]?.runConfig;
-        const cfg = configs.find((c) => c.id === id) ?? configs[0];
-        if (cfg) void runConfig(project, cfg);
-      } else if (is("findAction")) openSearchEverywhere("actions");
-      else if (is("recentFiles") && project) openSearchEverywhere("files", "");
-      else if ((is("findInFiles") || is("replaceInFiles")) && project) {
-        openFindInFiles({ replace: is("replaceInFiles"), query: selectedText(), directory: selectedTreeDir(project) });
-      } else if (is("selectInProject") && project) {
-        const ui = useWorkspace.getState().ui[project.id];
-        const tab = ui && activeTabOf(ui);
-        if (tab) revealInTree(project, tab);
-      } else handled = false;
-      if (handled) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-    const onDown = (e: KeyboardEvent) => {
-      if (e.key === "Shift" && !e.repeat) otherKey = false;
-    };
-    const onUp = (e: KeyboardEvent) => {
-      if (e.key !== "Shift" || otherKey || isRecordingKeys()) return;
-      const now = Date.now();
-      // Double Shift: two lone Shift presses within 350 ms. Again in Search
-      // Everywhere toggles "Include non-solution items".
-      if (now - lastShift < 350 && useUi.getState().searchEverywhere.open) {
-        lastShift = 0;
-        toggleSeIncludeAll();
-      } else if (now - lastShift < 350 && !popupOpen()) {
-        lastShift = 0;
-        openSearchEverywhere("all");
-      } else {
-        lastShift = now;
-      }
-    };
-    window.addEventListener("keydown", onDown, true);
-    window.addEventListener("keydown", onCapture, true);
-    window.addEventListener("keyup", onUp, true);
-    return () => {
-      window.removeEventListener("keydown", onDown, true);
-      window.removeEventListener("keydown", onCapture, true);
-      window.removeEventListener("keyup", onUp, true);
-    };
-  }, [project]);
+  useEffect(() => installShortcuts(window, () => project), [project]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -245,6 +263,11 @@ export default function App() {
   const activeId = useWorkspace((s) => s.activeProjectId);
   const active = projects.find((p) => p.id === activeId && p.open) ?? null;
   const activeTab = useWorkspace((s) => (activeId && s.ui[activeId] ? activeTabOf(s.ui[activeId]) : null));
+  // Opened from a detached editor window: there, for its project.
+  const popupHost = useUi((s) => s.popupHost);
+  const hostProject = projects.find((p) => p.id === popupHost.projectId && p.open) ?? active;
+  const commitId = useUi((s) => s.commitWindow);
+  const commitProject = projects.find((p) => p.id === commitId && p.open) ?? null;
 
   useEffect(() => {
     void startTerminals(restore());
@@ -378,14 +401,19 @@ export default function App() {
         </div>
       </div>
       <StatusBar project={active} />
-      <SearchEverywhere project={active} />
-      <FindInFiles project={active} />
+      {inDoc(
+        popupHost.doc,
+        <>
+          <SearchEverywhere project={hostProject} />
+          <FindInFiles project={hostProject} />
+          <BranchesPopup project={hostProject} />
+          <PushDialog project={hostProject} />
+          <PullDialog project={hostProject} />
+          <RebaseDialog project={hostProject} />
+        </>,
+      )}
       <UsagesPopup active={active} />
-      <BranchesPopup project={active} />
-      <PushDialog project={active} />
-      <PullDialog project={active} />
-      <RebaseDialog project={active} />
-      <CommitWindow project={active} />
+      <CommitWindow project={commitProject} />
       <DiffWindow />
       <EditorWindows />
       <SettingsDialog />

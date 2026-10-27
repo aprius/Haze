@@ -9,9 +9,9 @@ import { parseWorktrees, type Worktree } from "../lib/worktrees";
 
 export type { Worktree };
 import { refreshRepo, repo, runGit, useGit } from "../store/git";
-import { openCommitWindow, popupClosed } from "../store/ui";
+import { hostPopupHere, openCommitWindow, popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
-import { choose, confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
+import { choose, confirmAction, openMenu, prompt, toast, windowOf, type MenuItem } from "./Overlays";
 import { shortcutLabel } from "../lib/keymap";
 
 
@@ -186,14 +186,17 @@ const useGitDialogs = create<DialogState>(() => ({
 }));
 
 export function openBranchesPopup(project: Project): void {
+  hostPopupHere();
   useGitDialogs.setState({ branches: { open: true, projectId: project.id } });
 }
 
 export function openPushDialog(project: Project, branch: string | null = null): void {
+  hostPopupHere();
   useGitDialogs.setState({ push: { open: true, projectId: project.id, branch } });
 }
 
 export function openPullDialog(project: Project): void {
+  hostPopupHere();
   useGitDialogs.setState({ pull: { open: true, projectId: project.id } });
 }
 
@@ -241,7 +244,7 @@ export function BranchesPopup({ project }: { project: Project | null }) {
     if (open) {
       setQ("");
       setSel(0);
-      requestAnimationFrame(() => input.current?.focus());
+      windowOf(input.current).requestAnimationFrame(() => input.current?.focus());
     }
   }, [open]);
 
@@ -271,7 +274,7 @@ export function BranchesPopup({ project }: { project: Project | null }) {
     }
     const b = rows[i - actions.length];
     if (!b) return;
-    const el = document.querySelector(`.branch-row[data-i="${i}"]`)?.getBoundingClientRect();
+    const el = (input.current?.ownerDocument ?? document).querySelector(`.branch-row[data-i="${i}"]`)?.getBoundingClientRect();
     const pos = anchor ?? { clientX: (el?.right ?? 400) - 10, clientY: el?.top ?? 200 };
     const items = branchMenu(project, b, current).map((it) => (it.action ? { ...it, action: () => (closeBranches(), it.action!()) } : it));
     openMenu(pos, items);

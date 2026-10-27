@@ -6,8 +6,9 @@
 // so nothing "phantom" shows up). A build's own errors (store/dotnet.ts) win.
 import { errorMessage, type FsChange, type OutlineSymbol } from "../ipc";
 import { api } from "../ipc";
+import { toast } from "../../components/Overlays";
 import { monaco } from "../monaco";
-import { isWithin } from "../path";
+import { ancestors, isWithin, join } from "../path";
 import { setCsharpStatus, useDotnet } from "../../store/dotnet";
 import { useWorkspace } from "../../store/workspace";
 import { LspClient } from "./client";
@@ -26,7 +27,7 @@ import {
   type LspTextEdit,
 } from "./convert";
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
-import { isVirtualPath, setVirtualSource } from "../buffers";
+import { ensureBuffer, getModel, isVirtualPath, setVirtualSource } from "../buffers";
 import { MIN_PREFIX, pickInline, typedEdit, type LspCompletionItem } from "./inline";
 import { buildHover, declarationAt, type Declaration } from "./hoverDoc";
 import { SEMANTIC_LEGEND, semanticTranslator, type LspSemanticLegend } from "./semantic";
@@ -35,7 +36,7 @@ import { unityMessage } from "../unity/messages";
 import { assetUsagesFor, onUnityCodeChanged, unityBaseFor, unityGenerateActive, unityRootFor } from "../unity/scripts";
 import { fixtureName, isTestHead, testPattern, typeName } from "../unity/tests";
 import { bumpVisionGeneration, setVisionRefresh, visionAnswer, type VisionAnswer } from "./visionCache";
-import { isImportFix, PULLED_KINDS, referencesMissing, shownByBuild, toMarker, touches, unitySuppressed, type LspDiagnostic } from "./diagnostics";
+import { isImportFix, pragmaSuppression, PULLED_KINDS, referencesMissing, ruleId, shownByBuild, toMarker, touches, unitySuppressed, withSeverity, type LspDiagnostic } from "./diagnostics";
 
 // What Roslyn reloads on: sources, project files and restore output. Other
 // JSON (Unity's Library writes plenty) would only be parsed and dropped.
@@ -407,6 +408,9 @@ export class CsharpSession {
       const src = { line: (n: number) => (n >= 1 && n <= model.getLineCount() ? model.getLineContent(n) : ""), isMessage: (n: string) => UNITY_MESSAGES.has(n) };
       items = items.filter((d) => !unitySuppressed(d, src));
     }
+    // Rules turned off in Settings, in every project.
+    const ignored = new Set(useWorkspace.getState().ignoredRules);
+    if (ignored.size) items = items.filter((d) => !ignored.has(ruleId(d) ?? ""));
     // Code Vision greys unused members itself (Unity messages left alone).
     if (useWorkspace.getState().codeVision) items = items.filter((d) => d.code !== "IDE0051");
     const build = monaco.editor.getModelMarkers({ owner: "build", resource: model.uri });
@@ -429,6 +433,14 @@ export class CsharpSession {
     const state = this.pulled.get(serverUri(model));
     if (!state || state.results.size === 0) return;
     if (state.build !== buildKey(monaco.editor.getModelMarkers({ owner: "build", resource: model.uri }))) this.showDiagnostics(model, state);
+  }
+
+  /** Shows the diagnostics again, after the settings that filter them changed. */
+  reshow() {
+    for (const model of monaco.editor.getModels()) {
+      const state = this.pulled.get(serverUri(model));
+      if (state && state.results.size > 0) this.showDiagnostics(model, state);
+    }
   }
 
   /** The live diagnostics shown in a range, for the code actions that fix them. */
@@ -841,6 +853,47 @@ async function runCodeAction(session: CsharpSession, action: LspCodeAction) {
   if (a.command) await session.request("workspace/executeCommand", { command: a.command.command, arguments: a.command.arguments });
 }
 
+/**
+ * Turns the rule off for the whole project: in its top .editorconfig (the
+ * one nearest its root), made at the root when there is none.
+ */
+async function disableRule(session: CsharpSession, path: string, code: string) {
+  let config: string | undefined;
+  for (const dir of ancestors(path, session.root).reverse()) {
+    const candidate = join(dir, ".editorconfig");
+    if (await api.readFile(candidate).then(() => true, () => false)) {
+      config = candidate;
+      break;
+    }
+  }
+  config ??= await api.createFile(session.root, ".editorconfig");
+  await ensureBuffer(config);
+  const model = getModel(config);
+  if (!model) throw new Error(`cannot open ${config}`);
+  const end = model.getFullModelRange();
+  const done = await applyWorkspaceEdit({
+    changes: {
+      [pathToUri(config)]: [
+        { range: { start: { line: 0, character: 0 }, end: { line: end.endLineNumber - 1, character: end.endColumn - 1 } }, newText: withSeverity(model.getValue(), code) },
+      ],
+    },
+  });
+  if (done.skipped.length) throw new Error(`${config} could not be written (changed on disk?)`);
+  toast(`${code} turned off in ${config}`);
+}
+
+const LSP_SEVERITY: Record<number, number> = { 8: 1, 4: 2, 2: 3, 1: 4 };
+
+/** A build's marker as the diagnostic it was. */
+function markerDiagnostic(m: monaco.editor.IMarkerData): LspDiagnostic {
+  return {
+    range: { start: { line: m.startLineNumber - 1, character: m.startColumn - 1 }, end: { line: m.endLineNumber - 1, character: m.endColumn - 1 } },
+    severity: LSP_SEVERITY[m.severity],
+    code: typeof m.code === "object" ? m.code?.value : m.code,
+    message: m.message,
+  };
+}
+
 /** Each model's version after its last edit that was not typing (an accepted completion, a paste), when it has no ghost text. */
 const untyped = new WeakMap<monaco.editor.ITextModel, number>();
 
@@ -884,6 +937,20 @@ export function registerProviders(): void {
   monaco.editor.registerCommand("haze.applyCodeAction", (_accessor, path: string, action: LspCodeAction) => {
     const s = sessionForPath(path);
     if (s) void runCodeAction(s, action).catch((e) => console.error("code action failed", e));
+  });
+
+  monaco.editor.registerCommand("haze.ignoreRule", (_accessor, code: string) => {
+    const { ignoredRules } = useWorkspace.getState();
+    if (!ignoredRules.includes(code)) useWorkspace.setState({ ignoredRules: [...ignoredRules, code] });
+    toast(`${code} is ignored in all projects (Settings, Editor)`);
+  });
+  useWorkspace.subscribe((st, prev) => {
+    if (st.ignoredRules !== prev.ignoredRules) sessions.forEach((s) => s.reshow());
+  });
+
+  monaco.editor.registerCommand("haze.disableRule", (_accessor, path: string, code: string) => {
+    const s = sessionForPath(path);
+    if (s) void disableRule(s, path, code).catch((e) => toast(`Could not turn ${code} off: ${errorMessage(e)}`, "error"));
   });
 
   L.registerDefinitionProvider("csharp", {
@@ -1347,7 +1414,7 @@ export function registerProviders(): void {
   });
 
   L.registerCodeActionProvider("csharp", {
-    async provideCodeActions(model, range, _context, token) {
+    async provideCodeActions(model, range, context, token) {
       const s = ready(model);
       if (!s || model.uri.scheme !== "file") return { actions: [], dispose() {} };
       const lspRange = toLspRange(range);
@@ -1365,6 +1432,39 @@ export function registerProviders(): void {
         isPreferred: a.isPreferred || isImportFix(a.title),
         command: { id: "haze.applyCodeAction", title: a.title, arguments: [model.uri.fsPath, a] },
       }));
+      // Ignoring a rule here, in the project or in every project, as Rider's
+      // "Suppress" and "Configure severity". Build warnings too (their live
+      // twins are not shown).
+      const seen = new Set<string>();
+      for (const d of [...diagnostics, ...context.markers.filter((m) => m.source === "build").map(markerDiagnostic)]) {
+        const code = ruleId(d);
+        if (!code || seen.has(code)) continue;
+        seen.add(code);
+        const line = (n: number) => (n < model.getLineCount() ? model.getLineContent(n + 1) : "");
+        actions.push(
+          {
+            title: `Suppress ${code} with #pragma`,
+            kind: "quickfix",
+            edit: {
+              edits: pragmaSuppression(code, d.range, line, model.getLineCount()).map((e) => ({
+                resource: model.uri,
+                versionId: model.getVersionId(),
+                textEdit: { range: toMonacoRange(e.range), text: e.newText },
+              })),
+            },
+          },
+          {
+            title: `Disable ${code} in .editorconfig`,
+            kind: "quickfix",
+            command: { id: "haze.disableRule", title: `Disable ${code}`, arguments: [model.uri.fsPath, code] },
+          },
+          {
+            title: `Ignore ${code} in all projects`,
+            kind: "quickfix",
+            command: { id: "haze.ignoreRule", title: `Ignore ${code}`, arguments: [code] },
+          },
+        );
+      }
       return { actions, dispose() {} };
     },
   });

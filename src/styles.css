@@ -3688,6 +3688,20 @@ html:has(.float-external) body {
   display: flex;
 }
 
+/* Popups, menus and toasts in a window of its own (inDoc in Overlays.tsx):
+   above all its content. No transform here: the glass popups' fixed
+   background would no longer line up with the window's image. */
+.popup-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+}
+/* No weight: what sets its own pointer-events keeps it. */
+:where(.popup-layer > *) {
+  pointer-events: auto;
+}
+
 .float-window.external {
   position: static;
   flex: 1;
@@ -4206,6 +4220,10 @@ html:has(.float-external) body {
 .settings-font-name,
 .settings-font-size {
   min-width: 0;
+}
+.settings-rules {
+  flex: 0 1 240px;
+  min-width: 120px;
 }
 .settings-backdrop-grid {
   display: grid;

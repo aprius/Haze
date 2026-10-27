@@ -6,11 +6,10 @@ import { PanelBottom } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { getModel, isVirtualPath } from "../lib/buffers";
-import * as L from "../lib/editorLayout";
 import { api, errorMessage, type AssetUsage } from "../lib/ipc";
 import type { FoundLocation } from "../lib/lsp/csharp";
 import { basename, dirname, relative } from "../lib/path";
-import { popupClosed } from "../store/ui";
+import { editorWindowAt, popupClosed } from "../store/ui";
 import { unityCommand, useUnity } from "../store/unity";
 import { useWorkspace, type Project } from "../store/workspace";
 import { CodeLine } from "./CodePreview";
@@ -170,14 +169,16 @@ export function UsagesPopup({ active }: { active: Project | null }) {
 
   useEffect(() => {
     setSelected(0);
-    if (open) requestAnimationFrame(() => listRef.current?.focus());
-  }, [open, items]);
+    // Frames of its own window: the main one's stop while it is minimized.
+    if (open) (doc.defaultView ?? window).requestAnimationFrame(() => listRef.current?.focus());
+  }, [open, items, doc]);
 
   useEffect(() => {
     listRef.current?.querySelector(".usage.selected")?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  if (!open || !project) return null;
+  // Its window closed under it: not over the main window instead.
+  if (!open || !project || (doc !== document && (!doc.defaultView || doc.defaultView.closed))) return null;
   const unityLinked = !!useUnity.getState().projects[project.id]?.connected;
   const go = (u: Usage | undefined, openFile = false) => {
     if (!u) return;
@@ -193,10 +194,9 @@ export function UsagesPopup({ active }: { active: Project | null }) {
   };
   const toFindWindow = () => {
     close();
-    // Asked from a detached editor window: to that window's own Find window.
-    const ui = useWorkspace.getState().ui[project.id];
-    const win = doc !== document && ui ? L.windowOf(ui, ui.activeGroup) : null;
-    openInFindWindow(project.id, title, items, rerun, win?.id ?? null);
+    // Shown in a detached editor window of this project: to that window's own Find window.
+    const at = editorWindowAt(doc);
+    openInFindWindow(project.id, title, items, rerun, at?.projectId === project.id ? at.windowId : null);
   };
   const files = new Set(items.map((i) => i.path)).size;
   let lastFile = "";

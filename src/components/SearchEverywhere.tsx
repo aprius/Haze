@@ -13,6 +13,7 @@ import { closeSearchEverywhere, toggleSeIncludeAll, useUi, type SeTab } from "..
 import { useWorkspace, type Project } from "../store/workspace";
 import { CodePreview, type PreviewRange } from "./CodePreview";
 import { FileIcon } from "./FileIcon";
+import { windowOf } from "./Overlays";
 
 type Item =
   | { kind: "file"; path: string; rel: string; indices: number[]; recent?: boolean }
@@ -149,7 +150,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
     setTab(initialTab);
     setSelected(0);
     if (initialQuery !== null) setInput(initialQuery);
-    requestAnimationFrame(() => inputRef.current?.select());
+    windowOf(inputRef.current).requestAnimationFrame(() => inputRef.current?.select());
   }, [open, nonce, initialTab, initialQuery]);
 
   // File search (debounced, newest request wins).

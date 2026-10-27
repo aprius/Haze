@@ -8,14 +8,15 @@ import { api, errorMessage, type RebaseStep } from "../lib/ipc";
 import { saveAll } from "./EditorArea";
 import { patchRepo, refreshRepo, repo } from "../store/git";
 import { withTask } from "../store/tasks";
-import { openCommitWindow, popupClosed } from "../store/ui";
+import { hostPopupHere, openCommitWindow, popupClosed } from "../store/ui";
 import type { Project } from "../store/workspace";
-import { toast } from "./Overlays";
+import { toast, windowOf } from "./Overlays";
 
 const useRebase = create<{ projectId: string | null; from: string | null }>(() => ({ projectId: null, from: null }));
 
 /** Opens the dialog for commits from `from` (inclusive) up to HEAD. */
 export function openRebaseDialog(project: Project, from: string): void {
+  hostPopupHere();
   useRebase.setState({ projectId: project.id, from });
 }
 
@@ -36,7 +37,7 @@ export function RebaseDialog({ project }: { project: Project | null }) {
 
   // Focus the dialog so Esc closes it (focus is still on the log behind it).
   useEffect(() => {
-    if (from) requestAnimationFrame(() => modal.current?.focus());
+    if (from) windowOf(modal.current).requestAnimationFrame(() => modal.current?.focus());
   }, [projectId, from]);
 
   useEffect(() => {

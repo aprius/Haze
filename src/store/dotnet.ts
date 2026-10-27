@@ -107,7 +107,9 @@ function applyMarkers() {
   for (const model of monaco.editor.getModels()) {
     if (model.uri.scheme !== "file") continue;
     const path = model.uri.fsPath;
-    const diags = editedSinceBuild.has(path) ? [] : all.filter((d) => d.file && samePath(d.file, path));
+    const ignored = new Set(useWorkspace.getState().ignoredRules);
+    // Warnings of rules turned off in Settings; errors always show.
+    const diags = editedSinceBuild.has(path) ? [] : all.filter((d) => d.file && samePath(d.file, path) && !(d.severity !== "error" && d.code && ignored.has(d.code)));
     monaco.editor.setModelMarkers(model, "build", markersFor(model, diags));
   }
 }
@@ -135,6 +137,7 @@ function listen() {
       monaco.editor.setModelMarkers(model, "build", []);
     });
   monaco.editor.getModels().forEach(track);
+  useWorkspace.subscribe((st, prev) => st.ignoredRules !== prev.ignoredRules && applyMarkers());
   monaco.editor.onDidCreateModel((m) => {
     track(m);
     setTimeout(applyMarkers, 0);

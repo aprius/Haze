@@ -6,7 +6,7 @@
 // nothing semantic from a file whose project lost its references, and the
 // advice Unity's own analyzers would suppress, for projects generated
 // without Microsoft.Unity.Analyzers.
-import type { LspRange } from "./convert";
+import type { LspRange, LspTextEdit } from "./convert";
 
 export interface LspDiagnostic {
   range: LspRange;
@@ -121,4 +121,65 @@ export function touches(a: LspRange, b: LspRange): boolean {
 /** A quick fix that adds a `using` (or qualifies the name): the fix for a missing namespace. */
 export function isImportFix(title: string): boolean {
   return /^using [\w.]+;$/.test(title) || /^\w+ - using [\w.]+;$/.test(title);
+}
+
+/**
+ * The ID of a rule that can be ignored (CS0168, IDE0130, CA1822, UNT0001):
+ * not an error (no #pragma or severity turns those off), not one of Unity's
+ * inspections (they have names).
+ */
+export function ruleId(d: LspDiagnostic): string | undefined {
+  const code = codeOf(d);
+  return (d.severity ?? 1) !== 1 && code && RULE_ID.test(code) ? code : undefined;
+}
+
+const RULE_ID = /^[A-Z]{2,}\d+$/;
+
+/** The rule IDs in what was typed in Settings ("ide0130, CS0168"), upper-cased, once each. */
+export function parseRuleIds(text: string): string[] {
+  return [...new Set(text.split(/[\s,;]+/).map((c) => c.toUpperCase()).filter((c) => RULE_ID.test(c)))];
+}
+
+/** `#pragma warning disable`/`restore` around the diagnostic's lines, indented like its first one. */
+export function pragmaSuppression(code: string, range: LspRange, line: (n: number) => string, lineCount: number): LspTextEdit[] {
+  const indent = /^\s*/.exec(line(range.start.line))![0];
+  const end = range.end.line;
+  const restore = `${indent}#pragma warning restore ${code}`;
+  return [
+    { range: { start: { line: range.start.line, character: 0 }, end: { line: range.start.line, character: 0 } }, newText: `${indent}#pragma warning disable ${code}\n` },
+    end + 1 < lineCount
+      ? { range: { start: { line: end + 1, character: 0 }, end: { line: end + 1, character: 0 } }, newText: `${restore}\n` }
+      : { range: { start: { line: end, character: line(end).length }, end: { line: end, character: line(end).length } }, newText: `\n${restore}` },
+  ];
+}
+
+const CS_SECTION = /^\s*\[\*\.(cs|\{[^}]*\bcs\b[^}]*\})\]\s*$/;
+
+/** The .editorconfig text with the rule's severity set (in the `[*.cs]` section, added when missing). */
+export function withSeverity(text: string, code: string, severity = "none"): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = text.length ? text.split(/\r?\n/) : [];
+  const entry = `dotnet_diagnostic.${code}.severity = ${severity}`;
+  const key = new RegExp(`^\\s*dotnet_diagnostic\\.${code}\\.severity\\s*=`, "i");
+  let section = "";
+  const set = lines.findIndex((l) => {
+    if (/^\s*\[/.test(l)) section = l;
+    return CS_SECTION.test(section) && key.test(l);
+  });
+  if (set >= 0) {
+    lines[set] = entry;
+    return lines.join(eol);
+  }
+  // The last [*.cs] section: a later section wins over an earlier one.
+  let header = -1;
+  lines.forEach((l, i) => CS_SECTION.test(l) && (header = i));
+  if (header >= 0) {
+    // After the section's last setting.
+    let at = header + 1;
+    for (let i = at; i < lines.length && !/^\s*\[/.test(lines[i]); i++) if (lines[i].trim()) at = i + 1;
+    lines.splice(at, 0, entry);
+    return lines.join(eol);
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  return [...lines, ...(lines.length ? [""] : []), "[*.cs]", entry, ""].join(eol);
 }

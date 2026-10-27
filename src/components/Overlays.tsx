@@ -241,9 +241,42 @@ export function hostDocument(): Document {
   return useHost.getState().doc;
 }
 
-/** Renders `node` into `doc` when that is another window's document. */
+/** `doc`'s window has the keyboard (a shortcut came from it), whatever focus events said. */
+export function keyboardIn(doc: Document): void {
+  if (useHost.getState().doc !== doc) useHost.setState({ doc });
+}
+
+/** The window `node` is in: the main one, or one of its own. */
+export function windowOf(node: Node | null | undefined): Window {
+  return node?.ownerDocument?.defaultView ?? window;
+}
+
+/**
+ * Renders `node` into `doc` when that is another window's document: in a
+ * layer over the window's content, last in its body (see .popup-layer).
+ */
 export function inDoc(doc: Document, node: ReactNode): ReactNode {
-  return doc === document || !doc.defaultView || doc.defaultView.closed ? node : createPortal(node, doc.body);
+  return doc === document || !doc.defaultView || doc.defaultView.closed ? node : createPortal(node, popupLayer(doc));
+}
+
+function popupLayer(doc: Document): HTMLElement {
+  let layer = doc.querySelector<HTMLElement>(":scope > body > .popup-layer");
+  if (!layer) {
+    layer = doc.createElement("div");
+    layer.className = "popup-layer";
+    doc.body.appendChild(layer);
+  }
+  return layer;
+}
+
+/**
+ * App-wide shortcuts (Search Everywhere, Find in Files, Commit…) for a window
+ * of its own; App sets it. Returns their removal.
+ */
+let appShortcuts: ((win: Window) => () => void) | null = null;
+
+export function setAppShortcuts(install: (win: Window) => () => void): void {
+  appShortcuts = install;
 }
 
 let floatSeq = 0;
@@ -338,7 +371,7 @@ type ExternalHost = { win: Window; root: HTMLElement; label: string };
  * Opens a real window that our React tree renders into (same JS context, so
  * stores and Monaco models are shared). Null outside Tauri or when refused.
  */
-function useExternalWindow(width: number, height: number, onClose: () => void): ExternalHost | "opening" | null {
+function useExternalWindow(width: number, height: number, onClose: () => void, shortcuts: boolean): ExternalHost | "opening" | null {
   const [host, setHost] = useState<ExternalHost | "opening" | null>(isTauri ? "opening" : null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -390,6 +423,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
       closeRef.current();
     };
     // Shortcuts the app handles on the main window (Save All) still work here.
+    let removeShortcuts: (() => void) | null = null;
     const forward = (e: KeyboardEvent) => {
       if (matches(e, "saveAll")) {
         e.preventDefault();
@@ -403,6 +437,8 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
     // Again after a document swap: a new Window lost them, while the same one
     // must not get them twice (Save All would run twice and its saves collide).
     const listen = () => {
+      removeShortcuts?.();
+      removeShortcuts = shortcuts ? (appShortcuts?.(win) ?? null) : null;
       win.removeEventListener("keydown", forward, true);
       win.removeEventListener("focus", focused);
       win.addEventListener("keydown", forward, true);
@@ -441,6 +477,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void): 
       clearInterval(poll);
       unmirror();
       unlisten?.();
+      removeShortcuts?.();
       if (useHost.getState().doc === doc) useHost.setState({ doc: document });
       // WebKit ignores window.close() here; Tauri closes it by label.
       void import("@tauri-apps/api/webviewWindow").then(async ({ WebviewWindow }) => {
@@ -465,6 +502,7 @@ export function FloatWindow({
   height,
   modal = false,
   escapeCloses = true,
+  appShortcuts = false,
   onClose,
   children,
 }: {
@@ -476,10 +514,12 @@ export function FloatWindow({
   modal?: boolean;
   /** Escape closes it; not in an editor window, where Escape means much else. */
   escapeCloses?: boolean;
+  /** The app's shortcuts work here too (an editor window). */
+  appShortcuts?: boolean;
   onClose: () => void;
   children: ReactNode;
 }) {
-  const host = useExternalWindow(width, height, onClose);
+  const host = useExternalWindow(width, height, onClose, appShortcuts);
   const external = host === "opening" ? null : host;
   const [size] = useState(() => ({ w: Math.min(width, window.innerWidth - 32), h: Math.min(height, window.innerHeight - 32) }));
   const [pos, setPos] = useState(() => ({ x: (window.innerWidth - size.w) / 2, y: Math.max(16, (window.innerHeight - size.h) / 3) }));

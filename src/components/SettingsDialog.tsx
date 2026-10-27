@@ -36,6 +36,7 @@ import { checkForUpdates, openRelease, updateLabel, updateNow, useUpdates } from
 import { useWorkspace, type PerfContextMode } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
 import { toast } from "./Overlays";
+import { parseRuleIds } from "../lib/lsp/diagnostics";
 
 type Page = "appearance" | "editor" | "keymap" | "agents" | "vcs" | "project" | "unity" | "updates";
 
@@ -537,6 +538,28 @@ function AgentsSection() {
   );
 }
 
+function IgnoredRulesInput() {
+  const value = useWorkspace((s) => s.ignoredRules).join(", ");
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    const ignoredRules = parseRuleIds(draft);
+    if (ignoredRules.join(", ") === value) setDraft(value);
+    else useWorkspace.setState({ ignoredRules });
+  };
+  return (
+    <input
+      className="modal-input settings-rules"
+      value={draft}
+      spellCheck={false}
+      placeholder="IDE0130, CS0168"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === "Enter" && commit()}
+    />
+  );
+}
+
 function EditorSection() {
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
   const lineBlame = useWorkspace((s) => s.lineBlame);
@@ -565,6 +588,15 @@ function EditorSection() {
           checked={codeVision}
           onChange={(on) => useWorkspace.setState({ codeVision: on })}
         />
+      </div>
+      <div className="settings-card">
+        <div className="settings-row static">
+          <div className="settings-row-text">
+            <div>Ignored C# rules</div>
+            <div className="muted small">Warnings and suggestions with these IDs are not shown in any project. Alt+Enter on one adds it (Ignore … in all projects); errors always show.</div>
+          </div>
+          <IgnoredRulesInput />
+        </div>
       </div>
       <div className="settings-card">
         <SwitchRow

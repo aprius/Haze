@@ -105,7 +105,7 @@ export function WithFindWindow({ project, windowId, children }: { project: Proje
   // Its own window's height, not the main window's.
   const height = (ref.current?.ownerDocument.defaultView ?? window).innerHeight;
   return (
-    <div ref={ref} className="find-docked">
+    <div ref={ref} className="find-docked" data-editor-window={windowId}>
       {children}
       {docked?.visible && (
         <>

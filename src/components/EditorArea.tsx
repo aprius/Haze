@@ -23,7 +23,7 @@ import { absPath, repo, useGit } from "../store/git";
 import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
-import { choose, externalWindows, FloatWindow, openMenu, prompt, toast, windowFocusedAt, type MenuItem } from "./Overlays";
+import { choose, externalWindows, FloatWindow, hostDocument, openMenu, prompt, toast, windowFocusedAt, type MenuItem } from "./Overlays";
 import { forgetFindWindow, WithFindWindow } from "./FindPanel";
 import { showAssetUsages, showDeclarations, showLocations, type UsagesAnchor } from "./UsagesPopup";
 import type { AssetUsage } from "../lib/ipc";
@@ -110,13 +110,14 @@ export function copyContext(): void {
 }
 
 // Popups closing leave focus on <body>; give it back to the editor, in whichever window it is.
-window.addEventListener("haze:popup-closed", () =>
-  requestAnimationFrame(() => {
-    const doc = currentEditor?.getDomNode()?.ownerDocument ?? document;
+window.addEventListener("haze:popup-closed", () => {
+  const doc = currentEditor?.getDomNode()?.ownerDocument ?? document;
+  // Frames of the editor's window: the main one's stop while it is minimized.
+  (doc.defaultView ?? window).requestAnimationFrame(() => {
     const el = doc.activeElement;
     if (!el || el === doc.body) currentEditor?.focus();
-  }),
-);
+  });
+});
 
 let keymapInstalled = false;
 
@@ -459,7 +460,8 @@ monaco.editor.registerCommand("haze.codeVisionUsages", (_accessor, path: string,
   if (!model || !project) return;
   const pos = { lineNumber: line, column };
   const shown = monaco.editor.getEditors().filter((e) => e.getModel() === model);
-  const editor = shown.find((e) => e.hasWidgetFocus()) ?? shown[0];
+  // The one in the window clicked in, when the file shows in several.
+  const editor = shown.find((e) => e.hasWidgetFocus()) ?? shown.find((e) => e.getDomNode()?.ownerDocument === hostDocument()) ?? shown[0];
   void showLocations(project, `Usages of ${name}`, () => findUsages(model, pos), false, editor ? anchorBelow(editor, pos) : null);
 });
 
@@ -1696,6 +1698,7 @@ function EditorWindowView({ project, index, win }: { project: Project; index: nu
       width={900}
       height={700}
       escapeCloses={false}
+      appShortcuts
       onClose={() => void closeEditorWindow(project.id, win.id)}
     >
       <WithFindWindow project={project} windowId={win.id}>
