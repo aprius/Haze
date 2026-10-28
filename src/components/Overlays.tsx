@@ -322,12 +322,17 @@ function mirrorStyles(win: Window): () => void {
   const doc = win.document;
   const clones = new Map<Node, HTMLElement>();
   const sheetText = (el: HTMLStyleElement) => {
-    // Rules added with insertRule are not in the element's text.
+    // The element's text where it has one (Vite's): WebKit's cssText loses
+    // rules, a shorthand with var() and a longhand after it serializing as
+    // empty longhands (the glass popups' background). Its rules where the text
+    // is empty: Monaco's, added with insertRule.
+    const text = el.textContent ?? "";
+    if (text.trim()) return text;
     try {
       const rules = el.sheet?.cssRules;
-      return rules ? Array.from(rules, (r) => r.cssText).join("\n") : el.textContent ?? "";
+      return rules ? Array.from(rules, (r) => r.cssText).join("\n") : text;
     } catch {
-      return el.textContent ?? "";
+      return text;
     }
   };
   const sync = () => {

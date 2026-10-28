@@ -431,7 +431,12 @@ kbd {
     .tree-drag-ghost,
     .float-window,
     .float-external,
-    .settings-dialog
+    .settings-dialog,
+    .monaco-resizable-hover,
+    .suggest-widget,
+    .suggest-details,
+    .parameter-hints-widget,
+    .monaco-menu-container > .monaco-scrollable-element
   ) {
   --bg: var(--bg-solid);
   --panel: var(--panel-solid);
@@ -440,27 +445,53 @@ kbd {
   --rail: var(--rail-solid);
 }
 
-/* Popups, dialogs, Settings and the Commit and Diff windows are glass too, over
-   the same image fixed to the window, so it lines up with the frame's (Popup
-   opacity in Settings). Their fields, cards, footers and side bars keep a lighter
-   tint. A window of its own is below. */
+/* Popups, dialogs, Settings, the editor's widgets and menu, and the Commit and
+   Diff windows are glass too, over the same image fixed to the window, so it
+   lines up with the frame's (Popup opacity in Settings). Their fields, cards,
+   footers and side bars keep a lighter tint. A window of its own is below. */
 :root[data-ui="islands"][data-backdrop]
-  :is(.context-menu, .se-popup, .find-popup, .find-history, .toast, .modal, .settings-dialog, .float-window:not(.external)) {
+  :is(
+    .context-menu,
+    .se-popup,
+    .find-popup,
+    .find-history,
+    .toast,
+    .modal,
+    .settings-dialog,
+    .float-window:not(.external),
+    .monaco-resizable-hover,
+    .suggest-widget,
+    .suggest-details,
+    .parameter-hints-widget,
+    .monaco-menu-container > .monaco-scrollable-element
+  ) {
   --panel: transparent;
   --rail: color-mix(in srgb, var(--rail-solid) 50%, transparent);
   --bg: color-mix(in srgb, var(--bg-solid) 45%, transparent);
   --editor-bg: color-mix(in srgb, var(--editor-bg-solid) 60%, transparent);
   background:
+    linear-gradient(var(--glass-shade, transparent), var(--glass-shade, transparent)),
     linear-gradient(
       color-mix(in srgb, var(--panel-solid) var(--popup-glass), transparent),
       color-mix(in srgb, var(--panel-solid) var(--popup-glass), transparent)
     ),
     var(--backdrop-dimmed);
-  background-attachment: scroll, fixed, fixed;
-  /* Under the image, as the frame has (.backdrop): where WebKit does not paint
-     the fixed image (a window of its own), what is behind must not show through.
-     Its own declaration, so it stays if the one above cannot be computed. */
+  background-attachment: scroll, scroll, fixed, fixed;
+  /* Under the image, as the frame has (.backdrop): while the image is not
+     there (not yet read), what is behind must not show through. Its own
+     declaration, so it stays if the one above cannot be computed. */
   background-color: var(--panel-solid);
+}
+
+/* The editor's hovers, suggestions and parameter hints a little darker than the
+   other popups: they open over code, which reads better on them darker. */
+:root[data-ui="islands"][data-backdrop] .monaco-editor :is(.monaco-resizable-hover, .suggest-widget, .suggest-details, .parameter-hints-widget) {
+  --glass-shade: rgb(0 0 0 / 0.15);
+}
+
+/* A hover's content is drawn on its frame's glass (Monaco paints both). */
+:root[data-ui="islands"][data-backdrop] .monaco-editor .monaco-resizable-hover > .monaco-hover {
+  background: transparent;
 }
 
 /* A Commit or Diff window of its own draws the image itself (Backdrop in Overlays.tsx). */

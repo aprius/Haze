@@ -1373,6 +1373,9 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       suggest: suggestOptions,
       // Roslyn's semantic tokens (lsp/csharp.ts); the theme alone would leave them off.
       "semanticHighlighting.enabled": true,
+      // The context menu in our DOM, not a shadow root: glass like the other
+      // popups over a background image (styles.css).
+      useShadowDOM: false,
       theme: monacoTheme(),
     });
     editorGroups.set(editor, { projectId: project.id, group: group.id });
