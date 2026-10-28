@@ -122,15 +122,23 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     if (!changes.length) return;
     const names = changes.length === 1 ? basename(changes[0].rel) : `${changes.length} files`;
     const created = changes.filter((c) => c.status === "added" || c.status === "untracked");
-    const answer = await choose("Rollback Changes", `Revert ${names} to the last commit? Local changes will be lost.`, [
-      { label: "Cancel", value: "cancel" },
-      ...(created.length ? [{ label: "Rollback and delete new files", value: "delete", danger: true }] : []),
-      { label: "Rollback", value: "ok", primary: !created.length, danger: !!created.length },
-    ]);
-    if (!answer) return;
+    // Only untracked files: there is nothing to revert, just delete them.
+    const onlyNew = changes.every((c) => c.status === "untracked");
+    const answer = onlyNew
+      ? await choose("Delete Files", `Delete ${names}? They are not in version control and will be moved to the Trash.`, [
+          { label: "Cancel", value: "cancel" },
+          { label: "Delete", value: "delete", primary: true, danger: true },
+        ])
+      : await choose("Rollback Changes", `Revert ${names} to the last commit? Local changes will be lost.`, [
+          { label: "Cancel", value: "cancel" },
+          ...(created.length ? [{ label: "Rollback and delete new files", value: "delete", danger: true }] : []),
+          { label: "Rollback", value: "ok", primary: !created.length, danger: !!created.length },
+        ]);
+    if (!answer || answer === "cancel") return;
     try {
       await saveAll();
-      await api.gitRollback(root, changes.filter((c) => c.status !== "untracked").map((c) => c.rel));
+      const tracked = changes.filter((c) => c.status !== "untracked").map((c) => c.rel);
+      if (tracked.length) await api.gitRollback(root, tracked);
       if (answer === "delete") await api.trashPaths(created.map((c) => absPath(root, c.rel)));
     } catch (e) {
       toast(`Rollback failed: ${String(e)}`, "error");
@@ -139,7 +147,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     refreshTreeGit(project.id, project.path, 0);
   };
 
-  const rollbackChecked = () => void rollback(r.changes.filter((c) => checked.has(c.rel) && c.status !== "untracked"));
+  const rollbackChecked = () => void rollback(r.changes.filter((c) => checked.has(c.rel)));
 
   const pickedChanges = () => r.changes.filter((c) => picked.has(c.rel));
   // Picks of files that were since committed or rolled back no longer count.
@@ -157,7 +165,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
   // Several picked rows: roll those back; otherwise the checked ones, as before.
   const rollbackSelected = () => {
     const list = pickedChanges();
-    if (list.length > 1) void rollback(list.filter((c) => c.status !== "untracked"));
+    if (list.length > 1) void rollback(list);
     else rollbackChecked();
   };
 
@@ -195,15 +203,13 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
 
   /** Menu for several picked rows. */
   const multiMenu = (list: GitChange[]) => {
-    const tracked = list.filter((c) => c.status !== "untracked");
     return [
       { label: "Show Diff", shortcut: "Ctrl+D", action: () => list.forEach((c) => showChangeDiff(project, root, c)) },
       { separator: true },
       {
-        label: `Rollback ${tracked.length} Files…`,
+        label: list.every((c) => c.status === "untracked") ? `Delete ${list.length} Files…` : `Rollback ${list.length} Files…`,
         shortcut: "Ctrl+Alt+Z",
-        disabled: !tracked.length,
-        action: () => void rollback(tracked),
+        action: () => void rollback(list),
       },
       {
         label: "Check Selected",
@@ -230,7 +236,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     { label: "Show Diff", shortcut: "Ctrl+D", action: () => showChangeDiff(project, root, c) },
     { label: "Open File", shortcut: "F4", disabled: c.status === "deleted", action: () => openChangedFile(project, root, c) },
     { separator: true },
-    { label: "Rollback…", shortcut: "Ctrl+Alt+Z", disabled: c.status === "untracked", action: () => void rollback([c]) },
+    { label: c.status === "untracked" ? "Delete…" : "Rollback…", shortcut: "Ctrl+Alt+Z", action: () => void rollback([c]) },
     ...(c.status === "untracked"
       ? [
           { label: "Add to VCS", action: () => void runGit(project.id, ["add", "--", c.rel]) },

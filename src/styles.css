@@ -457,6 +457,10 @@ kbd {
     ),
     var(--backdrop-dimmed);
   background-attachment: scroll, fixed, fixed;
+  /* Under the image, as the frame has (.backdrop): where WebKit does not paint
+     the fixed image (a window of its own), what is behind must not show through.
+     Its own declaration, so it stays if the one above cannot be computed. */
+  background-color: var(--panel-solid);
 }
 
 /* A Commit or Diff window of its own draws the image itself (Backdrop in Overlays.tsx). */
