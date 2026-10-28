@@ -611,6 +611,9 @@ export const api = {
   cacheBackdrop: (path: string | null) => invoke<string | null>("cache_backdrop", { path }),
   /** A loopback URL that plays a cached background video. */
   mediaUrl: (path: string) => invoke<string>("media_url", { path }),
+  /** The images and videos in a rotating background's folder, at its top and in its days and nights folders. */
+  listBackdropFolder: (folder: string) =>
+    invoke<{ root: string[]; day: string[]; night: string[] }>("list_backdrop_folder", { folder }),
   clipboardFilePaths: () => invoke<string[]>("clipboard_file_paths"),
 
   readLines: (requests: { path: string; lines: number[] }[]) => invoke<string[][]>("read_lines", { requests }),

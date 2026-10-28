@@ -1,4 +1,4 @@
-// Ambient glow (Settings > Appearance > Ambient glow), with a background image
+// Ambient glow (Settings > Background > Ambient glow), with a background image
 // in the islands layout: each island casts light from its edges, in the colours
 // of the image behind each edge, like a TV's ambilight. The image is sampled
 // once into a small grid laid out as the window shows it (cover); each island

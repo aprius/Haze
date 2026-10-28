@@ -39,6 +39,65 @@ pub fn cache(dir: &Path, path: Option<&Path>) -> Result<Option<PathBuf>> {
     Ok(Some(out))
 }
 
+/// What a background folder holds (Settings > Appearance, Rotate): the images
+/// and videos at its top, and in its `days` and `nights` folders (also `day`,
+/// `night`, any case), each sorted by name. Not deeper, and no hidden files.
+#[derive(serde::Serialize, Default, Debug, PartialEq)]
+pub struct Folder {
+    pub root: Vec<String>,
+    pub day: Vec<String>,
+    pub night: Vec<String>,
+}
+
+/// The extensions a background can be, as src/lib/backdrop.ts takes them.
+const EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "mp4", "webm", "mov", "m4v"];
+
+pub fn list_folder(dir: &Path) -> Result<Folder> {
+    let entries = std::fs::read_dir(dir).context("cannot read the folder")?;
+    let mut out = Folder::default();
+    for e in entries.flatten() {
+        let path = e.path();
+        let name = e.file_name().to_string_lossy().to_lowercase();
+        if name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            match name.as_str() {
+                "day" | "days" => out.day.extend(media_files(&path)),
+                "night" | "nights" => out.night.extend(media_files(&path)),
+                _ => {}
+            }
+        } else if is_media(&path) {
+            out.root.push(path.to_string_lossy().into_owned());
+        }
+    }
+    for list in [&mut out.root, &mut out.day, &mut out.night] {
+        list.sort();
+    }
+    Ok(out)
+}
+
+fn is_media(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .is_some_and(|e| EXTENSIONS.contains(&e.as_str()))
+}
+
+fn media_files(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) && is_media(p))
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 struct Server {
     port: u16,
     files: Mutex<HashMap<String, PathBuf>>,
@@ -208,6 +267,23 @@ mod tests {
         assert_eq!(byte_range("bytes=5-2", 100), None);
         assert_eq!(byte_range("bytes=0-", 0), None);
         assert_eq!(byte_range("items=0-", 100), None);
+    }
+
+    #[test]
+    fn lists_a_folder_by_day_and_night() {
+        let dir = std::env::temp_dir().join(format!("haze-folder-{}", uuid::Uuid::new_v4().simple()));
+        for d in ["Days", "nights", "other"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        for f in ["b.jpg", "a.MP4", "notes.txt", ".hidden.png", "Days/sun.png", "nights/moon.webm", "nights/x.gif", "other/no.png"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        let s = |p: &str| dir.join(p).to_string_lossy().into_owned();
+        let got = list_folder(&dir).unwrap();
+        assert_eq!(got.root, vec![s("a.MP4"), s("b.jpg")]);
+        assert_eq!(got.day, vec![s("Days/sun.png")]);
+        assert_eq!(got.night, vec![s("nights/moon.webm")]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

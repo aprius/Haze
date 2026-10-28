@@ -1,4 +1,4 @@
-// Background image behind the islands layout (Settings > Appearance). The
+// Background image behind the islands layout (Settings > Background). The
 // frame shows the image, blurred (once, see drawBlurred) and dimmed towards the
 // theme's frame colour, and each island is tinted glass over it: editors and
 // terminals draw with a transparent background (useGlass, read by monaco.ts
@@ -27,11 +27,25 @@ export interface BackdropSettings {
   agentGlow: boolean;
   /** A video stops while no Haze window has focus. */
   pauseInBackground: boolean;
+  /** A folder to rotate through (src/lib/backdropRotate.ts), `path` being its pick; null for one file. */
+  folder: string | null;
+  /** Minutes between picks; 0: only when day turns to night and back. */
+  interval: number;
+  /** Picks at random rather than in order of name. */
+  shuffle: boolean;
+  /** When day and night start, in minutes after midnight. */
+  dayStart: number;
+  nightStart: number;
+  /** How long one background fades into the next, in seconds; 0 cuts. */
+  fade: number;
 }
 
 const KEY = "haze.backdrop";
-export const DEFAULT_BACKDROP: BackdropSettings = { path: null, blur: 12, dim: 30, opacity: 82, popupOpacity: 80, ambient: 40, agentGlow: true, pauseInBackground: false };
-export const BACKDROP_LIMITS = { blur: [0, 40], dim: [0, 90], opacity: [40, 100], popupOpacity: [50, 100], ambient: [0, 100] } as const;
+export const DEFAULT_BACKDROP: BackdropSettings = {
+  path: null, blur: 12, dim: 30, opacity: 82, popupOpacity: 80, ambient: 40, agentGlow: true, pauseInBackground: false,
+  folder: null, interval: 30, shuffle: true, dayStart: 6 * 60, nightStart: 18 * 60, fade: 2,
+};
+export const BACKDROP_LIMITS = { blur: [0, 40], dim: [0, 90], opacity: [40, 100], popupOpacity: [50, 100], ambient: [0, 100], fade: [0, 5] } as const;
 // No GIFs: playing one cost three to seven times what a video does (docs/BACKGROUND.md).
 export const BACKDROP_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "bmp", "mp4", "webm", "mov", "m4v"];
 
@@ -65,6 +79,12 @@ function sanitize(s: Partial<BackdropSettings>): BackdropSettings {
     ambient: clamp(s.ambient, BACKDROP_LIMITS.ambient, d.ambient),
     agentGlow: typeof s.agentGlow === "boolean" ? s.agentGlow : d.agentGlow,
     pauseInBackground: typeof s.pauseInBackground === "boolean" ? s.pauseInBackground : d.pauseInBackground,
+    folder: typeof s.folder === "string" && s.folder ? s.folder : null,
+    interval: clamp(s.interval, [0, 24 * 60], d.interval),
+    shuffle: typeof s.shuffle === "boolean" ? s.shuffle : d.shuffle,
+    dayStart: clamp(s.dayStart, [0, 24 * 60 - 1], d.dayStart),
+    nightStart: clamp(s.nightStart, [0, 24 * 60 - 1], d.nightStart),
+    fade: clamp(s.fade, BACKDROP_LIMITS.fade, d.fade),
   };
 }
 
@@ -101,10 +121,25 @@ function applyGlass(): void {
   if (useGlass.getState().on !== on) useGlass.setState({ on });
 }
 
+/** Shown images still drawn elsewhere (a fading cover), and whether they are no longer shown. */
+const held = new Map<string, boolean>();
+
+/** Keeps the image `url` alive until the function returned lets it go. */
+export function holdImage(url: string): () => void {
+  held.set(url, false);
+  return () => {
+    if (held.get(url)) URL.revokeObjectURL(url);
+    held.delete(url);
+  };
+}
+
 function show(url: string | null, error: string | null): void {
   const prev = useBackdropImage.getState().url;
   document.documentElement.style.setProperty("--backdrop-url", url ? `url("${url}")` : "none");
-  if (prev && prev !== url) URL.revokeObjectURL(prev);
+  if (prev && prev !== url) {
+    if (held.has(prev)) held.set(prev, true);
+    else URL.revokeObjectURL(prev);
+  }
   useBackdropImage.setState({ url, error });
   applyGlass();
 }
@@ -395,7 +430,8 @@ useUiStyle.subscribe(applyGlass);
 // The blur slider re-blurs once it rests, not on every step of a drag.
 let reblur: ReturnType<typeof setTimeout> | undefined;
 
-export function setBackdrop(patch: Partial<BackdropSettings>): void {
+/** Resolves once a new file is shown, or could not be (useBackdropImage's error). */
+export function setBackdrop(patch: Partial<BackdropSettings>): Promise<void> {
   const prev = useBackdrop.getState();
   const next = sanitize({ ...prev, ...patch });
   try {
@@ -404,9 +440,10 @@ export function setBackdrop(patch: Partial<BackdropSettings>): void {
   applyVars(next);
   useBackdrop.setState(next);
   // Choosing the same file again reads it again: it may have changed.
-  if (patch.path !== undefined) void load(next.path);
-  else if (next.blur !== prev.blur) {
+  if (patch.path !== undefined) return load(next.path);
+  if (next.blur !== prev.blur) {
     clearTimeout(reblur);
     reblur = setTimeout(() => void render(), 150);
   }
+  return Promise.resolve();
 }

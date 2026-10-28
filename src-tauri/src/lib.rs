@@ -347,6 +347,12 @@ async fn cache_backdrop(app: AppHandle, path: Option<String>) -> CmdResult<Optio
     .await
 }
 
+/// The images and videos a rotating background picks from (src-tauri/src/media.rs).
+#[tauri::command]
+async fn list_backdrop_folder(folder: String) -> CmdResult<media::Folder> {
+    blocking(move || media::list_folder(std::path::Path::new(&folder))).await
+}
+
 fn backdrop_cache_dir(app: &AppHandle) -> anyhow::Result<std::path::PathBuf> {
     Ok(app.path().app_cache_dir().map_err(|e| anyhow::anyhow!("no cache directory: {e}"))?.join("backdrop"))
 }
@@ -1189,6 +1195,7 @@ pub fn run() {
             read_media,
             cache_backdrop,
             media_url,
+            list_backdrop_folder,
             clipboard_file_paths,
             git_log,
             git_toplevel,

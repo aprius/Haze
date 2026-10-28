@@ -7,8 +7,9 @@
 // URL. The ambient glow follows it every two seconds. Popups and windows of
 // their own show the first frame. GIFs are not supported: each frame goes
 // through a canvas, which cost three to seven times what a 1080p video does
-// (docs/BACKGROUND.md).
-import { useBackdrop, useBackdropImage } from "./backdrop";
+// (docs/BACKGROUND.md). A background changing for another (cover) fades out
+// over a still of the one before.
+import { blurredSize, drawBlurred, holdImage, useBackdrop, useBackdropImage } from "./backdrop";
 import { sampleLive } from "./ambient";
 import { onAppActive } from "./ipc";
 import { useGlass } from "./theme";
@@ -16,11 +17,62 @@ import { useGlass } from "./theme";
 const host = document.createElement("div");
 host.className = "backdrop-live";
 
+/** The main window's backdrop, while shown. */
+let frame: HTMLElement | null = null;
+
 /** Ref for the main window's backdrop: the playing background goes in it. */
 export function liveRef(el: HTMLElement | null): (() => void) | void {
   if (!el) return;
   el.appendChild(host);
-  return () => host.remove();
+  frame = el;
+  return () => {
+    host.remove();
+    if (frame === el) frame = null;
+  };
+}
+
+/**
+ * Covers the background with a still of it as it is now, so it can change
+ * underneath; the function returned fades the still out over Settings' fade,
+ * showing what replaced it. A video's current frame is drawn straight onto a
+ * canvas, an image's blurred copy is shown as it is: nothing is encoded,
+ * decoded or copied, so the change starts at once.
+ */
+export function cover(): () => void {
+  const seconds = useBackdrop.getState().fade;
+  const at = frame;
+  const image = useBackdropImage.getState().url;
+  if (!at || seconds <= 0 || !useGlass.getState().on) return () => {};
+  const el = document.createElement("div");
+  el.className = "backdrop-curtain";
+  let release: () => void;
+  if (video?.videoWidth) {
+    const canvas = document.createElement("canvas");
+    const { w, h, r } = blurredSize(useBackdrop.getState().blur);
+    canvas.width = w;
+    canvas.height = h;
+    drawBlurred(canvas.getContext("2d")!, video, video.videoWidth, video.videoHeight, r);
+    el.appendChild(canvas);
+    // WebKit keeps a canvas's backing store until it is collected.
+    release = () => (canvas.width = canvas.height = 0);
+  } else if (image) {
+    el.style.setProperty("--curtain-url", `url("${image}")`);
+    release = holdImage(image);
+  } else return () => {};
+  at.appendChild(el);
+  return () => {
+    // Once the new background has been painted under it.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        el.style.transition = `opacity ${seconds}s ease-in-out`;
+        el.style.opacity = "0";
+      }),
+    );
+    setTimeout(() => {
+      el.remove();
+      release();
+    }, seconds * 1000 + 200);
+  };
 }
 
 let video: HTMLVideoElement | null = null;

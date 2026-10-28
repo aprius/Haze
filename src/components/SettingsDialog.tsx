@@ -1,9 +1,32 @@
-// Settings: fonts, layout style, keymap, AI agent hooks (opt-in, per agent), OpenCode model providers, notifications, GitHub/GitLab accounts, file nesting, updates.
-import { ArrowUpCircle, Bot, Box, BrainCircuit, Code, FolderTree, GitBranch, Keyboard, type LucideIcon, Plus, RotateCcw, Type, X } from "lucide-react";
+// Settings: fonts, layout style, background, keymap, AI agent hooks (opt-in, per agent), OpenCode model providers, notifications, GitHub/GitLab accounts, file nesting, updates.
+import {
+  ArrowUpCircle,
+  Bot,
+  Box,
+  BrainCircuit,
+  Code,
+  Film,
+  FolderTree,
+  GitBranch,
+  ImageIcon,
+  Keyboard,
+  type LucideIcon,
+  Moon,
+  Plus,
+  RotateCcw,
+  Shuffle,
+  SkipForward,
+  Sun,
+  Type,
+  Wallpaper,
+  X,
+} from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { BACKDROP_EXTENSIONS, BACKDROP_LIMITS, DEFAULT_BACKDROP, setBackdrop, useBackdrop, useBackdropImage } from "../lib/backdrop";
+import { rotateNow, useRotation } from "../lib/backdropRotate";
+import { basename } from "../lib/path";
 import {
   CODE_FONT_SUGGESTIONS,
   DEFAULT_FONTS,
@@ -39,7 +62,7 @@ import { OpenCodeModelsSection } from "./OpenCodeModels";
 import { toast } from "./Overlays";
 import { parseRuleIds } from "../lib/lsp/diagnostics";
 
-type Page = "appearance" | "editor" | "keymap" | "agents" | "models" | "vcs" | "project" | "unity" | "updates";
+type Page = "appearance" | "background" | "editor" | "keymap" | "agents" | "models" | "vcs" | "project" | "unity" | "updates";
 
 // The page stays selected between openings.
 const useSettings = create<{ open: boolean; page: Page }>(() => ({ open: false, page: "appearance" }));
@@ -248,7 +271,6 @@ function FontSettingsSection() {
           </div>
         </div>
       </div>
-      <BackdropSection />
       <div className="settings-card">
         <SwitchRow
           label="GPU-accelerated terminal"
@@ -272,8 +294,54 @@ function FontSettingsSection() {
 }
 
 async function chooseBackdrop() {
-  const path = await openDialog({ multiple: false, title: "Background", filters: [{ name: "Images and videos", extensions: BACKDROP_EXTENSIONS }] });
-  if (typeof path === "string") setBackdrop({ path });
+  const path = await openDialog({
+    multiple: false,
+    title: "Background",
+    filters: [{ name: "Images and videos", extensions: BACKDROP_EXTENSIONS }],
+  });
+  if (typeof path === "string") void setBackdrop({ path, folder: null });
+}
+
+async function chooseBackdropFolder() {
+  const folder = await openDialog({
+    directory: true,
+    multiple: false,
+    title: "Background folder",
+  });
+  if (typeof folder === "string") void setBackdrop({ folder });
+}
+
+const ROTATE_EVERY: [number, string][] = [
+  [1, "Every minute"],
+  [5, "Every 5 minutes"],
+  [10, "Every 10 minutes"],
+  [15, "Every 15 minutes"],
+  [30, "Every 30 minutes"],
+  [60, "Every hour"],
+  [120, "Every 2 hours"],
+  [240, "Every 4 hours"],
+  [0, "When day or night begins"],
+];
+
+const clockTime = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+const parseClock = (v: string) => {
+  const [h, m] = v.split(":").map(Number);
+  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+};
+
+function ClockInput({ field }: { field: "dayStart" | "nightStart" }) {
+  const value = useBackdrop((s) => s[field]);
+  return (
+    <input
+      type="time"
+      className="modal-input bg-clock"
+      value={clockTime(value)}
+      onChange={(e) => {
+        const m = parseClock(e.target.value);
+        if (m !== null) void setBackdrop({ [field]: m });
+      }}
+    />
+  );
 }
 
 function BackdropSlider({ field, label, unit }: { field: keyof typeof BACKDROP_LIMITS; label: string; unit: string }) {
@@ -282,7 +350,7 @@ function BackdropSlider({ field, label, unit }: { field: keyof typeof BACKDROP_L
   return (
     <>
       <span>{label}</span>
-      <input type="range" className="settings-range" min={min} max={max} value={value} onChange={(e) => setBackdrop({ [field]: Number(e.target.value) })} />
+      <input type="range" className="settings-range" min={min} max={max} value={value} onChange={(e) => void setBackdrop({ [field]: Number(e.target.value) })} />
       <span className="muted small settings-range-value">
         {value}
         {unit}
@@ -291,86 +359,260 @@ function BackdropSlider({ field, label, unit }: { field: keyof typeof BACKDROP_L
   );
 }
 
-/** What Reset puts back: everything but the file. */
-const BACKDROP_TUNING = ["blur", "dim", "opacity", "popupOpacity", "ambient", "agentGlow", "pauseInBackground"] as const;
+/** What Reset puts back: the look, not the file or folder. */
+const BACKDROP_TUNING = [
+  "blur",
+  "dim",
+  "opacity",
+  "popupOpacity",
+  "ambient",
+  "agentGlow",
+  "pauseInBackground",
+  "interval",
+  "shuffle",
+  "dayStart",
+  "nightStart",
+  "fade",
+] as const;
 
-/** Background image, islands layout only (src/lib/backdrop.ts). */
-function BackdropSection() {
+/**
+ * The background as the window shows it, with panels and a popup in miniature
+ * over it at the opacity set, so the sliders show what they do.
+ */
+function BackdropPreview() {
+  const url = useBackdropImage((s) => s.url);
+  const video = useBackdropImage((s) => !!s.live);
   const path = useBackdrop((s) => s.path);
+  const folder = useBackdrop((s) => s.folder);
+  const period = useRotation((s) => s.period);
+  if (!url)
+    return (
+      <div className="bg-preview empty">
+        <Wallpaper size={26} />
+        <span>No background</span>
+      </div>
+    );
+  return (
+    <div className="bg-preview">
+      <div className="bg-preview-island side" />
+      <div className="bg-preview-island editor">
+        <i style={{ width: "46%" }} />
+        <i style={{ width: "70%" }} />
+        <i style={{ width: "58%" }} />
+        <i style={{ width: "34%" }} />
+      </div>
+      <div className="bg-preview-island bottom" />
+      <div className="bg-preview-popup" />
+      {path && (
+        <div className="bg-preview-caption" title={path}>
+          {video ? <Film size={12} /> : <ImageIcon size={12} />}
+          <span>{basename(path)}</span>
+          {folder && period && (period === "day" ? <Sun size={12} /> : <Moon size={12} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A file or folder chosen, and the button that chooses it. */
+function PathPicker({ value, placeholder, onChoose, children }: { value: string | null; placeholder: string; onChoose: () => void; children?: ReactNode }) {
+  return (
+    <div className="bg-picker">
+      <span className={"bg-picker-path" + (value ? "" : " muted")} title={value ?? undefined}>
+        {/* Right to left, so a long path loses its start, not the name. */}
+        <bdi dir="ltr">{value ?? placeholder}</bdi>
+      </span>
+      {children}
+      <button className="btn small" onClick={onChoose}>
+        {value ? "Change…" : "Choose…"}
+      </button>
+    </div>
+  );
+}
+
+/** A folder to rotate through (src/lib/backdropRotate.ts), and what is in it. */
+function RotateFolder() {
+  const folder = useBackdrop((s) => s.folder);
+  const r = useRotation();
+  const split = r.day > 0 || r.night > 0;
+  return (
+    <>
+      <PathPicker value={folder} placeholder="No folder chosen" onChoose={() => void chooseBackdropFolder()}>
+        {folder && (
+          <button className="btn small" onClick={rotateNow} title="Show another background now">
+            <SkipForward size={12} /> Next
+          </button>
+        )}
+      </PathPicker>
+      {folder && r.error && <div className="modal-error">Cannot rotate: {r.error}</div>}
+      {folder && r.period && !r.error && (
+        <div className="bg-chips">
+          {split ? (
+            <>
+              <span className={"bg-chip" + (r.period === "day" ? " on" : "")} title="In the days folder">
+                <Sun size={12} /> {r.day} by day
+              </span>
+              <span className={"bg-chip" + (r.period === "night" ? " on" : "")} title="In the nights folder">
+                <Moon size={12} /> {r.night} by night
+              </span>
+              {r.root > 0 && (
+                <span className="bg-chip" title="At the top of the folder: used when the days or nights folder is empty">
+                  {r.root} for either
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="bg-chip on">
+                {r.period === "day" ? <Sun size={12} /> : <Moon size={12} />} {r.root} day and night
+              </span>
+              <span className="muted small">Add days and nights folders to it to pick by the time of day.</span>
+            </>
+          )}
+        </div>
+      )}
+      {!folder && <div className="muted small">Folders named days and nights inside it are used by day and by night; without them, the folder's own files are.</div>}
+    </>
+  );
+}
+
+/** When a rotating background changes, and how. */
+function RotateSchedule() {
+  const interval = useBackdrop((s) => s.interval);
+  const shuffle = useBackdrop((s) => s.shuffle);
+  return (
+    <div className="settings-backdrop-grid">
+      <span>Change</span>
+      <select className="find-select bg-field" value={interval} onChange={(e) => void setBackdrop({ interval: Number(e.target.value) })}>
+        {ROTATE_EVERY.map(([m, label]) => (
+          <option key={m} value={m}>
+            {label}
+          </option>
+        ))}
+      </select>
+      <span />
+      <span>Order</span>
+      <div className="seg bg-field">
+        <button className={"seg-btn" + (shuffle ? " on" : "")} onClick={() => void setBackdrop({ shuffle: true })}>
+          <Shuffle size={11} /> Random
+        </button>
+        <button className={"seg-btn" + (shuffle ? "" : " on")} onClick={() => void setBackdrop({ shuffle: false })}>
+          By name
+        </button>
+      </div>
+      <span />
+      <span>Day / night</span>
+      <div className="bg-clocks">
+        <Sun size={13} className="muted" />
+        <ClockInput field="dayStart" />
+        <Moon size={13} className="muted" />
+        <ClockInput field="nightStart" />
+      </div>
+      <span />
+      <BackdropSlider field="fade" label="Transition" unit=" s" />
+    </div>
+  );
+}
+
+type BackdropSource = "none" | "file" | "folder";
+const SOURCES: [BackdropSource, string][] = [
+  ["none", "None"],
+  ["file", "Image or video"],
+  ["folder", "Folder"],
+];
+
+/** Background image or video, islands layout only (src/lib/backdrop.ts). */
+function BackgroundSection() {
+  const path = useBackdrop((s) => s.path);
+  const folder = useBackdrop((s) => s.folder);
   const isDefault = useBackdrop((s) => BACKDROP_TUNING.every((k) => s[k] === DEFAULT_BACKDROP[k]));
   const error = useBackdropImage((s) => s.error);
   const moving = useBackdropImage((s) => !!s.live);
   const agentGlow = useBackdrop((s) => s.agentGlow);
   const pauseInBackground = useBackdrop((s) => s.pauseInBackground);
   const islands = useUiStyle((s) => s.style === "islands");
+  // Picking File or Folder shows its picker before anything is chosen.
+  const [source, setSource] = useState<BackdropSource>(folder ? "folder" : path ? "file" : "none");
+  const choose = (s: BackdropSource) => {
+    setSource(s);
+    if (s === "none") void setBackdrop({ path: null, folder: null });
+  };
   return (
-    <div className="settings-card">
-      <div className="settings-row static">
-        <div className="settings-row-text">
-          <div>Background</div>
-          {path ? (
-            <div className="muted small settings-path" title={path}>
-              {path}
-            </div>
-          ) : (
-            <div className="muted small">An image or video (MP4, WebM, MOV) behind the panels, which turn to tinted glass over it.</div>
-          )}
-        </div>
-        {path && (
-          <button className="btn small" onClick={() => setBackdrop({ path: null })}>
-            Remove
+    <>
+      <PageHeader title="Background" desc="An image or video behind the Islands layout: the panels and popups turn to tinted glass over it.">
+        {!isDefault && (
+          <button className="btn small" onClick={() => void setBackdrop(Object.fromEntries(BACKDROP_TUNING.map((k) => [k, DEFAULT_BACKDROP[k]])))}>
+            Reset to Defaults
           </button>
         )}
-        <button className="btn small" onClick={() => void chooseBackdrop()}>
-          {path ? "Change…" : "Choose…"}
-        </button>
-      </div>
-      {error && <div className="modal-error">Cannot read the file: {error}</div>}
+      </PageHeader>
       {path && !islands && (
-        <div className="settings-row static">
-          <div className="settings-row-text muted small">Shown with the Islands layout only.</div>
-          <button className="btn small" onClick={() => setUiStyle("islands")}>
-            Use Islands
-          </button>
-        </div>
-      )}
-      {path && (
-        <div className="settings-backdrop-grid">
-          <BackdropSlider field="blur" label="Blur" unit="px" />
-          <BackdropSlider field="dim" label="Dim" unit="%" />
-          <BackdropSlider field="opacity" label="Panel opacity" unit="%" />
-          <BackdropSlider field="popupOpacity" label="Popup opacity" unit="%" />
-          <BackdropSlider field="ambient" label="Ambient glow" unit="%" />
-          <label className="settings-row settings-backdrop-switch">
-            <div className="settings-row-text">
-              <div>Agent status glow</div>
-              <div className="muted small">The terminal panel glows while its agents work, wait for you, finish or fail.</div>
-            </div>
-            <span className="switch">
-              <input type="checkbox" role="switch" checked={agentGlow} onChange={(e) => setBackdrop({ agentGlow: e.target.checked })} />
-              <span />
-            </span>
-          </label>
-          {moving && (
-            <label className="settings-row settings-backdrop-switch">
-              <div className="settings-row-text">
-                <div>Pause in background</div>
-                <div className="muted small">The video stops while another app has focus, and plays on when you come back.</div>
-              </div>
-              <span className="switch">
-                <input type="checkbox" role="switch" checked={pauseInBackground} onChange={(e) => setBackdrop({ pauseInBackground: e.target.checked })} />
-                <span />
-              </span>
-            </label>
-          )}
-          {!isDefault && (
-            <button className="btn small settings-backdrop-reset" onClick={() => setBackdrop(Object.fromEntries(BACKDROP_TUNING.map((k) => [k, DEFAULT_BACKDROP[k]])))}>
-              Reset
+        <div className="settings-card bg-notice">
+          <div className="settings-row static">
+            <div className="settings-row-text muted small">The background shows with the Islands layout only.</div>
+            <button className="btn small" onClick={() => setUiStyle("islands")}>
+              Use Islands
             </button>
-          )}
+          </div>
         </div>
       )}
-    </div>
+      <div className="settings-card bg-source">
+        <div className="bg-source-top">
+          <BackdropPreview />
+          <div className="bg-source-body">
+            <div className="seg bg-source-seg">
+              {SOURCES.map(([id, name]) => (
+                <button key={id} className={"seg-btn" + (source === id ? " on" : "")} onClick={() => choose(id)}>
+                  {name}
+                </button>
+              ))}
+            </div>
+            {source === "none" && (
+              <div className="muted small">PNG, JPEG, WebP or BMP images, MP4, MOV or WebM videos, one at a time or a folder of them taking turns.</div>
+            )}
+            {source === "file" && <PathPicker value={folder ? null : path} placeholder="No file chosen" onChoose={() => void chooseBackdrop()} />}
+            {source === "folder" && <RotateFolder />}
+            {error && <div className="modal-error">Cannot read the file: {error}</div>}
+          </div>
+        </div>
+        {source === "folder" && folder && <RotateSchedule />}
+      </div>
+      {path && (
+        <>
+          <div className="settings-card">
+            <div className="bg-card-title">Glass</div>
+            <div className="settings-backdrop-grid">
+              <BackdropSlider field="blur" label="Blur" unit="px" />
+              <BackdropSlider field="dim" label="Dim" unit="%" />
+              <BackdropSlider field="opacity" label="Panel opacity" unit="%" />
+              <BackdropSlider field="popupOpacity" label="Popup opacity" unit="%" />
+            </div>
+          </div>
+          <div className="settings-card">
+            <div className="bg-card-title">Glow</div>
+            <div className="settings-backdrop-grid">
+              <BackdropSlider field="ambient" label="Ambient glow" unit="%" />
+            </div>
+            <SwitchRow
+              label="Agent status glow"
+              desc="The terminal panel glows while its agents work, wait for you, finish or fail."
+              checked={agentGlow}
+              onChange={(on) => void setBackdrop({ agentGlow: on })}
+            />
+          </div>
+          {moving && (
+            <div className="settings-card">
+              <SwitchRow
+                label="Pause video in background"
+                desc="The video stops while another app has focus, and plays on when you come back."
+                checked={pauseInBackground}
+                onChange={(on) => void setBackdrop({ pauseInBackground: on })}
+              />
+            </div>
+          )}
+        </>
+      )}
+    </>
   );
 }
 
@@ -752,6 +994,7 @@ function UpdatesSection() {
 
 const PAGES: { id: Page; name: string; icon: LucideIcon; body: () => ReactNode }[] = [
   { id: "appearance", name: "Appearance", icon: Type, body: () => <FontSettingsSection /> },
+  { id: "background", name: "Background", icon: Wallpaper, body: () => <BackgroundSection /> },
   { id: "editor", name: "Editor", icon: Code, body: () => <EditorSection /> },
   { id: "keymap", name: "Keymap", icon: Keyboard, body: () => <KeymapSection /> },
   { id: "agents", name: "AI Agents", icon: Bot, body: () => <AgentsSection /> },

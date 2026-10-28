@@ -1,6 +1,6 @@
 # Background images and videos
 
-**Settings → Appearance → Background** puts an image or a video behind the Islands layout. The panels turn into tinted glass over it, and their opacity, the blur and the dim are adjustable. Two more options go with it:
+**Settings → Background** puts an image or a video behind the Islands layout. The panels turn into tinted glass over it, and their opacity, the blur and the dim are adjustable. Two more options go with it:
 
 - **Ambient glow**: each island is lit from its edges in the colours of the background behind it.
 - **Agent status glow**: the terminal island glows in the state of its AI agents instead: working, waiting for you, done or failed.
@@ -12,6 +12,25 @@ ffmpeg -i background.gif -movflags +faststart -pix_fmt yuv420p -vf "scale=trunc(
 ```
 
 A video stops while the window is hidden or covered, and with **Pause in background** also while no Haze window has focus.
+
+## Rotating from a folder
+
+**Folder** (next to **None** and **Image or video**) changes the background by itself, picking another image or video from a folder at the interval set (or only when day turns to night and back):
+
+```
+Wallpapers/
+├── days/      ← by day
+├── nights/    ← by night
+└── *.jpg      ← when there is no days or nights folder, or it is empty
+```
+
+- `days` and `nights` may also be named `day` and `night`, in any case. Only the files directly in each are picked, not deeper folders.
+- Without either folder, every pick comes from the folder's own files, day and night.
+- Day and night start at the times set (06:00 and 18:00 at first). When the time turns, the background changes to one for the new period.
+- **Order**: **Random** never picks the same file twice in a row; **By name** goes through the files in order.
+- **Transition** is how long one background fades into the next, 0–5 seconds; 0 cuts. A video fades out from the frame it was on.
+- **Next** shows another one now. The folder is read again at every pick, so files added to it join in.
+- Nothing changes while the window is hidden; the change waits until it is shown. A file that cannot be read gives way to another.
 
 ## Performance
 

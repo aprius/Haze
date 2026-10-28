@@ -6,6 +6,8 @@ import { FileTree, ProjectViewHeader } from "./components/FileTree";
 import { FindInFiles } from "./components/FindInFiles";
 import { SearchEverywhere } from "./components/SearchEverywhere";
 import { Backdrop } from "./components/Backdrop";
+// Rotates the background through a folder, if one is set.
+import "./lib/backdropRotate";
 import { glowRef } from "./lib/ambient";
 import { ContextMenu, Dialogs, inDoc, keyboardIn, setAppShortcuts, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, toggleBottom, UpdateProgressCard, Welcome } from "./components/Shell";
