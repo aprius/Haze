@@ -109,11 +109,16 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
 
 ## AI agents
 
-- **Settings** (`Ctrl+Alt+S`; pages for Appearance, Editor, Keymap, AI Agents, Version Control, Project View, Unity and Updates) installs status hooks, keeping your other settings and hooks (a `.haze-backup` copy is made on the first write; remove them anytime):
+- **Settings** (`Ctrl+Alt+S`; pages for Appearance, Editor, Keymap, AI Agents, AI Models, Version Control, Project View, Unity and Updates) installs status hooks, keeping your other settings and hooks (a `.haze-backup` copy is made on the first write; remove them anytime):
   - **Claude Code**: hooks in `~/.claude/settings.json`.
   - **Codex**: lifecycle hooks in `~/.codex/hooks.json` (Codex may ask you to trust them in `/hooks`), plus `notify` in `config.toml` for older versions unless you use it already.
   - **Gemini CLI** (0.26+): hooks in `~/.gemini/settings.json`.
   - **OpenCode**: a `haze.js` plugin in `~/.config/opencode/plugins/`.
+- **AI Models** (Settings) picks the models OpenCode uses, so one agent can run Claude, GPT, Gemini, DeepSeek, OpenRouter's catalog or a local model. It edits OpenCode's global config (`~/.config/opencode/opencode.json`, other settings kept, `.haze-backup` on the first write):
+  - **Providers OpenCode knows** (Anthropic, OpenAI, Google, OpenRouter, DeepSeek, xAI, Groq, Mistral…) only need a key.
+  - **Custom providers**: Ollama and LM Studio presets, or any endpoint with an **API type** (OpenAI-compatible Chat Completions, Anthropic-compatible Messages, or OpenAI Responses), an address and its models, e.g. vLLM, LiteLLM, a company proxy or a provider's Anthropic endpoint. *Fetch from Server* lists the models at `<address>/models` with checkboxes (filter, Select All / None) to tick the ones OpenCode should offer; ids can also be added by hand.
+  - **Default and small model** (`provider/model`).
+  - Keys are saved in `~/.config/opencode/haze-keys/`, readable only by you, and the config refers to them as `{file:haze-keys/<id>}`, so `opencode.json` holds no secret. Keys added with `/connect` in OpenCode keep working.
 - **No hook needed** for agents that print their state: Haze reads its own `OSC 6973;<state>[;<agent>[;<message>]]`, which any script can print (`printf '\e]6973;working;mybot\a'`; states: idle, working, waiting, done, error, clear), and notifications (`OSC 9`, `OSC 777`) that name Claude, Codex, Gemini or OpenCode. Once an agent is known, the progress sequence `OSC 9;4` updates it while that program is in front; a progress bar alone (`dotnet build` draws one) does not count. An installed hook takes precedence.
 - Terminal tabs running an agent show a badge (**CC** Claude Code, **CX** Codex, **GM** Gemini, **OC** OpenCode): pulsing blue = working, yellow = waiting for you (permission, question), green = done, red = error. Projects in the sidebar show a matching dot.
 - **Desktop notifications** when an agent needs you or finishes in a terminal you are not looking at.

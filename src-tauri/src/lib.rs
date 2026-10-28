@@ -11,6 +11,7 @@ mod git_ops;
 mod lsp;
 mod media;
 mod nesting;
+mod opencode_config;
 mod procinfo;
 pub mod pty;
 mod search;
@@ -556,6 +557,55 @@ async fn agent_hooks_install(agent: String) -> CmdResult<agent_hooks::HookStatus
 #[tauri::command]
 async fn agent_hooks_uninstall(agent: String) -> CmdResult<agent_hooks::HookStatus> {
     blocking(move || agent_hooks::uninstall(&agent)).await
+}
+
+// ---------------------------------------------------------------- OpenCode providers
+
+#[tauri::command]
+async fn opencode_config() -> CmdResult<opencode_config::OpenCodeConfig> {
+    blocking(move || opencode_config::read(&opencode_config::config_dir()?)).await
+}
+
+#[tauri::command]
+async fn opencode_save_provider(
+    input: opencode_config::ProviderInput,
+) -> CmdResult<opencode_config::OpenCodeConfig> {
+    blocking(move || opencode_config::save_provider(&opencode_config::config_dir()?, input)).await
+}
+
+#[tauri::command]
+async fn opencode_remove_provider(id: String) -> CmdResult<opencode_config::OpenCodeConfig> {
+    blocking(move || opencode_config::remove_provider(&opencode_config::config_dir()?, &id)).await
+}
+
+#[tauri::command]
+async fn opencode_set_models(
+    model: String,
+    small_model: String,
+) -> CmdResult<opencode_config::OpenCodeConfig> {
+    blocking(move || {
+        opencode_config::set_models(&opencode_config::config_dir()?, &model, &small_model)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn opencode_fetch_models(
+    base_url: String,
+    api_key: Option<String>,
+    id: String,
+    npm: String,
+) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        opencode_config::fetch_models(
+            &opencode_config::config_dir()?,
+            &base_url,
+            api_key.as_deref(),
+            &id,
+            &npm,
+        )
+    })
+    .await
 }
 
 // ---------------------------------------------------------------- .NET and language servers
@@ -1165,6 +1215,11 @@ pub fn run() {
             agent_hooks_status,
             agent_hooks_install,
             agent_hooks_uninstall,
+            opencode_config,
+            opencode_save_provider,
+            opencode_remove_provider,
+            opencode_set_models,
+            opencode_fetch_models,
             dotnet_info,
             build_start,
             build_cancel,

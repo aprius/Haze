@@ -534,6 +534,37 @@ export interface Checkpoint {
 /** A project and/or file to open, from the command line (see cli_open.rs). */
 export type HookAgent = "claude" | "codex" | "gemini" | "opencode";
 
+/** A model provider in OpenCode's global config (see opencode_config.rs). */
+export interface OpenCodeProvider {
+  id: string;
+  name: string | null;
+  npm: string | null;
+  baseUrl: string | null;
+  /** haze: a key file Haze wrote; env: keyEnv; file / inline: set by hand; none: OpenCode's own /connect or environment. */
+  key: "haze" | "env" | "file" | "inline" | "none";
+  keyEnv: string | null;
+  models: string[];
+}
+
+export interface OpenCodeConfig {
+  path: string;
+  providers: OpenCodeProvider[];
+  model: string | null;
+  smallModel: string | null;
+  /** Why Haze will not write the file. */
+  conflict: string | null;
+}
+
+/** Fields left undefined are kept; an empty string or list removes one. */
+export interface OpenCodeProviderInput {
+  id: string;
+  name?: string;
+  npm?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  models?: string[];
+}
+
 export interface OpenRequest {
   project: string | null;
   file: string | null;
@@ -587,6 +618,12 @@ export const api = {
   agentHooksStatus: (agent: HookAgent) => invoke<HookStatus>("agent_hooks_status", { agent }),
   agentHooksInstall: (agent: HookAgent) => invoke<HookStatus>("agent_hooks_install", { agent }),
   agentHooksUninstall: (agent: HookAgent) => invoke<HookStatus>("agent_hooks_uninstall", { agent }),
+  opencodeConfig: () => invoke<OpenCodeConfig>("opencode_config"),
+  opencodeSaveProvider: (input: OpenCodeProviderInput) => invoke<OpenCodeConfig>("opencode_save_provider", { input }),
+  opencodeRemoveProvider: (id: string) => invoke<OpenCodeConfig>("opencode_remove_provider", { id }),
+  opencodeSetModels: (model: string, smallModel: string) => invoke<OpenCodeConfig>("opencode_set_models", { model, smallModel }),
+  opencodeFetchModels: (baseUrl: string, apiKey: string | null, id: string, npm: string) =>
+    invoke<string[]>("opencode_fetch_models", { baseUrl, apiKey, id, npm }),
 
   gitLog: (root: string, query: LogQuery) => invoke<LogPage>("git_log", { root, query }),
   gitToplevel: (root: string) => invoke<string>("git_toplevel", { root }),

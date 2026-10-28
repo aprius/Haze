@@ -4390,6 +4390,60 @@ html:has(.float-external) body {
   flex: 1;
   min-width: 0;
 }
+.opencode-api-type {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.opencode-models-label {
+  align-self: start;
+  padding-top: 4px;
+}
+.opencode-models {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.opencode-models > * {
+  align-self: stretch;
+}
+.opencode-models > .btn {
+  align-self: flex-start;
+}
+.opencode-models-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.opencode-models-bar .modal-input {
+  flex: 1;
+  min-width: 120px;
+}
+.opencode-model-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow: auto;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.opencode-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.opencode-model span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .git-device-code {
   font-family: var(--font-mono);
   font-size: 22px;

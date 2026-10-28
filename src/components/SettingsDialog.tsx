@@ -1,5 +1,5 @@
-// Settings: fonts, layout style, keymap, AI agent hooks (opt-in, per agent), notifications, GitHub/GitLab accounts, file nesting, updates.
-import { ArrowUpCircle, Bot, Box, Code, FolderTree, GitBranch, Keyboard, type LucideIcon, Plus, RotateCcw, Type, X } from "lucide-react";
+// Settings: fonts, layout style, keymap, AI agent hooks (opt-in, per agent), OpenCode model providers, notifications, GitHub/GitLab accounts, file nesting, updates.
+import { ArrowUpCircle, Bot, Box, BrainCircuit, Code, FolderTree, GitBranch, Keyboard, type LucideIcon, Plus, RotateCcw, Type, X } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
@@ -35,10 +35,11 @@ import { popupClosed } from "../store/ui";
 import { checkForUpdates, openRelease, updateLabel, updateNow, useUpdates } from "../store/updates";
 import { useWorkspace, type PerfContextMode } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
+import { OpenCodeModelsSection } from "./OpenCodeModels";
 import { toast } from "./Overlays";
 import { parseRuleIds } from "../lib/lsp/diagnostics";
 
-type Page = "appearance" | "editor" | "keymap" | "agents" | "vcs" | "project" | "unity" | "updates";
+type Page = "appearance" | "editor" | "keymap" | "agents" | "models" | "vcs" | "project" | "unity" | "updates";
 
 // The page stays selected between openings.
 const useSettings = create<{ open: boolean; page: Page }>(() => ({ open: false, page: "appearance" }));
@@ -754,6 +755,7 @@ const PAGES: { id: Page; name: string; icon: LucideIcon; body: () => ReactNode }
   { id: "editor", name: "Editor", icon: Code, body: () => <EditorSection /> },
   { id: "keymap", name: "Keymap", icon: Keyboard, body: () => <KeymapSection /> },
   { id: "agents", name: "AI Agents", icon: Bot, body: () => <AgentsSection /> },
+  { id: "models", name: "AI Models", icon: BrainCircuit, body: () => <OpenCodeModelsSection /> },
   { id: "vcs", name: "Version Control", icon: GitBranch, body: () => <GitAccountsSection /> },
   { id: "project", name: "Project View", icon: FolderTree, body: () => <ProjectViewSection /> },
   { id: "unity", name: "Unity", icon: Box, body: () => <UnitySection /> },

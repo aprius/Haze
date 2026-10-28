@@ -403,7 +403,7 @@ fn read_json(path: &Path) -> Result<serde_json::Value> {
     }
 }
 
-fn write_with_backup(path: &Path, text: &str) -> Result<()> {
+pub(crate) fn write_with_backup(path: &Path, text: &str) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -506,7 +506,18 @@ const watch = () => {{
       case "permission.updated":
         report("waiting", "Waiting for permission");
         break;
+      // Questions: forms in OpenCode 2 (also MCP elicitations), question events in OpenCode 1.
+      case "form.created":
+        report("waiting", p.form?.fields?.[0]?.description ?? p.form?.title ?? "Waiting for your answer");
+        break;
+      case "question.asked":
+        report("waiting", p.questions?.[0]?.question ?? "Waiting for your answer");
+        break;
       case "permission.replied":
+      case "form.replied":
+      case "form.cancelled":
+      case "question.replied":
+      case "question.rejected":
         report(busy.size ? "working" : "done");
         break;
       case "session.error":
@@ -765,6 +776,8 @@ mod tests {
         assert!(js.contains("\"--agent-hook\", \"opencode\""));
         assert!(js.contains("export default {"));
         assert!(js.contains("setup: (api) =>"));
+        assert!(js.contains("case \"question.asked\":"));
+        assert!(js.contains("case \"form.created\":"));
     }
 
     #[test]
