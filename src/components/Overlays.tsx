@@ -3,6 +3,7 @@
 import { Check, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { registerWindow } from "monaco-editor/base/browser/dom.js";
 import { create } from "zustand";
 import { matches } from "../lib/keymap";
 import { Backdrop } from "./Backdrop";
@@ -293,11 +294,24 @@ window.addEventListener("focus", () => windowFocusedAt.set(window, Date.now()));
 // without one share the key `undefined`: one frame lost there (a window closed
 // or its document swapped before it ran) and editors in every later Commit or
 // Diff window never paint their text again. So each window, and each document
-// WebKit swaps into it (a new global), gets its own.
+// WebKit swaps into it (a new global), gets its own. And is registered with
+// Monaco: it looks for the focused element only in windows it knows of, so an
+// editor here never counted as focused and hid its cursor.
 let monacoWindowSeq = 1000;
-function tagMonacoWindow(win: Window) {
-  if (typeof (win as { vscodeWindowId?: unknown }).vscodeWindowId === "number") return;
-  Object.defineProperty(win, "vscodeWindowId", { value: ++monacoWindowSeq, configurable: true });
+function tagMonacoWindow(win: Window): () => void {
+  const id = ++monacoWindowSeq;
+  Object.defineProperty(win, "vscodeWindowId", { value: id, configurable: true });
+  const registration = registerWindow(win);
+  return () => {
+    // Monaco unregisters by the window's id at that moment, which a swapped-in
+    // document lost. Kept afterwards: editors disposed later still schedule frames.
+    try {
+      Object.defineProperty(win, "vscodeWindowId", { value: id, configurable: true });
+    } catch {
+      /* closed */
+    }
+    registration.dispose();
+  };
 }
 
 /**
@@ -398,7 +412,8 @@ function useExternalWindow(width: number, height: number, onClose: () => void, s
       doc.body.appendChild(el);
       return el;
     };
-    tagMonacoWindow(win);
+    // Unregistered before a document swap retags the window: Monaco removes it by its current id.
+    let untag = tagMonacoWindow(win);
     let root = mount();
     let unmirror = mirrorStyles(win);
     // WebKit may still load the window's URL into it, replacing the document:
@@ -407,7 +422,8 @@ function useExternalWindow(width: number, height: number, onClose: () => void, s
     const reattach = () => {
       if (win.closed || win.document === doc || !win.document.body) return;
       doc = win.document;
-      tagMonacoWindow(win);
+      untag();
+      untag = tagMonacoWindow(win);
       unmirror();
       root.remove();
       root = mount();
@@ -475,6 +491,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void, s
       externalWindows.delete(win);
       windowFocusedAt.delete(win);
       clearInterval(poll);
+      untag();
       unmirror();
       unlisten?.();
       removeShortcuts?.();

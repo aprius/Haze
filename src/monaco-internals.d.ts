@@ -23,3 +23,8 @@ declare module "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js"
   }
   export class DefinitionAction extends SymbolNavigationAction {}
 }
+
+// Exported by vite.config.ts (exposeMonacoWindows).
+declare module "monaco-editor/base/browser/dom.js" {
+  export function registerWindow(win: Window): { dispose(): void };
+}

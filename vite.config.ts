@@ -37,8 +37,29 @@ function trimMonaco(): Plugin {
   };
 }
 
+// Monaco tracks focus only in the windows it knows of (`registerWindow`, which
+// it does not export): in a window of its own an editor never counts as focused
+// and hides its cursor. Exported here so Overlays.tsx can register Haze's windows.
+// In the dependency optimizer too: `vite dev` pre-bundles Monaco without plugins.
+const MONACO_DOM = /monaco-editor\/esm\/vs\/base\/browser\/dom\.js$/;
+const MONACO_WINDOWS = "const { getWindow, getDocument, getWindows,";
+
+function exposeMonacoWindows() {
+  return {
+    name: "haze-monaco-register-window",
+    transform(code: string, id: string) {
+      if (!MONACO_DOM.test(id.replace(/\\/g, "/").split("?")[0])) return;
+      if (!code.includes(MONACO_WINDOWS)) throw new Error("monaco-editor's dom.js changed: update exposeMonacoWindows in vite.config.ts");
+      return code.replace(MONACO_WINDOWS, "const { registerWindow, getWindow, getDocument, getWindows,") + "\nexport { registerWindow };\n";
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [trimMonaco(), react()],
+  plugins: [trimMonaco(), exposeMonacoWindows(), react()],
+  optimizeDeps: {
+    rolldownOptions: { plugins: [exposeMonacoWindows()] },
+  },
   clearScreen: false,
   server: {
     port: 1420,
