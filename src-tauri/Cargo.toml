@@ -1,6 +1,6 @@
 [package]
 name = "haze"
-version = "1.0.16"
+version = "1.0.17"
 description = "Haze - a lightweight AI-first workspace"
 edition = "2021"
 license = "MIT"
