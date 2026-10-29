@@ -24,6 +24,19 @@ declare module "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js"
   export class DefinitionAction extends SymbolNavigationAction {}
 }
 
+// The hover-delegate factory every editor resets (see lib/monaco.ts).
+declare module "monaco-editor/base/browser/ui/hover/hoverDelegateFactory.js" {
+  export function setHoverDelegateFactory(factory: (placement: "mouse" | "element", instantHover: boolean) => unknown): void;
+}
+declare module "monaco-editor/platform/hover/browser/hover.js" {
+  export class WorkbenchHoverDelegate {}
+}
+declare module "monaco-editor/editor/standalone/browser/standaloneServices.js" {
+  export const StandaloneServices: {
+    initialize(overrides: object): { createInstance(ctor: unknown, ...args: unknown[]): unknown };
+  };
+}
+
 // Exported by vite.config.ts (exposeMonacoWindows).
 declare module "monaco-editor/base/browser/dom.js" {
   export function registerWindow(win: Window): { dispose(): void };

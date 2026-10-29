@@ -1,5 +1,8 @@
 // Monaco setup: bundled locally (no CDN).
 import * as monaco from "monaco-editor";
+import { setHoverDelegateFactory } from "monaco-editor/base/browser/ui/hover/hoverDelegateFactory.js";
+import { WorkbenchHoverDelegate } from "monaco-editor/platform/hover/browser/hover.js";
+import { StandaloneServices } from "monaco-editor/editor/standalone/browser/standaloneServices.js";
 // Monaco's own `new URL(worker, import.meta.url)` is copied by Vite without
 // its imports, so the worker (diff computation, word suggestions) would fail.
 // Vite's `?worker` import bundles it properly.
@@ -199,6 +202,20 @@ monaco.editor.onDidCreateEditor((ed) => {
   if (!ed.getContainerDomNode().closest(".monaco-diff-editor")) followOwnWindow(ed);
 });
 monaco.editor.onDidCreateDiffEditor(followOwnWindow);
+
+// Each editor, as it is created, points Monaco's global hover-delegate factory
+// at the services it was made with. A diff editor's two sides are made with the
+// diff editor's own, disposed with it (DiffView, the Commit window's diffs):
+// every later menu and suggestion list then fails ("InstantiationService has
+// been disposed"), no context menu and an empty suggest widget, until another
+// editor is created. Pointed back at Monaco's root services, which live as long
+// as the app.
+const pointHoversAtRoot = () => {
+  const root = StandaloneServices.initialize({});
+  setHoverDelegateFactory((placement, instantHover) => root.createInstance(WorkbenchHoverDelegate, placement, { instantHover }, {}));
+};
+// After the editor's constructor, which sets it once its base class (where this fires) is done.
+monaco.editor.onDidCreateEditor(() => queueMicrotask(pointHoversAtRoot));
 
 /** Font options for a new editor; open editors follow later changes below. */
 export const codeFontOptions = () => {
