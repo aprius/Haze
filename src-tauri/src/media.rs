@@ -278,7 +278,8 @@ mod tests {
         for f in ["b.jpg", "a.MP4", "notes.txt", ".hidden.png", "Days/sun.png", "nights/moon.webm", "nights/x.gif", "other/no.png"] {
             std::fs::write(dir.join(f), b"x").unwrap();
         }
-        let s = |p: &str| dir.join(p).to_string_lossy().into_owned();
+        // Joined part by part: on Windows a "/" in one part stays as it is.
+        let s = |p: &str| p.split('/').fold(dir.clone(), |at, part| at.join(part)).to_string_lossy().into_owned();
         let got = list_folder(&dir).unwrap();
         assert_eq!(got.root, vec![s("a.MP4"), s("b.jpg")]);
         assert_eq!(got.day, vec![s("Days/sun.png")]);
