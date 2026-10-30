@@ -29,7 +29,7 @@ When an AI agent writes most of the code, a full IDE is heavy and noisy, and a p
 
 ### Agents that never die
 
-Shells and agents run in a separate PTY host, so closing, crashing or updating Haze does not kill them. Status badges and desktop notifications for Claude Code, Codex, Gemini and OpenCode.
+Shells and agents run in a separate PTY host, so closing, crashing or updating Haze does not kill them. Status badges and desktop notifications for Claude Code, Codex, Gemini, OpenCode and Deep Code.
 
 [Docs →](docs/FEATURES.md#ai-agents)
 
@@ -151,7 +151,7 @@ Shown with blur 10, dim 40 %, panel opacity 65 %, popup opacity 65 % and ambient
 
 Works with any CLI agent: if it runs in a terminal, it runs in Haze. Status badges and notifications are built in for:
 
-<kbd>Claude Code</kbd> &nbsp; <kbd>Codex</kbd> &nbsp; <kbd>Gemini CLI</kbd> &nbsp; <kbd>OpenCode</kbd> &nbsp; <kbd>+ any agent that prints <code>OSC 6973</code></kbd>
+<kbd>Claude Code</kbd> &nbsp; <kbd>Codex</kbd> &nbsp; <kbd>Gemini CLI</kbd> &nbsp; <kbd>OpenCode</kbd> &nbsp; <kbd>Deep Code</kbd> &nbsp; <kbd>+ any agent that prints <code>OSC 6973</code></kbd>
 
 ## Install
 
@@ -256,7 +256,7 @@ Haze is not a Rider replacement. It keeps the Rider workflow for reviewing and s
 | | GitHub/GitLab accounts | ✅ | ✅ |
 | | Pull request review | ❌ | ✅ |
 | AI agents | Terminals survive closing or updating the app | ✅ | ❌ |
-| | Agent status badges and notifications (Claude Code, Codex, Gemini, OpenCode) | ✅ | ❌ |
+| | Agent status badges and notifications (Claude Code, Codex, Gemini, OpenCode, Deep Code) | ✅ | ❌ |
 | | AI checkpoints, per-file reviewed marks | ✅ | ❌ |
 | | One worktree per agent, `haze agent/send/wait/read` CLI | ✅ | ❌ |
 | | Built-in AI assistant | ❌ (uses external agents) | ✅ (JetBrains AI) |

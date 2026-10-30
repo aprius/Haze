@@ -97,6 +97,11 @@ const AGENTS: { id: HookAgent; name: string; what: string }[] = [
     name: "OpenCode",
     what: "Adds a plugin, haze.js, to OpenCode's global plugins folder; it reports working / waiting for you / done.",
   },
+  {
+    id: "deepcode",
+    name: "Deep Code",
+    what: "Sets `notify` in ~/.deepcode/settings.json (your other settings are kept) to report finished and failed turns. Deep Code has no working or waiting hooks.",
+  },
 ];
 
 function AgentRow({ id, name, what }: (typeof AGENTS)[number]) {

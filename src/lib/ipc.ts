@@ -558,7 +558,7 @@ export interface Checkpoint {
 }
 
 /** A project and/or file to open, from the command line (see cli_open.rs). */
-export type HookAgent = "claude" | "codex" | "gemini" | "opencode";
+export type HookAgent = "claude" | "codex" | "gemini" | "opencode" | "deepcode";
 
 /** A model provider in OpenCode's global config (see opencode_config.rs). */
 export interface OpenCodeProvider {

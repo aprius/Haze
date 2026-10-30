@@ -15,10 +15,10 @@ interface TerminalsState {
 
 export const useTerminals = create<TerminalsState>(() => ({ sessions: {}, attention: {}, connected: false, error: null }));
 
-const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI", opencode: "OpenCode", agent: "Agent" };
+const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI", opencode: "OpenCode", deepcode: "Deep Code", agent: "Agent" };
 export const agentName = (agent: string) => AGENT_NAMES[agent] ?? agent;
 
-const AGENT_BADGES: Record<string, string> = { claude: "CC", codex: "CX", gemini: "GM", opencode: "OC" };
+const AGENT_BADGES: Record<string, string> = { claude: "CC", codex: "CX", gemini: "GM", opencode: "OC", deepcode: "DC" };
 /** Two letters for a terminal tab's agent badge. */
 export const agentBadge = (agent: string) => AGENT_BADGES[agent] ?? (agent === "agent" ? "AI" : agent.slice(0, 2).toUpperCase());
 

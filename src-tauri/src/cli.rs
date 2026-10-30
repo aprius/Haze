@@ -2,7 +2,7 @@
 //! another agent, through the PTY host's socket:
 //!
 //! ```text
-//! haze agent <claude|codex|gemini|opencode|…> [--worktree <branch>] [--prompt <text> | <text>…]
+//! haze agent <claude|codex|gemini|opencode|deepcode|…> [--worktree <branch>] [--prompt <text> | <text>…]
 //! haze run [--worktree <branch>] [--] <command…>
 //! haze list [--json]
 //! haze send <id> <text…>
@@ -33,7 +33,7 @@ const COMMANDS: &[&str] = &[
 
 const USAGE: &str = "Usage:
   haze <folder> [<file>] [--line N] [--column N]   open a project or file
-  haze agent <name> [options] [<prompt>…]          start claude, codex, gemini, opencode… in a new terminal
+  haze agent <name> [options] [<prompt>…]          start claude, codex, gemini, opencode, deepcode… in a new terminal
   haze run [options] [--] <command…>               run a command in a new terminal
       options: --dir <path>  --worktree <branch> [--from <ref>]  --title <text>  --prompt <text>  --no-ui
   haze list [--json]                               terminals with their agent state
@@ -163,6 +163,7 @@ pub fn agent_command(agent: &str, prompt: Option<&str>) -> Vec<String> {
             // `-p` would answer once and exit; `-i` keeps the session open.
             "gemini" => argv.push("-i".into()),
             "opencode" => argv.push("--prompt".into()),
+            "deepcode" => argv.push("-p".into()),
             _ => {}
         }
         argv.push(p.to_string());
@@ -671,6 +672,10 @@ mod tests {
         assert_eq!(
             agent_command("opencode", Some("go")),
             s(&["opencode", "--prompt", "go"])
+        );
+        assert_eq!(
+            agent_command("deepcode", Some("go")),
+            s(&["deepcode", "-p", "go"])
         );
         assert_eq!(agent_command("claude", Some("")), s(&["claude"]));
     }

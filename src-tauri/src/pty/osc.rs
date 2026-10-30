@@ -202,10 +202,17 @@ fn notification(text: &str) -> Signal {
     } else {
         "done"
     };
-    let agent = ["claude", "codex", "gemini", "opencode"]
-        .into_iter()
-        .find(|a| lower.contains(a))
-        .map(str::to_string);
+    let agent = [
+        ("claude", "claude"),
+        ("codex", "codex"),
+        ("gemini", "gemini"),
+        ("opencode", "opencode"),
+        ("deepcode", "deepcode"),
+        ("deep code", "deepcode"),
+    ]
+    .into_iter()
+    .find(|(name, _)| lower.contains(name))
+    .map(|(_, agent)| agent.to_string());
     let text = text.trim();
     Signal::Notification {
         state,
@@ -253,6 +260,18 @@ mod tests {
             panic!()
         };
         assert_eq!(message.as_deref(), Some("Reading files"));
+    }
+
+    #[test]
+    fn names_deep_code_in_notifications() {
+        for text in ["DeepCode: task completed", "Deep Code: task failed"] {
+            match notification(text) {
+                Signal::Notification { agent, .. } => {
+                    assert_eq!(agent.as_deref(), Some("deepcode"), "{text}")
+                }
+                other => panic!("{other:?}"),
+            }
+        }
     }
 
     #[test]

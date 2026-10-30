@@ -7,6 +7,11 @@ fn main() {
         haze_lib::agent_hooks::run_hook(&args[2..]);
         return;
     }
+    // Deep Code's notify runs Haze with no arguments; the marker in its env
+    // (installed by Settings → AI Agents) says which agent reports.
+    if args.len() == 1 && haze_lib::agent_hooks::run_notify_hook() {
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some(haze_lib::pty::HOST_FLAG) {
         if let Err(e) = haze_lib::pty::host::run() {
             eprintln!("haze pty host: {e:#}");

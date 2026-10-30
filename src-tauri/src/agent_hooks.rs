@@ -2,7 +2,9 @@
 //! `haze --agent-hook <agent> …` (installed into their user config on
 //! request); the hook reports the agent's state for the terminal it runs in
 //! (`HAZE_TERMINAL_ID`) to the PTY host, which keeps it with the session and
-//! tells every Haze window.
+//! tells every Haze window. Deep Code has no hook command: its `notify` runs
+//! Haze with no arguments, and `HAZE_AGENT_HOOK=deepcode` in the settings'
+//! `env` says what to report.
 //!
 //! State is only ever taken from these lifecycle events (or from the status
 //! sequences an agent prints, see `pty::osc`), and nothing from the prompt or
@@ -19,6 +21,10 @@ use crate::pty::protocol::{write_frame, AgentStatus, ClientMsg, Request};
 use crate::pty::{now_ms, socket_name};
 
 pub const HOOK_FLAG: &str = "--agent-hook";
+
+/// Deep Code runs `notify` with no arguments. This variable in its settings'
+/// `env` tells the Haze executable it points at what to report.
+pub const DEEPCODE_ENV: &str = "HAZE_AGENT_HOOK";
 
 /// Claude Code events Haze listens to.
 const CLAUDE_EVENTS: &[&str] = &[
@@ -136,10 +142,41 @@ fn opencode_state(state: &str) -> Option<Option<&'static str>> {
     })
 }
 
+/// Deep Code's `notify` reports the end of a turn in `STATUS`.
+fn deepcode_state(status: &str) -> Option<&'static str> {
+    match status {
+        "completed" => Some("done"),
+        "failed" => Some("error"),
+        _ => None,
+    }
+}
+
 /// Entry point for `haze --agent-hook <agent> [payload]`. Never fails loudly:
 /// a hook must not disturb the agent.
 pub fn run_hook(args: &[String]) {
     let _ = try_run_hook(args);
+}
+
+/// Entry point for Deep Code's `notify`, which runs Haze with no arguments.
+/// Returns false when this is an ordinary launch, not a notification.
+pub fn run_notify_hook() -> bool {
+    if std::env::var(DEEPCODE_ENV).as_deref() != Ok("deepcode") {
+        return false;
+    }
+    let Ok(state) = std::env::var("STATUS") else {
+        return false;
+    };
+    let message = match state.as_str() {
+        "failed" => std::env::var("FAIL_REASON").ok(),
+        _ => std::env::var("TITLE").ok(),
+    }
+    .filter(|m| !m.trim().is_empty());
+    let mut args = vec!["deepcode".to_string(), state];
+    if let Some(message) = message {
+        args.push(message);
+    }
+    run_hook(&args);
+    true
 }
 
 fn try_run_hook(args: &[String]) -> Result<()> {
@@ -165,6 +202,10 @@ fn try_run_hook(args: &[String]) -> Result<()> {
             None => return Ok(()),
             Some(None) => None,
             Some(Some(state)) => Some(status("opencode", state, args.get(2).cloned())),
+        },
+        ("deepcode", Some(state)) => match deepcode_state(state) {
+            None => return Ok(()),
+            Some(state) => Some(status("deepcode", state, args.get(2).cloned())),
         },
         // Claude Code and Codex hooks: the payload names the event, as does
         // the argument Haze installs for Codex and Gemini.
@@ -288,6 +329,10 @@ fn codex_home() -> Result<PathBuf> {
 
 fn gemini_settings_path() -> Result<PathBuf> {
     Ok(home()?.join(".gemini").join("settings.json"))
+}
+
+fn deepcode_settings_path() -> Result<PathBuf> {
+    Ok(home()?.join(".deepcode").join("settings.json"))
 }
 
 /// OpenCode loads every file in its global plugins directory at startup.
@@ -587,6 +632,94 @@ export default {{
     )
 }
 
+// Deep Code: `notify` points at Haze, and `env.HAZE_AGENT_HOOK` says which
+// agent the notification is for (the executable runs with no arguments).
+
+fn deepcode_notify(settings: &serde_json::Value) -> String {
+    settings
+        .get("notify")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn deepcode_marker(settings: &serde_json::Value) -> String {
+    settings
+        .get("env")
+        .and_then(|e| e.get(DEEPCODE_ENV))
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+/// Whether `path` names a Haze executable. A notify left by another Haze
+/// install (the app moved, or a dev build) is ours to replace; a user's own
+/// notify program is not, even if our marker is still there.
+fn looks_like_haze(path: &str) -> bool {
+    Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("haze") || n.eq_ignore_ascii_case("haze.exe"))
+}
+
+fn install_deepcode_in(settings: &mut serde_json::Value, me: &str) -> Result<()> {
+    if !settings.is_object() {
+        bail!("settings is not a JSON object");
+    }
+    let notify = deepcode_notify(settings);
+    let marker = deepcode_marker(settings);
+    let ours = notify == me || (marker == "deepcode" && looks_like_haze(&notify));
+    if !notify.is_empty() && !ours {
+        bail!("notify is already set to {notify}");
+    }
+    if !marker.is_empty() && marker != "deepcode" {
+        bail!("env.{DEEPCODE_ENV} is already set to {marker}");
+    }
+    let obj = settings.as_object_mut().unwrap();
+    obj.insert("notify".into(), serde_json::Value::String(me.into()));
+    let env = obj.entry("env").or_insert_with(|| serde_json::json!({}));
+    if env.is_null() {
+        *env = serde_json::json!({});
+    }
+    if !env.is_object() {
+        bail!("env is not a JSON object");
+    }
+    env.as_object_mut().unwrap().insert(
+        DEEPCODE_ENV.into(),
+        serde_json::Value::String("deepcode".into()),
+    );
+    Ok(())
+}
+
+fn uninstall_deepcode_in(settings: &mut serde_json::Value, me: &str) -> bool {
+    if !settings.is_object() {
+        return false;
+    }
+    let notify = deepcode_notify(settings);
+    let marker = deepcode_marker(settings);
+    let obj = settings.as_object_mut().unwrap();
+    let mut changed = false;
+    // The marker also covers a notify path from an older Haze executable.
+    if notify == me || (marker == "deepcode" && looks_like_haze(&notify)) {
+        obj.remove("notify");
+        changed = true;
+    }
+    if marker == "deepcode" {
+        let mut empty = false;
+        if let Some(env) = obj.get_mut("env").and_then(|e| e.as_object_mut()) {
+            env.remove(DEEPCODE_ENV);
+            empty = env.is_empty();
+            changed = true;
+        }
+        if empty {
+            obj.remove("env");
+        }
+    }
+    changed
+}
+
 pub fn status_of(agent: &str) -> Result<HookStatus> {
     let me = exe()?;
     match agent {
@@ -624,6 +757,34 @@ pub fn status_of(agent: &str) -> Result<HookStatus> {
                 config_path: path.to_string_lossy().into_owned(),
                 conflict: (!text.is_empty() && !installed)
                     .then(|| format!("{} is not Haze's plugin", path.display())),
+            })
+        }
+        "deepcode" => {
+            let path = deepcode_settings_path()?;
+            let settings = read_json(&path)?;
+            let notify = deepcode_notify(&settings);
+            let marker = deepcode_marker(&settings);
+            let installed = notify == me || marker == "deepcode";
+            // A notify path from an older Haze is stale, not a conflict.
+            let ours = notify == me || (marker == "deepcode" && looks_like_haze(&notify));
+            let conflict = if !notify.is_empty() && !ours {
+                Some(format!(
+                    "{} already sets notify to {notify}",
+                    path.display()
+                ))
+            } else if !marker.is_empty() && marker != "deepcode" {
+                Some(format!(
+                    "{} already sets env.{DEEPCODE_ENV} to {marker}",
+                    path.display()
+                ))
+            } else {
+                None
+            };
+            Ok(HookStatus {
+                installed,
+                stale: installed && !(notify == me && marker == "deepcode"),
+                config_path: path.to_string_lossy().into_owned(),
+                conflict,
             })
         }
         other => bail!("unknown agent {other}"),
@@ -667,6 +828,13 @@ pub fn install(agent: &str) -> Result<HookStatus> {
             }
             std::fs::write(&path, opencode_plugin(&me))?;
         }
+        "deepcode" => {
+            let path = deepcode_settings_path()?;
+            let mut settings = read_json(&path)?;
+            install_deepcode_in(&mut settings, &me)
+                .with_context(|| format!("{} was not changed", path.display()))?;
+            write_with_backup(&path, &(serde_json::to_string_pretty(&settings)? + "\n"))?;
+        }
         other => bail!("unknown agent {other}"),
     }
     status_of(agent)
@@ -699,6 +867,15 @@ pub fn uninstall(agent: &str) -> Result<HookStatus> {
             let path = opencode_plugin_path()?;
             if status_of("opencode")?.installed {
                 std::fs::remove_file(&path)?;
+            }
+        }
+        "deepcode" => {
+            let path = deepcode_settings_path()?;
+            if path.exists() {
+                let mut settings = read_json(&path)?;
+                if uninstall_deepcode_in(&mut settings, &me) {
+                    write_with_backup(&path, &(serde_json::to_string_pretty(&settings)? + "\n"))?;
+                }
             }
         }
         other => bail!("unknown agent {other}"),
@@ -779,6 +956,68 @@ mod tests {
         assert_eq!(opencode_state("working"), Some(Some("working")));
         assert_eq!(opencode_state("clear"), Some(None));
         assert_eq!(opencode_state("bogus"), None);
+        // Deep Code's notify reports the end of a turn.
+        assert_eq!(deepcode_state("completed"), Some("done"));
+        assert_eq!(deepcode_state("failed"), Some("error"));
+        assert_eq!(deepcode_state("interrupted"), None);
+    }
+
+    #[test]
+    fn installs_and_removes_deepcode_notify_keeping_user_settings() {
+        let mut s = json!({
+            "env": { "API_KEY": "sk" },
+            "model": "deepseek-v4-pro"
+        });
+        install_deepcode_in(&mut s, "/x/haze").unwrap();
+        assert_eq!(s["notify"], "/x/haze");
+        assert_eq!(s["env"][DEEPCODE_ENV], "deepcode");
+        assert_eq!(s["env"]["API_KEY"], "sk");
+        assert_eq!(s["model"], "deepseek-v4-pro");
+        // Reinstalling is idempotent.
+        install_deepcode_in(&mut s, "/x/haze").unwrap();
+        assert_eq!(s["notify"], "/x/haze");
+        assert!(uninstall_deepcode_in(&mut s, "/x/haze"));
+        assert!(s.get("notify").is_none());
+        assert!(s["env"].get(DEEPCODE_ENV).is_none());
+        assert_eq!(s["env"]["API_KEY"], "sk");
+        // A notify script of the user's own is never overwritten.
+        let mut s = json!({ "notify": "/usr/local/bin/notify" });
+        assert!(install_deepcode_in(&mut s, "/x/haze").is_err());
+        assert_eq!(s["notify"], "/usr/local/bin/notify");
+        // Nor is another Haze marker.
+        let mut s = json!({ "env": { "HAZE_AGENT_HOOK": "other" } });
+        assert!(install_deepcode_in(&mut s, "/x/haze").is_err());
+        // A notify left by an older Haze executable is ours to update and remove.
+        let mut s = json!({
+            "notify": "/old/haze",
+            "env": { "HAZE_AGENT_HOOK": "deepcode", "KEEP": "1" }
+        });
+        install_deepcode_in(&mut s, "/x/haze").unwrap();
+        assert_eq!(s["notify"], "/x/haze");
+        assert_eq!(s["env"]["KEEP"], "1");
+        let mut s = json!({
+            "notify": "/old/haze",
+            "env": { "HAZE_AGENT_HOOK": "deepcode" }
+        });
+        assert!(uninstall_deepcode_in(&mut s, "/x/haze"));
+        assert!(s.get("notify").is_none());
+        assert!(s.get("env").is_none());
+        // An empty `env` is treated like a missing one.
+        let mut s = json!({ "env": null });
+        install_deepcode_in(&mut s, "/x/haze").unwrap();
+        assert_eq!(s["env"][DEEPCODE_ENV], "deepcode");
+        // A user notify left beside our marker is still theirs: neither an
+        // install nor a removal may replace or delete it.
+        let mut s = json!({
+            "notify": "/usr/local/bin/notify",
+            "env": { "HAZE_AGENT_HOOK": "deepcode", "KEEP": "1" }
+        });
+        assert!(install_deepcode_in(&mut s, "/x/haze").is_err());
+        assert_eq!(s["notify"], "/usr/local/bin/notify");
+        assert!(uninstall_deepcode_in(&mut s, "/x/haze"));
+        assert_eq!(s["notify"], "/usr/local/bin/notify");
+        assert!(s["env"].get(DEEPCODE_ENV).is_none());
+        assert_eq!(s["env"]["KEEP"], "1");
     }
 
     #[test]
