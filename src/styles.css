@@ -3120,6 +3120,9 @@ button.toggle.on {
   overflow: auto;
   outline: none;
   min-height: 60px;
+  /* Shift/Ctrl+click and drags pick rows, not text. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .change-group,

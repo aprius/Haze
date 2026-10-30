@@ -355,7 +355,18 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
           </button>
         </div>
       )}
-      <div className="changes-list" tabIndex={0} onKeyDown={onListKey}>
+      <div
+        className="changes-list"
+        tabIndex={0}
+        onKeyDown={onListKey}
+        onMouseDown={(e) => {
+          // Shift+click would otherwise extend a text selection begun elsewhere (the diff).
+          if (!e.shiftKey || (e.target as HTMLElement).tagName === "SELECT") return;
+          e.preventDefault();
+          e.currentTarget.ownerDocument.getSelection()?.removeAllRanges();
+          e.currentTarget.focus();
+        }}
+      >
         {r.checkpoint && (
           <div className="since-section">
             <div className="change-group">
