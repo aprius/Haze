@@ -122,6 +122,8 @@ describe("pickRows", () => {
   it("treats Shift without a shown anchor as a plain click", () => {
     expect(pickRows(shown, picks([], null), null, "c", shift)).toEqual(picks(["c"], "c"));
     expect(pickRows(shown, picks(["x"], "x"), null, "c", shift)).toEqual(picks(["c"], "c"));
+    // Nothing clicked yet: the range starts at the shown file.
+    expect(pickRows(shown, picks([], null), "b", "d", shift)).toEqual(picks(["b", "c", "d"], "b"));
   });
 });
 

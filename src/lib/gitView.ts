@@ -104,10 +104,12 @@ export function pickRows(
   rel: string,
   e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean },
 ): Picks {
-  const a = cur.anchor === null ? -1 : shown.indexOf(cur.anchor);
+  // Without an anchor (nothing clicked yet), the range starts at the shown file.
+  const from = cur.anchor !== null && shown.includes(cur.anchor) ? cur.anchor : selected;
+  const a = from === null ? -1 : shown.indexOf(from);
   if (e.shiftKey && a >= 0) {
     const i = shown.indexOf(rel);
-    return { picked: new Set(shown.slice(Math.min(a, i), Math.max(a, i) + 1)), anchor: cur.anchor };
+    return { picked: new Set(shown.slice(Math.min(a, i), Math.max(a, i) + 1)), anchor: from };
   }
   if (e.ctrlKey || e.metaKey) {
     const next = new Set(cur.picked.size ? cur.picked : selected ? [selected] : []);

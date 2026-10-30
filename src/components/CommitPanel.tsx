@@ -162,6 +162,33 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     setPicked(next.picked);
   };
 
+  // A folder row picks every file under it: Shift extends the range to it, Ctrl/Cmd toggles them.
+  const selectDir = (files: GitChange[], e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
+    if (!files.length) return;
+    const rels = files.map((c) => c.rel);
+    const shown = shownFiles(r.changes, byDir, collapsed).map((x) => x.rel);
+    const from = anchor.current !== null && shown.includes(anchor.current) ? anchor.current : selected;
+    const a = from === null ? -1 : shown.indexOf(from);
+    let next: Set<string>;
+    if (e.shiftKey && a >= 0) {
+      // Folder files may be collapsed out of `shown`; the range spans the shown ones, plus the folder.
+      const idx = rels.map((rel) => shown.indexOf(rel)).filter((i) => i >= 0);
+      const lo = Math.min(a, ...idx);
+      const hi = Math.max(a, ...idx);
+      next = new Set([...shown.slice(lo, hi + 1), ...rels]);
+    } else if (e.ctrlKey || e.metaKey) {
+      next = new Set(picked.size ? picked : selected ? [selected] : []);
+      const all = rels.every((rel) => next.has(rel));
+      rels.forEach((rel) => (all ? next.delete(rel) : next.add(rel)));
+      anchor.current = rels[0];
+    } else {
+      next = new Set(rels);
+      anchor.current = rels[0];
+    }
+    if (!next.has(selected ?? "")) setSelected(rels[0]);
+    setPicked(next);
+  };
+
   // Several picked rows: roll those back; otherwise the checked ones, as before.
   const rollbackSelected = () => {
     const list = pickedChanges();
@@ -171,11 +198,19 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
 
   // The shortcuts shown in the menu and tooltips.
   const onListKey = (e: React.KeyboardEvent) => {
-    // Keys on a focused checkbox are the checkbox's own.
-    if (e.target !== e.currentTarget) return;
+    // Space and Enter on a focused checkbox are the checkbox's own; the checkpoint picker keeps its keys.
+    const tag = (e.target as HTMLElement).tagName;
+    if (e.target !== e.currentTarget && (tag === "SELECT" || tag === "TEXTAREA" || e.key === " " || e.key === "Enter")) return;
     const mod = e.ctrlKey || e.metaKey;
     const c = r.changes.find((x) => x.rel === selected);
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (mod && !e.altKey && !e.shiftKey && e.code === "KeyA") {
+      const shown = shownFiles(r.changes, byDir, collapsed).map((x) => x.rel);
+      setPicked(new Set(shown));
+    } else if (!e.altKey && (e.key === "Delete" || e.key === "Backspace")) {
+      // Delete / Ctrl+Delete (Backspace / Cmd+Backspace on a Mac): roll back or delete the picked rows.
+      const list = pickedChanges();
+      void rollback(list.length ? list : c ? [c] : []);
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       const shown = shownFiles(r.changes, byDir, collapsed);
       const i = shown.findIndex((x) => x.rel === selected);
       const next = shown[Math.max(0, Math.min(shown.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
@@ -207,8 +242,8 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
       { label: "Show Diff", shortcut: "Ctrl+D", action: () => list.forEach((c) => showChangeDiff(project, root, c)) },
       { separator: true },
       {
-        label: list.every((c) => c.status === "untracked") ? `Delete ${list.length} Files…` : `Rollback ${list.length} Files…`,
-        shortcut: "Ctrl+Alt+Z",
+        label: `${list.every((c) => c.status === "untracked") ? "Delete" : "Rollback"} ${list.length} File${list.length === 1 ? "" : "s"}…`,
+        shortcut: "Delete",
         action: () => void rollback(list),
       },
       {
@@ -217,7 +252,10 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
       },
       {
         label: "Uncheck Selected",
-        action: () => setChecked(new Set([...checked].filter((rel) => !picked.has(rel)))),
+        action: () => {
+          const off = new Set(list.map((c) => c.rel));
+          setChecked(new Set([...checked].filter((rel) => !off.has(rel))));
+        },
       },
       { separator: true },
       { label: "Copy Paths", action: () => void navigator.clipboard.writeText(list.map((c) => absPath(root, c.rel)).join("\n")) },
@@ -236,7 +274,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     { label: "Show Diff", shortcut: "Ctrl+D", action: () => showChangeDiff(project, root, c) },
     { label: "Open File", shortcut: "F4", disabled: c.status === "deleted", action: () => openChangedFile(project, root, c) },
     { separator: true },
-    { label: c.status === "untracked" ? "Delete…" : "Rollback…", shortcut: "Ctrl+Alt+Z", action: () => void rollback([c]) },
+    { label: c.status === "untracked" ? "Delete…" : "Rollback…", shortcut: "Delete", action: () => void rollback([c]) },
     ...(c.status === "untracked"
       ? [
           { label: "Add to VCS", action: () => void runGit(project.id, ["add", "--", c.rel]) },
@@ -403,9 +441,31 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                 limitRows(changeRows(g.id, items, byDir, collapsed), showAll[g.id]).map((row) => {
                   if (row.kind === "dir") {
                     const n = row.files.filter((c) => checked.has(c.rel)).length;
+                    const dirPicked = anyPicked && row.files.every((c) => picked.has(c.rel));
                     return (
-                      <div key={row.key} className="change-row change-dir" style={indent(row.depth, true)} title={row.name}>
-                        <span className="chevron" onClick={() => setCollapsed((c) => ({ ...c, [row.key]: !c[row.key] }))}>
+                      <div
+                        key={row.key}
+                        className={"change-row change-dir" + (dirPicked ? " selected" : "")}
+                        style={indent(row.depth, true)}
+                        title={row.name}
+                        onClick={(e) => selectDir(row.files, e)}
+                        onDoubleClick={() => setCollapsed((c) => ({ ...c, [row.key]: !c[row.key] }))}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          // Right-clicking inside a bigger picked set acts on that set, like a file row.
+                          const list = pickedChanges();
+                          if (dirPicked && list.length > row.files.length) return openMenu(e, multiMenu(list));
+                          selectDir(row.files, { shiftKey: false, ctrlKey: false, metaKey: false });
+                          openMenu(e, multiMenu(row.files));
+                        }}
+                      >
+                        <span
+                          className="chevron"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCollapsed((c) => ({ ...c, [row.key]: !c[row.key] }));
+                          }}
+                        >
                           {collapsed[row.key] ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                         </span>
                         <input
@@ -414,6 +474,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                           ref={(el) => {
                             if (el) el.indeterminate = n > 0 && n < row.files.length;
                           }}
+                          onClick={(e) => e.stopPropagation()}
                           onChange={() => {
                             const next = new Set(checked);
                             row.files.forEach((c) => (n === row.files.length ? next.delete(c.rel) : next.add(c.rel)));
