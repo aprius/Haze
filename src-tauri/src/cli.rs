@@ -8,11 +8,14 @@
 //! haze send <id> <text…>
 //! haze wait <id> [--for done,waiting,error] [--timeout <seconds>]
 //! haze read <id> [--lines <n>]
+//! haze report <check> <running|ok|fail> [<summary>…] [--terminal <id>]
 //! ```
 //!
 //! `agent` and `run` start a shell in a new terminal (in a new worktree when
 //! asked), type the command into it, show the terminal in Haze and print its
-//! id. Ids can be shortened to any unique prefix.
+//! id. Ids can be shortened to any unique prefix. `report` is for an agent's
+//! own hooks (a compile or lint check run when its turn ends): the check shows
+//! on the terminal's agent badge, and "done" is not announced while it runs.
 
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -22,9 +25,11 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
 
 use crate::pty::client::PtyClient;
-use crate::pty::protocol::{Event, Reply, Request, SessionInfo, SessionSpec};
+use crate::pty::protocol::{Check, Event, Reply, Request, SessionInfo, SessionSpec};
 
-const COMMANDS: &[&str] = &["agent", "run", "list", "send", "wait", "read", "help"];
+const COMMANDS: &[&str] = &[
+    "agent", "run", "list", "send", "wait", "read", "report", "help",
+];
 
 const USAGE: &str = "Usage:
   haze <folder> [<file>] [--line N] [--column N]   open a project or file
@@ -35,7 +40,10 @@ const USAGE: &str = "Usage:
   haze send <id> <text…> [--no-enter]              type text into a terminal, then Enter
   haze wait <id> [--for done,waiting,error] [--timeout <seconds>]
                                                    wait for the agent's next state among these
-  haze read <id> [--lines <n>]                     print the end of a terminal's output";
+  haze read <id> [--lines <n>]                     print the end of a terminal's output
+  haze report <check> <running|ok|fail> [<summary>…] [--terminal <id>]
+                                                   show a check on the agent's badge (from its hooks;
+                                                   the terminal defaults to $HAZE_TERMINAL_ID)";
 
 /// `argv[1]` is a subcommand, not a folder or file of that name.
 pub fn is_subcommand(argv: &[String], cwd: &Path) -> bool {
@@ -64,6 +72,7 @@ fn dispatch(args: &[String]) -> Result<i32> {
         "send" => send(rest),
         "wait" => wait(rest),
         "read" => read(rest),
+        "report" => report(rest),
         _ => {
             println!("{USAGE}");
             Ok(0)
@@ -80,6 +89,14 @@ fn sessions(client: &PtyClient) -> Result<Vec<SessionInfo>> {
         Reply::Sessions { sessions } => Ok(sessions),
         other => bail!("unexpected reply {other:?}"),
     }
+}
+
+/// The agent's turn ended but a check its hooks run is not finished: the agent
+/// may still go on to fix what it finds.
+fn checking(s: &SessionInfo) -> bool {
+    s.agent
+        .as_ref()
+        .is_some_and(|a| a.state == "done" && a.checks.iter().any(|c| c.state == "running"))
 }
 
 /// The session whose id is `prefix` or starts with it (only one may).
@@ -205,7 +222,7 @@ fn start(args: &[String], agent: bool) -> Result<i32> {
         env,
     };
     let session = match client.request(Request::Create { spec })? {
-        Reply::Created { session } => session,
+        Reply::Created { session } => *session,
         other => bail!("unexpected reply {other:?}"),
     };
     if !command.is_empty() {
@@ -281,6 +298,18 @@ fn worktree(dir: &Path, branch: &str, from: Option<&str>) -> Result<PathBuf> {
         git(root, &args)?;
     }
     eprintln!("haze: created worktree {p} ({branch})");
+    let project = crate::unity_worktree::project_of(dir, root);
+    match crate::unity_worktree::seed_worktree(&project, root, &path) {
+        Ok(s) if !s.cloned.is_empty() => {
+            eprintln!("haze: cloned the Unity {} into it", s.cloned.join(" and "))
+        }
+        Ok(s) => {
+            if let Some(why) = s.skipped {
+                eprintln!("haze: {why}; Unity imports the project when it opens");
+            }
+        }
+        Err(e) => eprintln!("haze: could not prepare the Unity project: {e:#}"),
+    }
     Ok(path)
 }
 
@@ -361,6 +390,7 @@ fn list(args: &[String]) -> Result<i32> {
     }
     for s in &list {
         let state = match (&s.agent, s.running) {
+            (Some(a), true) if checking(s) => format!("{} checking", a.agent),
             (Some(a), true) => format!("{} {}", a.agent, a.state),
             (None, true) => "-".into(),
             (_, false) => "exited".into(),
@@ -437,10 +467,11 @@ fn wait(args: &[String]) -> Result<i32> {
             bail!("terminal {id} was closed");
         };
         // Only a state reported after `wait` started: the last turn's "done" does not count.
+        // "done" waits for the turn's checks too: the agent may go on to fix what they found.
         if let Some(a) = s
             .agent
             .as_ref()
-            .filter(|a| a.at >= started && wanted.contains(&a.state))
+            .filter(|a| a.at >= started && wanted.contains(&a.state) && !checking(&s))
         {
             println!("{}", a.state);
             return Ok(0);
@@ -454,6 +485,42 @@ fn wait(args: &[String]) -> Result<i32> {
             return Ok(1);
         }
         std::thread::sleep(Duration::from_millis(400));
+    }
+}
+
+fn report(args: &[String]) -> Result<i32> {
+    const USAGE: &str =
+        "usage: haze report <check> <running|ok|fail> [<summary>…] [--terminal <id>]";
+    let mut terminal = std::env::var("HAZE_TERMINAL_ID")
+        .ok()
+        .filter(|id| !id.is_empty());
+    let mut words = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--terminal" => terminal = Some(it.next().context("--terminal needs an id")?.clone()),
+            _ => words.push(a.as_str()),
+        }
+    }
+    let [name, state, summary @ ..] = words.as_slice() else {
+        bail!(USAGE);
+    };
+    if !matches!(*state, "running" | "ok" | "fail") {
+        bail!("{USAGE}\n(unknown state {state})");
+    }
+    let terminal = terminal.context("not in a Haze terminal; pass --terminal <id>")?;
+    let summary = summary.join(" ");
+    let check = Check {
+        name: (*name).into(),
+        state: (*state).into(),
+        summary: (!summary.is_empty()).then(|| summary.chars().take(200).collect()),
+    };
+    let client = client();
+    let id = resolve(&client, &terminal)?.id;
+    match client.request(Request::Check { id, check })? {
+        Reply::Ok => Ok(0),
+        Reply::Error { message } => bail!(message),
+        other => bail!("unexpected reply {other:?}"),
     }
 }
 

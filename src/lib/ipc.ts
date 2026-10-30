@@ -100,6 +100,14 @@ export interface AgentStatus {
   state: AgentState;
   message: string | null;
   at: number;
+  /** Checks its hooks ran when the turn ended (`haze report`); absent from an older host. */
+  checks?: AgentCheck[];
+}
+
+export interface AgentCheck {
+  name: string;
+  state: "running" | "ok" | "fail";
+  summary: string | null;
 }
 
 export type GitProvider = "github" | "gitlab";
@@ -525,10 +533,28 @@ export interface RebaseStep {
   message: string | null;
 }
 
+/** What a new worktree of a Unity project got from the main checkout (see unity_worktree.rs). */
+export interface SeededWorktree {
+  /** The Unity project inside the worktree, when the project is one. */
+  unityRoot: string | null;
+  cloned: string[];
+  skipped: string | null;
+}
+
+/** The Unity project, one of its worktrees or a copy next to it (see unity_worktree.rs). */
+export interface UnityProjectCopy {
+  root: string;
+  kind: "project" | "worktree" | "copy";
+  branch: string | null;
+  editor: { pid: number; version: string | null; pipeline: boolean; hazeLink: boolean } | null;
+}
+
 export interface Checkpoint {
   hash: string;
   time: number;
   label: string;
+  /** Taken by an agent hook as the agent got a prompt. */
+  auto?: boolean;
 }
 
 /** A project and/or file to open, from the command line (see cli_open.rs). */
@@ -668,6 +694,10 @@ export const api = {
   unityProjectData: (root: string) => invoke<UnityProjectData>("unity_project_data", { root }),
   /** Adds a script no generated `.csproj` lists to its assembly's project; the project changed, or null. */
   unityAddToProject: (root: string, file: string) => invoke<string | null>("unity_add_to_project", { root, file }),
+  unityProjectCopies: (project: string) => invoke<UnityProjectCopy[]>("unity_project_copies", { project }),
+  unityOpenEditor: (project: string, root: string) => invoke<void>("unity_open_editor", { project, root }),
+  unitySeedWorktree: (project: string, repoRoot: string, worktree: string) =>
+    invoke<SeededWorktree>("unity_seed_worktree", { project, repoRoot, worktree }),
   csharpOutline: (text: string) => invoke<OutlineSymbol[]>("csharp_outline", { text }),
   csharpPerf: (text: string) => invoke<PerfMethod[]>("csharp_perf", { text }),
   csharpUnity: (text: string) => invoke<UnityCode>("csharp_unity", { text }),

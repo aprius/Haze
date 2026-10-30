@@ -9,7 +9,7 @@ import { toggleThemeMode, useTheme } from "../lib/theme";
 import { useDotnet } from "../store/dotnet";
 import { useGit } from "../store/git";
 import { useTasks } from "../store/tasks";
-import { busyTerminals, closeTerminal, useTerminals } from "../store/terminals";
+import { busyTerminals, closeTerminal, shownState, useTerminals } from "../store/terminals";
 import { useTree } from "../store/tree";
 import { toggleCommitWindow, useUi } from "../store/ui";
 import { openRelease, updateLabel, updateNow, useUpdates } from "../store/updates";
@@ -94,7 +94,7 @@ function AgentBadge({ projectId }: { projectId: string }) {
     // Waiting for input stays visible until answered; "done" only until seen.
     if (mine.some(([, x]) => x.agent?.state === "waiting")) return "waiting";
     if (mine.some(([id]) => s.attention[id])) return "done";
-    return mine.some(([, x]) => x.agent?.state === "working") ? "working" : null;
+    return mine.some(([, x]) => x.agent && shownState(x.agent) === "working") ? "working" : null;
   });
   return state ? <span className={"rail-agent " + state} title={state === "waiting" ? "An agent needs your input" : state === "done" ? "An agent finished" : "An agent is working"} /> : null;
 }

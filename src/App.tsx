@@ -12,7 +12,7 @@ import { glowRef } from "./lib/ambient";
 import { ContextMenu, Dialogs, inDoc, keyboardIn, setAppShortcuts, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, toggleBottom, UpdateProgressCard, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
-import { TestsPanel, UnityPanel } from "./components/UnityPanel";
+import { EditorsPanel, TestsPanel, UnityPanel } from "./components/UnityPanel";
 import { CommitWindow } from "./components/CommitPanel";
 import { DiffWindow } from "./components/DiffView";
 import { BranchesPopup, openBranchesPopup, openPullDialog, openPushDialog, PullDialog, PushDialog, updateProject } from "./components/GitDialogs";
@@ -101,6 +101,7 @@ function BottomPanel({ project, tab }: { project: Project; tab: BottomTab }) {
   if (tab === "find") return <FindPanel project={project} />;
   if (tab === "unity" && unity) return <UnityPanel project={project} />;
   if (tab === "tests" && unity) return <TestsPanel project={project} />;
+  if (tab === "editors" && unity) return <EditorsPanel project={project} />;
   return <BuildPanel project={project} />;
 }
 

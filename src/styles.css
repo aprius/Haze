@@ -2811,6 +2811,25 @@ button.toggle.on {
   user-select: text;
 }
 
+.editor-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+}
+.editor-dot.open {
+  background: var(--mk-green);
+  border-color: var(--mk-green);
+}
+.editor-copy {
+  cursor: default;
+}
+.editor-actions {
+  display: flex;
+  gap: 2px;
+}
+
 .problem-code {
   color: var(--muted);
   font-family: var(--font-mono);
@@ -4107,6 +4126,10 @@ html:has(.float-external) body {
 .agent-state.error {
   color: var(--accent-fg);
   background: var(--danger);
+  border-color: var(--danger);
+}
+.agent-state.done.checks-failed {
+  color: var(--danger);
   border-color: var(--danger);
 }
 .agent-state.attention {

@@ -240,7 +240,7 @@ Haze is not a Rider replacement. It keeps the Rider workflow for reviewing and s
 | | Copy Context (`path:line` + code fence for agents) | ✅ | ❌ |
 | C# | Go to Definition, Find Usages, Rename, quick fixes | ✅ (Roslyn) | ✅ (ReSharper) |
 | | Code Vision, inline completion | ✅ | ✅ |
-| | Live code inspections | ❌ (errors from `dotnet build` only) | ✅ |
+| | Live code inspections | ⚠️ (Roslyn's errors and analyzers, as you type) | ✅ |
 | | Advanced refactorings (Extract, Move, Change Signature…) | ⚠️ (what Roslyn offers) | ✅ |
 | | Decompiled DLL sources | ⚠️ (with `csharp-ls`) | ✅ |
 | Run and debug | Run configurations from `launchSettings.json` | ✅ | ✅ |

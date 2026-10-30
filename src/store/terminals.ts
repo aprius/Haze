@@ -22,6 +22,23 @@ const AGENT_BADGES: Record<string, string> = { claude: "CC", codex: "CX", gemini
 /** Two letters for a terminal tab's agent badge. */
 export const agentBadge = (agent: string) => AGENT_BADGES[agent] ?? (agent === "agent" ? "AI" : agent.slice(0, 2).toUpperCase());
 
+/** The turn ended but a check its hooks run (`haze report`) is not finished: the agent may go on to fix what it finds. */
+export const isChecking = (a: AgentStatus | null | undefined): boolean =>
+  a?.state === "done" && !!a.checks?.some((c) => c.state === "running");
+
+/** The state a badge shows: "done" stays "working" while the turn's checks run. */
+export const shownState = (a: AgentStatus): AgentStatus["state"] => (isChecking(a) ? "working" : a.state);
+
+export const failedChecks = (a: AgentStatus | null | undefined) => a?.checks?.filter((c) => c.state === "fail") ?? [];
+
+/** One line per check, for tooltips. */
+export const checkLines = (a: AgentStatus): string[] =>
+  (a.checks ?? []).map((c) => `${c.state === "ok" ? "✓" : c.state === "fail" ? "✗" : "…"} ${c.name}${c.summary ? ` — ${c.summary}` : ""}`);
+
+/** Worth a look: waiting for you, failed, or done with its checks finished. */
+export const needsLook = (a: AgentStatus | null | undefined): boolean =>
+  !!a && (a.state === "waiting" || a.state === "error" || (a.state === "done" && !isChecking(a)));
+
 /** True when the user is looking at this terminal right now. */
 function isWatching(id: string): boolean {
   if (!document.hasFocus()) return false;
@@ -53,17 +70,54 @@ async function notify(title: string, body: string) {
   }
 }
 
+/**
+ * How long "done" waits before it is announced: a hook that checks the turn
+ * (compile, lint) starts beside Haze's own and reports a moment later.
+ */
+const DONE_GRACE_MS = 2000;
+const pendingDone = new Map<string, ReturnType<typeof setTimeout>>();
+
+function cancelDone(id: string) {
+  clearTimeout(pendingDone.get(id));
+  pendingDone.delete(id);
+}
+
 function onAgent(id: string, status: AgentStatus | null) {
   const prev = useTerminals.getState().sessions[id];
   if (!prev) return;
   useTerminals.setState((s) => ({ sessions: { ...s.sessions, [id]: { ...prev, agent: status } } }));
-  if (!status || prev.agent?.state === status.state) return;
-  const needsLook = status.state === "waiting" || status.state === "done" || status.state === "error";
-  if (!needsLook || isWatching(id)) return;
+  if (!status || !needsLook(status)) return cancelDone(id);
+  // A check finishing on a turn already announced (or about to be) is not news.
+  if (needsLook(prev.agent) && prev.agent?.state === status.state) return;
+  if (status.state !== "done") return announce(id);
+  cancelDone(id);
+  pendingDone.set(
+    id,
+    setTimeout(() => {
+      pendingDone.delete(id);
+      if (useTerminals.getState().sessions[id]?.agent?.state === "done") announce(id);
+    }, DONE_GRACE_MS),
+  );
+}
+
+/** Marks a terminal for a look and notifies, unless the user is looking at it. */
+function announce(id: string) {
+  const session = useTerminals.getState().sessions[id];
+  const status = session?.agent;
+  if (!status || !needsLook(status) || isWatching(id)) return;
   useTerminals.setState((s) => ({ attention: { ...s.attention, [id]: true } }));
-  const project = useWorkspace.getState().projects.find((p) => p.id === prev.projectId);
-  const what = status.state === "waiting" ? "needs your input" : status.state === "done" ? "finished" : "stopped with an error";
-  void notify(`${agentName(status.agent)} ${what}`, [project?.name, prev.title, status.message].filter(Boolean).join(" · "));
+  const project = useWorkspace.getState().projects.find((p) => p.id === session.projectId);
+  const failed = failedChecks(status);
+  const what =
+    status.state === "waiting"
+      ? "needs your input"
+      : status.state === "error"
+        ? "stopped with an error"
+        : failed.length
+          ? "finished, checks failed"
+          : "finished";
+  const checks = failed.map((c) => (c.summary ? `${c.name}: ${c.summary}` : c.name)).join(", ");
+  void notify(`${agentName(status.agent)} ${what}`, [project?.name, session.title, status.message, checks].filter(Boolean).join(" · "));
 }
 
 // Looking at a terminal acknowledges it.

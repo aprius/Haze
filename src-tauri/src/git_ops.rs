@@ -776,7 +776,47 @@ fn git_dir(root: &Path) -> Result<std::path::PathBuf> {
 /// .gitignore) as a commit without touching the index, HEAD or any branch.
 /// The commit is kept alive by a `refs/haze/checkpoints/*` ref.
 pub fn checkpoint(root: &Path, label: &str) -> Result<String> {
+    commit_checkpoint(root, snapshot_tree(root)?, label, CHECKPOINT_REFS)
+}
+
+const CHECKPOINT_REFS: &str = "refs/haze/checkpoints";
+/// Checkpoints taken when an agent gets a prompt, apart from the user's own so
+/// that only they are pruned. Per worktree (`refs/worktree/`): an agent in
+/// another worktree of the repository must not move this one's "since".
+const AUTO_CHECKPOINT_REFS: &str = "refs/worktree/haze/checkpoints";
+
+/// A checkpoint taken as an agent gets a prompt; only the newest `keep` stay.
+/// Nothing new when the tree and HEAD are those of the last one.
+pub fn auto_checkpoint(root: &Path, label: &str, keep: usize) -> Result<String> {
+    let refs = run_ok(
+        root,
+        &[
+            "for-each-ref",
+            "--sort=-refname",
+            "--format=%(refname)",
+            AUTO_CHECKPOINT_REFS,
+        ],
+    )?;
+    let refs: Vec<&str> = refs.lines().collect();
     let tree = snapshot_tree(root)?;
+    if let Some(last) = refs.first() {
+        let same = |rev: &str, now: &str| {
+            run_ok(root, &["rev-parse", "--verify", "-q", rev]).is_ok_and(|h| h.trim() == now)
+        };
+        let head = run_ok(root, &["rev-parse", "--verify", "-q", "HEAD"]).unwrap_or_default();
+        if same(&format!("{last}^{{tree}}"), &tree) && same(&format!("{last}^"), head.trim()) {
+            return Ok(run_ok(root, &["rev-parse", last])?.trim().to_string());
+        }
+    }
+    let hash = commit_checkpoint(root, tree, label, AUTO_CHECKPOINT_REFS)?;
+    // The new one sorts first, so `keep - 1` of the old ones stay.
+    for r in refs.iter().skip(keep.saturating_sub(1)) {
+        run_ok(root, &["update-ref", "-d", r])?;
+    }
+    Ok(hash)
+}
+
+fn commit_checkpoint(root: &Path, tree: String, label: &str, namespace: &str) -> Result<String> {
     let mut args = vec![
         "commit-tree".to_string(),
         tree,
@@ -789,7 +829,7 @@ pub fn checkpoint(root: &Path, label: &str) -> Result<String> {
     }
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let hash = run_ok(root, &refs)?.trim().to_string();
-    let name = format!("refs/haze/checkpoints/{}", crate::pty::now_ms());
+    let name = format!("{namespace}/{}", crate::pty::now_ms());
     run_ok(root, &["update-ref", &name, &hash])?;
     Ok(hash)
 }
@@ -835,6 +875,8 @@ pub struct Checkpoint {
     pub hash: String,
     pub time: i64,
     pub label: String,
+    /// Taken by an agent hook as it got a prompt.
+    pub auto: bool,
 }
 
 pub fn checkpoints(root: &Path) -> Result<Vec<Checkpoint>> {
@@ -843,8 +885,9 @@ pub fn checkpoints(root: &Path) -> Result<Vec<Checkpoint>> {
         &[
             "for-each-ref",
             "--sort=-creatordate",
-            "--format=%(objectname)%1f%(creatordate:unix)%1f%(contents:subject)",
-            "refs/haze/checkpoints",
+            "--format=%(objectname)%1f%(creatordate:unix)%1f%(contents:subject)%1f%(refname)",
+            CHECKPOINT_REFS,
+            AUTO_CHECKPOINT_REFS,
         ],
     )?;
     Ok(out
@@ -858,6 +901,7 @@ pub fn checkpoints(root: &Path) -> Result<Vec<Checkpoint>> {
                     .get(2)?
                     .trim_start_matches("Haze checkpoint: ")
                     .to_string(),
+                auto: f.get(3)?.starts_with(AUTO_CHECKPOINT_REFS),
             })
         })
         .collect())
@@ -887,7 +931,8 @@ pub fn delete_checkpoints(root: &Path) -> Result<()> {
         &[
             "for-each-ref",
             "--format=%(refname)",
-            "refs/haze/checkpoints",
+            CHECKPOINT_REFS,
+            AUTO_CHECKPOINT_REFS,
         ],
     )?;
     for r in out.lines() {
@@ -1209,6 +1254,62 @@ mod tests {
         let cp = checkpoint(r.path(), "before agent").unwrap();
         assert_eq!(file_at(r.path(), &cp, "a.cs").unwrap().as_deref(), Some("2"));
         assert!(changes_since(r.path(), &cp).unwrap().is_empty());
+    }
+
+    #[test]
+    fn auto_checkpoints_skip_repeats_and_keep_only_the_newest() {
+        let r = Repo::new();
+        r.write("a.cs", "0");
+        r.git(&["add", "."]);
+        r.git(&["commit", "-q", "-m", "init"]);
+        let mine = checkpoint(r.path(), "mine").unwrap();
+        let first = auto_checkpoint(r.path(), "Claude Code prompt", 2).unwrap();
+        // Nothing changed: the same checkpoint again.
+        assert_eq!(
+            auto_checkpoint(r.path(), "Claude Code prompt", 2).unwrap(),
+            first
+        );
+        for i in 1..=3 {
+            r.write("a.cs", &i.to_string());
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            auto_checkpoint(r.path(), "Claude Code prompt", 2).unwrap();
+        }
+        let all = checkpoints(r.path()).unwrap();
+        let autos: Vec<&Checkpoint> = all.iter().filter(|c| c.auto).collect();
+        assert_eq!(autos.len(), 2);
+        assert!(autos.iter().all(|c| c.label == "Claude Code prompt"));
+        assert!(
+            all.iter().any(|c| c.hash == mine && !c.auto),
+            "the user's own stays"
+        );
+        let newest = autos
+            .iter()
+            .find(|c| file_at(r.path(), &c.hash, "a.cs").unwrap().as_deref() == Some("3"));
+        assert!(newest.is_some());
+
+        // Another worktree's agent keeps its checkpoints to itself.
+        let other = r.path().with_extension("wt");
+        r.git(&[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "task",
+            other.to_str().unwrap(),
+        ]);
+        auto_checkpoint(&other, "Codex prompt", 2).unwrap();
+        assert!(checkpoints(&other)
+            .unwrap()
+            .iter()
+            .any(|c| c.label == "Codex prompt"));
+        assert!(!checkpoints(r.path())
+            .unwrap()
+            .iter()
+            .any(|c| c.label == "Codex prompt"));
+        std::fs::remove_dir_all(&other).ok();
+
+        delete_checkpoints(r.path()).unwrap();
+        assert!(checkpoints(r.path()).unwrap().is_empty());
     }
 
     #[test]

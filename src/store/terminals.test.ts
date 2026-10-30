@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionInfo } from "../lib/ipc";
+import type { AgentStatus, SessionInfo } from "../lib/ipc";
 
 const ipc = vi.hoisted(() => ({ list: [] as SessionInfo[] }));
 
@@ -18,7 +18,7 @@ vi.mock("../lib/ipc", () => ({
 
 vi.mock("../lib/theme", () => ({ useTheme: { getState: () => ({ mode: "dark" }) } }));
 
-const { newTerminal, reconcileViews, useTerminals } = await import("./terminals");
+const { checkLines, failedChecks, isChecking, needsLook, newTerminal, reconcileViews, shownState, useTerminals } = await import("./terminals");
 const { defaultUi, useWorkspace } = await import("./workspace");
 
 function session(id: string, projectId: string | null = "p"): SessionInfo {
@@ -62,5 +62,30 @@ describe("newTerminal after the host restarted", () => {
     expect(useWorkspace.getState().ui.p.terminalOrder).toEqual(["new"]);
     expect(useWorkspace.getState().ui.p.activeTerminal).toBe("new");
     expect(useTerminals.getState().connected).toBe(true);
+  });
+});
+
+describe("agent checks", () => {
+  const status = (state: AgentStatus["state"], checks?: AgentStatus["checks"]): AgentStatus => ({ agent: "claude", state, message: null, at: 1, checks });
+  const check = (name: string, state: "running" | "ok" | "fail", summary: string | null = null) => ({ name, state, summary });
+
+  it("keeps a done turn working while its checks run", () => {
+    const running = status("done", [check("compile", "ok"), check("lint", "running")]);
+    expect(isChecking(running)).toBe(true);
+    expect(shownState(running)).toBe("working");
+    expect(needsLook(running)).toBe(false);
+  });
+
+  it("is worth a look once the checks finish, or without any", () => {
+    expect(needsLook(status("done", [check("compile", "fail", "2 errors")]))).toBe(true);
+    expect(needsLook(status("done"))).toBe(true);
+    expect(needsLook(status("working", [check("compile", "running")]))).toBe(false);
+    expect(isChecking(status("waiting", [check("compile", "running")]))).toBe(false);
+  });
+
+  it("lists the checks for a tooltip", () => {
+    const done = status("done", [check("compile", "ok"), check("lint", "fail", "2 issues"), check("style", "running")]);
+    expect(checkLines(done)).toEqual(["✓ compile", "✗ lint — 2 issues", "… style"]);
+    expect(failedChecks(done).map((c) => c.name)).toEqual(["lint"]);
   });
 });

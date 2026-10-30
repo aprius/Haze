@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use haze_lib::pty::client::PtyClient;
-use haze_lib::pty::protocol::{AgentStatus, Event, Reply, Request, SessionSpec};
+use haze_lib::pty::protocol::{AgentStatus, Check, Event, Reply, Request, SessionSpec};
 
 fn decode(data: &str) -> String {
     String::from_utf8_lossy(
@@ -86,6 +86,7 @@ fn session_survives_client_and_replays_output() {
                 state: "waiting".into(),
                 message: Some("needs permission".into()),
                 at: 1,
+                checks: vec![],
             }),
         })
         .unwrap();
@@ -107,6 +108,48 @@ fn session_survives_client_and_replays_output() {
             _ => continue,
         }
     }
+
+    // `haze report` adds a check; "done" keeps it, working again drops it.
+    let check = |state: &str| Request::Check {
+        id: session.id.clone(),
+        check: Check {
+            name: "compile".into(),
+            state: state.into(),
+            summary: None,
+        },
+    };
+    let agent = |state: &str| Request::Agent {
+        id: session.id.clone(),
+        status: Some(AgentStatus {
+            agent: "claude".into(),
+            state: state.into(),
+            message: None,
+            at: 2,
+            checks: vec![],
+        }),
+    };
+    let checks = || {
+        let Reply::Sessions { sessions } = second.request(Request::List).unwrap() else {
+            panic!()
+        };
+        let s = sessions.into_iter().find(|s| s.id == session.id).unwrap();
+        s.agent
+            .map(|a| a.checks.into_iter().map(|c| c.state).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    assert!(matches!(
+        second.request(check("running")).unwrap(),
+        Reply::Ok
+    ));
+    assert!(matches!(second.request(agent("done")).unwrap(), Reply::Ok));
+    assert_eq!(checks(), vec!["running"]);
+    assert!(matches!(second.request(check("fail")).unwrap(), Reply::Ok));
+    assert_eq!(checks(), vec!["fail"]);
+    assert!(matches!(
+        second.request(agent("working")).unwrap(),
+        Reply::Ok
+    ));
+    assert!(checks().is_empty());
 
     // A large paste into a program that is busy must not freeze the host:
     // the write blocks until `cat` reads, and `cat` only reads while its

@@ -191,7 +191,11 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
             return Reply::Sessions { sessions };
         }
         Request::Create { spec } => match create(host, spec) {
-            Ok(session) => return Reply::Created { session },
+            Ok(session) => {
+                return Reply::Created {
+                    session: Box::new(session),
+                }
+            }
             Err(e) => Err(e),
         },
         Request::Attach { id } => with_session(host, &id, |s| {
@@ -250,6 +254,15 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
             set_agent(host, &id, s, status);
             Ok(())
         }),
+        Request::Check { id, check } => with_session(host, &id, |s| {
+            let status = s
+                .info
+                .agent
+                .clone()
+                .context("no agent is known in this terminal")?;
+            set_agent(host, &id, s, Some(with_check(status, check)));
+            Ok(())
+        }),
     };
     match result {
         Ok(()) => Reply::Ok,
@@ -263,9 +276,16 @@ fn handle(host: &Arc<Host>, client: ClientId, req: Request) -> Reply {
 /// tab not attached right now still shows it. A repeated state is still
 /// kept, with its time: `haze wait` looks for one reported after it started.
 fn set_agent(host: &Host, id: &str, s: &mut Session, status: Option<AgentStatus>) {
+    let status = carry_checks(s.info.agent.as_ref(), status);
     let key = |a: &Option<AgentStatus>| {
-        a.as_ref()
-            .map(|a| (a.agent.clone(), a.state.clone(), a.message.clone()))
+        a.as_ref().map(|a| {
+            (
+                a.agent.clone(),
+                a.state.clone(),
+                a.message.clone(),
+                a.checks.clone(),
+            )
+        })
     };
     let changed = key(&s.info.agent) != key(&status);
     s.info.agent = status.clone();
@@ -280,6 +300,28 @@ fn set_agent(host: &Host, id: &str, s: &mut Session, status: Option<AgentStatus>
             },
         });
     }
+}
+
+/// A turn's checks stay with the state that ends it (done, waiting…), and
+/// go when the same agent works again or another one takes the terminal.
+fn carry_checks(prev: Option<&AgentStatus>, next: Option<AgentStatus>) -> Option<AgentStatus> {
+    let mut next = next?;
+    if let Some(prev) = prev {
+        let new_turn = matches!(next.state.as_str(), "working" | "idle");
+        if next.checks.is_empty() && !new_turn && prev.agent == next.agent {
+            next.checks = prev.checks.clone();
+        }
+    }
+    Some(next)
+}
+
+/// `status` with `check` added, or replacing the check of the same name in place.
+fn with_check(mut status: AgentStatus, check: Check) -> AgentStatus {
+    match status.checks.iter_mut().find(|c| c.name == check.name) {
+        Some(c) => *c = check,
+        None => status.checks.push(check),
+    }
+    status
 }
 
 /// Applies what the output's escape sequences say, unless a hook reports
@@ -537,6 +579,78 @@ fn broadcast(host: &Host, subscribers: &HashSet<ClientId>, event: Event) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn agent(name: &str, state: &str, checks: &[(&str, &str)]) -> AgentStatus {
+        AgentStatus {
+            agent: name.into(),
+            state: state.into(),
+            message: None,
+            at: 1,
+            checks: checks
+                .iter()
+                .map(|(name, state)| Check {
+                    name: (*name).into(),
+                    state: (*state).into(),
+                    summary: None,
+                })
+                .collect(),
+        }
+    }
+
+    fn checks(status: &Option<AgentStatus>) -> Vec<(String, String)> {
+        status
+            .iter()
+            .flat_map(|a| &a.checks)
+            .map(|c| (c.name.clone(), c.state.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn checks_stay_with_the_end_of_a_turn() {
+        let checked = agent("claude", "done", &[("compile", "running")]);
+        let pair = |n: &str, s: &str| vec![(n.to_string(), s.to_string())];
+
+        // "done" arriving after the check started keeps it, as do later end states.
+        let next = carry_checks(Some(&checked), Some(agent("claude", "done", &[])));
+        assert_eq!(checks(&next), pair("compile", "running"));
+        let next = carry_checks(Some(&checked), Some(agent("claude", "waiting", &[])));
+        assert_eq!(checks(&next), pair("compile", "running"));
+
+        // Working again, a new session, another agent or none: gone.
+        for next in [
+            agent("claude", "working", &[]),
+            agent("claude", "idle", &[]),
+            agent("codex", "done", &[]),
+        ] {
+            assert!(checks(&carry_checks(Some(&checked), Some(next))).is_empty());
+        }
+        assert!(carry_checks(Some(&checked), None).is_none());
+    }
+
+    #[test]
+    fn a_check_updates_in_place() {
+        let status = agent("claude", "done", &[("compile", "running"), ("lint", "ok")]);
+        let check = |state: &str| Check {
+            name: "compile".into(),
+            state: state.into(),
+            summary: Some("2 errors".into()),
+        };
+        let status = with_check(status, check("fail"));
+        assert_eq!(
+            checks(&Some(status.clone())),
+            vec![
+                ("compile".to_string(), "fail".to_string()),
+                ("lint".into(), "ok".into())
+            ]
+        );
+        assert_eq!(status.checks[0].summary.as_deref(), Some("2 errors"));
+        let mut added = Check {
+            name: "style".into(),
+            ..check("ok")
+        };
+        added.summary = None;
+        assert_eq!(with_check(status, added).checks.len(), 3);
+    }
 
     #[test]
     fn exit_waits_for_output_to_settle() {

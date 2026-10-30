@@ -6,7 +6,7 @@ import { toast } from "../components/Overlays";
 import { openSettings } from "../components/SettingsDialog";
 import { saveAll } from "../components/EditorArea";
 import { dirtyPaths, useBuffers } from "../lib/buffers";
-import { withUnsaved } from "../lib/gitView";
+import { pickCheckpoint, withUnsaved } from "../lib/gitView";
 import { api, errorMessage, type BranchesInfo, type ChangedFile, type Checkpoint, type GitChange, type GitOutput, type StashEntry } from "../lib/ipc";
 import { isWithin, relative } from "../lib/path";
 import { withTask } from "./tasks";
@@ -204,7 +204,7 @@ async function reload(projectId: string, projectPath: string): Promise<void> {
     refs ? api.gitCheckpoints(root).catch(retry(cur.checkpoints)) : cur.checkpoints,
     reviewedRels.length ? api.gitFingerprints(root, reviewedRels).catch(() => []) : Promise.resolve([]),
   ]);
-  const checkpoint = cur.checkpoint && checkpoints.some((c) => c.hash === cur.checkpoint) ? cur.checkpoint : (checkpoints[0]?.hash ?? null);
+  const checkpoint = pickCheckpoint(cur.checkpoint, cur.checkpoints, checkpoints);
   // Diffing against a checkpoint snapshots the whole working tree (`git add -A`
   // into a scratch index); only the Commit window shows it, and opening it refreshes.
   const since = !checkpoint ? [] : commitWindowShown(projectId) ? await api.gitChangesSince(root, checkpoint).catch(() => []) : cur.since;

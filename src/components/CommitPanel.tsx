@@ -335,7 +335,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
               >
                 {r.checkpoints.map((c) => (
                   <option key={c.hash} value={c.hash}>
-                    {c.label}
+                    {c.auto ? `${c.label}, ${new Date(c.time * 1000).toLocaleTimeString()}` : c.label}
                   </option>
                 ))}
               </select>

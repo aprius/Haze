@@ -15,7 +15,7 @@
 // With Agent status glow on, the terminal island glows instead in the state of
 // the active project's agents (the rail's badge, src/components/Shell.tsx):
 // failed, waiting for you, done until seen, or working, fainter.
-import { useTerminals } from "../store/terminals";
+import { shownState, useTerminals } from "../store/terminals";
 import { useWorkspace } from "../store/workspace";
 import { useBackdrop, useBackdropImage } from "./backdrop";
 import { useGlass, useTheme } from "./theme";
@@ -179,7 +179,7 @@ function agentLight(): AgentLight | null {
   if (mine.some(([id, x]) => x.agent?.state === "error" && attention[id])) return "error";
   if (mine.some(([, x]) => x.agent?.state === "waiting")) return "waiting";
   if (mine.some(([id]) => attention[id])) return "done";
-  return mine.some(([, x]) => x.agent?.state === "working") ? "working" : null;
+  return mine.some(([, x]) => x.agent && shownState(x.agent) === "working") ? "working" : null;
 }
 
 /** The theme's colour for an agent state, as the canvas takes it; read once a theme. */

@@ -3,12 +3,13 @@
 import { GitBranch, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
-import { api, type Branch } from "../lib/ipc";
+import { api, errorMessage, type Branch } from "../lib/ipc";
 import { validBranch } from "../lib/gitView";
 import { parseWorktrees, type Worktree } from "../lib/worktrees";
 
 export type { Worktree };
 import { refreshRepo, repo, runGit, useGit } from "../store/git";
+import { withTask } from "../store/tasks";
 import { hostPopupHere, openCommitWindow, popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { choose, confirmAction, openMenu, prompt, toast, windowOf, type MenuItem } from "./Overlays";
@@ -69,7 +70,22 @@ export async function newWorktree(project: Project, from: string | null = null):
   const branch = name.trim();
   const dir = `${root.replace(/[\\/]+$/, "")}-${branch.replace(/[^\w.-]+/g, "-")}`;
   const out = await runGit(project.id, ["worktree", "add", "-b", branch, dir, ...(from ? [from] : [])], { label: `Create worktree ${branch}` });
-  if (out?.ok) openWorktree({ path: dir, branch, head: "", main: false });
+  if (!out?.ok) return;
+  const unityRoot = await seedUnityWorktree(project, root, dir);
+  openWorktree({ path: unityRoot ?? dir, branch, head: "", main: false });
+}
+
+/** A Unity project's new worktree gets the main checkout's Library, so Unity does not import everything again. */
+async function seedUnityWorktree(project: Project, root: string, dir: string): Promise<string | null> {
+  try {
+    const seeded = await withTask(project.id, "Cloning the Unity Library", () => api.unitySeedWorktree(project.path, root, dir));
+    if (seeded.cloned.length) toast(`Cloned ${seeded.cloned.join(" and ")} into the worktree: Unity opens it without importing everything again.`);
+    else if (seeded.skipped) toast(`${seeded.skipped}. Unity imports the project when it first opens the worktree.`);
+    return seeded.unityRoot;
+  } catch (e) {
+    toast(`Could not prepare the Unity project: ${errorMessage(e)}`, "error");
+    return null;
+  }
 }
 
 export async function newBranch(project: Project, from: string | null): Promise<void> {

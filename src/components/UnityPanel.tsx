@@ -1,15 +1,19 @@
 // Unity tool windows, live over the com.aprius.ide.haze link: the Unity
 // Editor's Console (errors, warnings and messages can be hidden and collapsed
 // as in Unity; the selected message shows its stack trace, whose frames open
-// the file) and Tests (results of tests run from Haze).
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, CircleSlash, Info, LoaderCircle, Play, RotateCcw, Trash2, XCircle } from "lucide-react";
+// the file) and Tests (results of tests run from Haze). Editors lists the
+// project's worktrees and copies with the Editor and agents working in each.
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, CircleDashed, CircleSlash, ExternalLink, FolderOpen, Info, LoaderCircle, Play, RotateCcw, Trash2, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { UnityLogType } from "../lib/ipc";
-import { join } from "../lib/path";
+import { api, errorMessage, type UnityLogType, type UnityProjectCopy } from "../lib/ipc";
+import { basename, join } from "../lib/path";
+import { copyOfPath } from "../lib/unity/copies";
 import { workspaceSymbols } from "../lib/lsp/csharp";
 import { clearUnityLogs, runUnityTests, useUnity, type TestResult, type UnityLog } from "../store/unity";
+import { agentBadge, agentName, isChecking, shownState, useTerminals } from "../store/terminals";
 import { useWorkspace, type Project } from "../store/workspace";
 import { ToolTabs } from "./BuildPanel";
+import { openWorktree } from "./GitDialogs";
 import { toast } from "./Overlays";
 
 type Kind = "error" | "warning" | "log";
@@ -318,6 +322,96 @@ export function TestsPanel({ project }: { project: Project }) {
             "Select a test to see its result. Double-click opens the test."
           )}
         </pre>
+      </div>
+    </div>
+  );
+}
+
+/** How often the Editors window looks again: Editors start and quit outside Haze. */
+const COPIES_POLL_MS = 3000;
+
+const KIND_LABEL: Record<UnityProjectCopy["kind"], string> = { project: "this project", worktree: "worktree", copy: "copy" };
+
+/** The project's worktrees and copies, the Unity Editor each has open and the agents working in it. */
+export function EditorsPanel({ project }: { project: Project }) {
+  const [copies, setCopies] = useState<UnityProjectCopy[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const sessions = useTerminals((s) => s.sessions);
+
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      api.unityProjectCopies(project.path).then(
+        (c) => live && (setCopies(c), setError(null)),
+        (e) => live && setError(errorMessage(e)),
+      );
+    void load();
+    const timer = setInterval(load, COPIES_POLL_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [project.path]);
+
+  const roots = (copies ?? []).map((c) => c.root);
+  const agents = (root: string) => Object.values(sessions).filter((t) => t.agent && t.running && copyOfPath(t.cwd, roots) === root);
+  const openInUnity = (c: UnityProjectCopy) =>
+    api.unityOpenEditor(project.path, c.root).then(
+      () => toast(`Opening ${basename(c.root)} in Unity…`),
+      (e) => toast(`Could not open Unity: ${errorMessage(e)}`, "error"),
+    );
+  const running = copies?.filter((c) => c.editor).length ?? 0;
+
+  return (
+    <div className="terminal-panel build-panel unity-panel">
+      <div className="panel-header">
+        <ToolTabs project={project} />
+        <span className={"build-status" + (error ? " failed" : "")}>
+          {error ?? (copies ? `${copies.length} ${copies.length === 1 ? "copy" : "copies"}, ${running} open in Unity` : "Looking…")}
+        </span>
+        <div className="panel-actions">
+          <button className="icon-btn" title="Hide" onClick={() => useWorkspace.getState().updateUi(project.id, { bottomVisible: false })}>
+            <ChevronDown size={16} />
+          </button>
+        </div>
+      </div>
+      <div className="build-body">
+        <div className="problems">
+          {copies?.map((c) => (
+            <div key={c.root} className="problem editor-copy" title={c.root}>
+              <span className={"editor-dot" + (c.editor ? " open" : "")} />
+              <span className="problem-msg">
+                {basename(c.root)}
+                {c.branch && <span className="problem-code"> [{c.branch}]</span>}
+              </span>
+              <span className="problem-code">{KIND_LABEL[c.kind]}</span>
+              <span className="problem-code">
+                {c.editor
+                  ? `Unity ${c.editor.version ?? ""} · ${c.editor.pipeline ? "CLI ✓" : "CLI –"} · ${c.editor.hazeLink ? "Haze ✓" : "Haze –"}`
+                  : "not open in Unity"}
+              </span>
+              {agents(c.root).map((t) => (
+                <span
+                  key={t.id}
+                  className={"agent-state " + shownState(t.agent!)}
+                  title={`${agentName(t.agent!.agent)}: ${isChecking(t.agent) ? "checking" : t.agent!.state} — ${t.title}`}
+                >
+                  {agentBadge(t.agent!.agent)}
+                </span>
+              ))}
+              <span className="problem-loc editor-actions">
+                {c.kind !== "project" && (
+                  <button className="icon-btn" title="Open in Haze" onClick={() => openWorktree({ path: c.root, branch: c.branch, head: "", main: false })}>
+                    <FolderOpen size={14} />
+                  </button>
+                )}
+                <button className="icon-btn" disabled={!!c.editor} title={c.editor ? "Already open in Unity" : "Open in Unity (the Editor this project uses)"} onClick={() => void openInUnity(c)}>
+                  <ExternalLink size={14} />
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

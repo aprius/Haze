@@ -4,6 +4,7 @@ import {
   changeDiffSpec,
   changeRows,
   checkedPaths,
+  pickCheckpoint,
   moveRow,
   parseRebaseLog,
   pickRows,
@@ -191,5 +192,20 @@ describe("interactive rebase", () => {
       { action: "reword", hash: "a", message: "msg a" },
       { action: "squash", hash: "b", message: null },
     ]);
+  });
+});
+
+describe("pickCheckpoint", () => {
+  const cp = (hash: string) => ({ hash, time: 0, label: hash });
+
+  it("follows the newest when the newest was shown", () => {
+    expect(pickCheckpoint("b", [cp("b"), cp("a")], [cp("c"), cp("b"), cp("a")])).toBe("c");
+    expect(pickCheckpoint(null, [], [cp("a")])).toBe("a");
+  });
+
+  it("keeps an older one picked while it lasts", () => {
+    expect(pickCheckpoint("a", [cp("b"), cp("a")], [cp("c"), cp("b"), cp("a")])).toBe("a");
+    expect(pickCheckpoint("a", [cp("b"), cp("a")], [cp("c"), cp("b")])).toBe("c");
+    expect(pickCheckpoint("a", [cp("a")], [])).toBeNull();
   });
 });

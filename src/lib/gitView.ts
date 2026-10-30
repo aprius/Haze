@@ -2,7 +2,7 @@
 // change groups and their directory tree, multi-selection, branch folders,
 // branch name validation and the interactive rebase todo.
 import type { DiffSpec } from "./diffSpec";
-import type { Branch, GitChange, RebaseStep } from "./ipc";
+import type { Branch, Checkpoint, GitChange, RebaseStep } from "./ipc";
 import { basename } from "./path";
 
 export const GROUPS: { id: string; label: string; match: (c: GitChange) => boolean }[] = [
@@ -187,3 +187,14 @@ export function moveRow<T>(rows: T[], i: number, d: number): T[] {
 /** The steps sent to git; only a reword carries a message. */
 export const rebaseSteps = (rows: readonly RebaseRow[]): RebaseStep[] =>
   rows.map((r) => ({ action: r.action, hash: r.hash, message: r.action === "reword" ? r.message : null }));
+
+/**
+ * The checkpoint "Since checkpoint" shows after the list changed: the newest
+ * when the newest was shown (an agent's prompt adds one each turn), else the
+ * one picked while it lasts.
+ */
+export function pickCheckpoint(picked: string | null, before: Checkpoint[], now: Checkpoint[]): string | null {
+  const newest = now[0]?.hash ?? null;
+  if (!picked || picked === before[0]?.hash) return newest;
+  return now.some((c) => c.hash === picked) ? picked : newest;
+}

@@ -91,7 +91,7 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
 - **Diff** tabs in Rider style: no filler lines, curved connectors between matching blocks, scrolling kept in step block by block, word-level highlights, `F7`/`Shift+F7` to jump between changes, sides resized by dragging the gap (double-click splits evenly); editable on the working-copy side, where the `>>` gutter icon reverts a block to the left side (hold `Ctrl` on a modified block to append the left lines below it instead). Annotate with Git Blame, Show History for File, Compare with HEAD.
 - **Conflict resolution**: Accept Yours / Accept Theirs, or a **3-way merge view** (Yours | Result | Theirs) with non-conflicting changes pre-merged.
 - **Stashes**: view, apply, pop, drop, unstash as branch, stash including untracked files.
-- **AI checkpoints**: snapshot the whole working tree (including new files, without touching index or branches) before letting an agent run; *Since checkpoint* lists every file it changed, with diffs.
+- **AI checkpoints**: snapshot the whole working tree (including new files, without touching index or branches) before letting an agent run; *Since checkpoint* lists every file it changed, with diffs. With the AI Agents hook installed, Claude Code, Codex and Gemini CLI take one by themselves each time they get a prompt (*Claude Code prompt, 14:32:05*), so *Since checkpoint* shows what the last turn changed; it follows the newest unless you pick an older one. Only the last 10 are kept per worktree, none is added when nothing changed, and an agent in another worktree keeps its own.
 - **Reviewed marks** per file, cleared automatically when the file changes again.
 - **GitHub / GitLab accounts** (Settings), like Rider: log in with a token (GitHub, GitHub Enterprise, GitLab.com or self-hosted GitLab; *Generate…* opens the token page with the right scopes) or *Log In via GitHub…* in the browser. Tokens are kept in the system keychain, and push/pull/fetch to that server use the account through Haze's own credential helper, ahead of any stored credential (other hosts keep your git setup). A push rejected for credentials offers *Log In…*.
 - Never blocks on a password prompt (`GIT_TERMINAL_PROMPT=0`); other hosts use your credential helper or SSH agent.
@@ -123,7 +123,8 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
 - Terminal tabs running an agent show a badge (**CC** Claude Code, **CX** Codex, **GM** Gemini, **OC** OpenCode): pulsing blue = working, yellow = waiting for you (permission, question), green = done, red = error. Projects in the sidebar show a matching dot.
 - **Desktop notifications** when an agent needs you or finishes in a terminal you are not looking at.
 - Status lives in the PTY host, so it survives Haze restarts. Prompts and transcripts are never stored.
-- **Worktrees**: *New Worktree…* in the Branches popup creates `<repo>-<branch>` on a new branch and opens it as a separate project, so each agent gets its own worktree.
+- **Worktrees**: *New Worktree…* in the Branches popup creates `<repo>-<branch>` on a new branch and opens it as a separate project, so each agent gets its own worktree. In a Unity project the new worktree gets the main checkout's `Library` and `UserSettings` as copy-on-write clones (APFS, Btrfs, XFS: about 1.5 s for an 11 GB `Library`, no extra space), so Unity opens it without importing everything again; the files naming the main checkout's running Editor are left out, so the `unity` CLI and Haze's link never drive the wrong Editor. Where the disk cannot clone, nothing is copied. `haze agent --worktree` does the same.
+- **Editors** (a tool window next to Unity's Console and Tests): the Unity project, its worktrees and copies next to it (a `<project>Play` clone, for one), each with the Editor that has it open (version, whether the `unity` CLI and Haze's link reach it) and the agents whose terminals work in it. *Open in Unity* starts the Editor the project uses on that copy, *Open in Haze* opens it as a project.
 - **Command line** (`haze` on `PATH`), for scripts and for agents that hand work to other agents:
 
   ```bash
@@ -134,9 +135,11 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
   haze send 3f2a "Also update the docs"                             # type into a terminal and press Enter
   haze wait 3f2a --timeout 600                                      # until its agent is done, waiting or failed
   haze read 3f2a --lines 40                                         # the end of its output
+  haze report compile fail "2 errors"                               # from the agent's own hooks, see below
   ```
 
   `agent` and `run` start your shell in the new terminal and type the command into it, then show the terminal in Haze (`--no-ui` to skip). Ids may be shortened to any unique prefix; inside a Haze terminal, `$HAZE_TERMINAL_ID` is its own.
+- **Checks at the end of a turn**: a project's own hook that verifies the agent's work when it stops (compile, lint, tests) can show its result on the badge with `haze report <check> running|ok|fail [summary]` (the terminal comes from `$HAZE_TERMINAL_ID`). While a check runs, the badge keeps pulsing and *done* is neither notified nor returned by `haze wait`, because the hook may send the agent back to fix what it found; the notification then says whether the checks passed, and the badge's tooltip lists them (a failed one turns the badge red). Checks are dropped when the agent starts working again. Without `haze` on `PATH` the hook just skips it, e.g. `command -v haze >/dev/null && haze report compile running`.
 
 ![AI agents](agents.png)
 

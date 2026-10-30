@@ -148,6 +148,8 @@ fn try_run_hook(args: &[String]) -> Result<()> {
     };
     let agent = args.first().map(String::as_str).unwrap_or("claude");
     let arg = args.get(1).map(String::as_str);
+    // Where the agent works, when this hook is it getting a prompt.
+    let mut prompt_in: Option<PathBuf> = None;
     let status = match (agent, arg) {
         // Codex `notify` passes its notification JSON as the last argument.
         ("codex", Some(a)) if a.starts_with('{') => {
@@ -179,6 +181,13 @@ fn try_run_hook(args: &[String]) -> Result<()> {
                 .and_then(|e| e.as_str())
                 .unwrap_or("")
                 .to_string();
+            if matches!(event.as_str(), "UserPromptSubmit" | "BeforeAgent") {
+                prompt_in = payload
+                    .get("cwd")
+                    .and_then(|c| c.as_str())
+                    .map(PathBuf::from)
+                    .or_else(|| std::env::current_dir().ok());
+            }
             let state = match agent {
                 "gemini" => gemini_state(&event, &payload),
                 _ => claude_state(&payload),
@@ -191,14 +200,47 @@ fn try_run_hook(args: &[String]) -> Result<()> {
         }
     };
     // Only talk to a host that is already running; a hook must not start one.
-    let mut stream = Stream::connect(socket_name()?)?;
-    write_frame(
-        &mut stream,
-        &ClientMsg {
-            req: 0,
-            body: Request::Agent { id, status },
-        },
-    )?;
+    let sent = Stream::connect(socket_name()?).and_then(|mut stream| {
+        write_frame(
+            &mut stream,
+            &ClientMsg {
+                req: 0,
+                body: Request::Agent { id, status },
+            },
+        )
+    });
+    // After the state, so the badge does not wait for the snapshot.
+    if let Some(dir) = prompt_in {
+        let _ = checkpoint_turn(&dir, agent);
+    }
+    Ok(sent?)
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// Auto checkpoints a repository keeps: enough to look a few prompts back.
+const AUTO_CHECKPOINTS: usize = 10;
+
+/// Snapshots the agent's repository as it gets a prompt, so the Commit window
+/// can show what that turn changed.
+fn checkpoint_turn(dir: &Path, agent: &str) -> Result<()> {
+    let root = crate::git_ops::toplevel(dir)?;
+    // A home folder kept in git (dotfiles) would snapshot everything under it.
+    if dirs::home_dir().is_some_and(|home| same_dir(&home, &root)) || root.parent().is_none() {
+        return Ok(());
+    }
+    let name = match agent {
+        "claude" => "Claude Code",
+        "codex" => "Codex",
+        "gemini" => "Gemini CLI",
+        other => other,
+    };
+    crate::git_ops::auto_checkpoint(&root, &format!("{name} prompt"), AUTO_CHECKPOINTS)?;
     Ok(())
 }
 
@@ -208,6 +250,7 @@ fn status(agent: &str, state: &str, message: Option<String>) -> AgentStatus {
         state: state.into(),
         message: message.map(|m| m.chars().take(200).collect()),
         at: now_ms(),
+        checks: Vec::new(),
     }
 }
 

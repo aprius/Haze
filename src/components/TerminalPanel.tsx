@@ -12,7 +12,7 @@ import { matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
 import { afterSplitDrag, splitDragging } from "../lib/splitDrag";
 import { terminalTheme, useGlass, useTheme } from "../lib/theme";
-import { agentBadge, agentName, closeTerminal, newTerminal, reconcileViews, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
+import { agentBadge, agentName, checkLines, closeTerminal, failedChecks, isChecking, newTerminal, reconcileViews, shownState, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openMenu } from "./Overlays";
@@ -516,8 +516,16 @@ export function TerminalPanel({ project }: { project: Project }) {
               >
                 {s?.agent ? (
                   <span
-                    className={"agent-state " + s.agent.state + (attention[id] ? " attention" : "")}
-                    title={`${agentName(s.agent.agent)}: ${s.agent.state}${s.agent.message ? ` — ${s.agent.message}` : ""}`}
+                    className={
+                      "agent-state " +
+                      shownState(s.agent) +
+                      (s.agent.state === "done" && failedChecks(s.agent).length ? " checks-failed" : "") +
+                      (attention[id] ? " attention" : "")
+                    }
+                    title={[
+                      `${agentName(s.agent.agent)}: ${isChecking(s.agent) ? "checking" : s.agent.state}${s.agent.message ? ` — ${s.agent.message}` : ""}`,
+                      ...checkLines(s.agent),
+                    ].join("\n")}
                   >
                     {agentBadge(s.agent.agent)}
                   </span>

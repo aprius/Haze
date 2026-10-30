@@ -23,6 +23,7 @@ mod unity;
 mod unity_csproj;
 mod unity_data;
 mod unity_index;
+mod unity_worktree;
 mod updates;
 mod watcher;
 
@@ -665,6 +666,31 @@ fn unity_send(links: State<'_, unity::UnityLinks>, root: String, message: serde_
     links.send(&root, &message)
 }
 
+/// Gives a new worktree of a Unity project the main checkout's `Library`, cloned (see `unity_worktree`).
+#[tauri::command]
+async fn unity_seed_worktree(
+    project: String,
+    repo_root: String,
+    worktree: String,
+) -> CmdResult<unity_worktree::Seeded> {
+    blocking(move || {
+        unity_worktree::seed_worktree(project.as_ref(), repo_root.as_ref(), worktree.as_ref())
+    })
+    .await
+}
+
+/// The Unity project's worktrees and copies, with the Editor each has open.
+#[tauri::command]
+async fn unity_project_copies(project: String) -> CmdResult<Vec<unity_worktree::ProjectCopy>> {
+    blocking(move || unity_worktree::project_copies(project.as_ref())).await
+}
+
+/// Opens `root` (a copy of `project`) in the Unity Editor `project` uses.
+#[tauri::command]
+async fn unity_open_editor(project: String, root: String) -> CmdResult<()> {
+    blocking(move || unity_worktree::open_in_unity(project.as_ref(), root.as_ref())).await
+}
+
 /// Adds a script Unity's projects do not list yet to its assembly's `.csproj`; the project changed, if any.
 #[tauri::command]
 async fn unity_add_to_project(root: String, file: String) -> CmdResult<Option<String>> {
@@ -850,7 +876,7 @@ async fn pty_create(pty: State<'_, Pty>, mut spec: SessionSpec) -> CmdResult<Ses
     pty::add_utf8_locale(&mut spec.env);
     let client = pty.client.clone();
     blocking(move || match client.request(Request::Create { spec })? {
-        Reply::Created { session } => Ok(session),
+        Reply::Created { session } => Ok(*session),
         other => anyhow::bail!("unexpected reply {other:?}"),
     })
     .await
@@ -1235,6 +1261,9 @@ pub fn run() {
             unity_send,
             unity_classes,
             unity_add_to_project,
+            unity_seed_worktree,
+            unity_project_copies,
+            unity_open_editor,
             unity_asset_usages,
             unity_project_data,
             unity_warm_index,

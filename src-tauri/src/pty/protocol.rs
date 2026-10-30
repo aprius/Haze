@@ -57,6 +57,19 @@ pub struct AgentStatus {
     pub state: String,
     pub message: Option<String>,
     pub at: u64,
+    /// Checks a hook ran on the turn that ended (`haze report`), in the order
+    /// first reported; they go when the agent works again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<Check>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Check {
+    pub name: String,
+    /// running | ok | fail
+    pub state: String,
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -93,6 +106,11 @@ pub enum Request {
         id: String,
         status: Option<AgentStatus>,
     },
+    /// Sent by `haze report`: adds or updates a check on the terminal's agent.
+    Check {
+        id: String,
+        check: Check,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -108,7 +126,7 @@ pub struct ClientMsg {
 pub enum Reply {
     Hello { version: u32, pid: u32 },
     Sessions { sessions: Vec<SessionInfo> },
-    Created { session: SessionInfo },
+    Created { session: Box<SessionInfo> },
     Ok,
     Error { message: String },
 }

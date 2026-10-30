@@ -129,6 +129,9 @@ export function ToolTabs({ project }: { project: Project }) {
           <button className={"tool-tab" + (tab === "tests" ? " active" : "")} onClick={() => set("tests")} title="Unity tests">
             Tests
           </button>
+          <button className={"tool-tab" + (tab === "editors" ? " active" : "")} onClick={() => set("editors")} title="The project's worktrees and copies, and their Unity Editors">
+            Editors
+          </button>
         </>
       )}
     </div>
