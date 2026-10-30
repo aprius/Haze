@@ -2,7 +2,7 @@
   "name": "haze",
   "private": true,
   "license": "MIT",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "type": "module",
   "scripts": {
     "dev": "vite",
