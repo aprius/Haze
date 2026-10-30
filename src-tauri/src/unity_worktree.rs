@@ -266,6 +266,22 @@ fn running_editor(root: &Path) -> Option<RunningEditor> {
     })
 }
 
+/// The project's `EditorInstance.json`, else its main checkout's: a seeded
+/// worktree has none of its own (see `EDITOR_INSTANCE`) until Unity opens it.
+fn editor_instance(project: &Path) -> Option<serde_json::Value> {
+    read_json(&project.join("Library/EditorInstance.json")).or_else(|| {
+        let project = project.canonicalize().ok()?;
+        let root = crate::git::toplevel_of(&project)
+            .ok()?
+            .canonicalize()
+            .ok()?;
+        let rel = project.strip_prefix(&root).ok()?;
+        // `git worktree list` names the main worktree first.
+        let (main, _) = worktrees(&root).into_iter().next()?;
+        read_json(&main.join(rel).join("Library/EditorInstance.json"))
+    })
+}
+
 #[cfg(unix)]
 fn alive(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
@@ -284,10 +300,10 @@ fn alive(pid: u32) -> bool {
         .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
 }
 
-/// Opens `root` in a new Unity Editor: the one the project's main checkout last
-/// ran (`Library/EditorInstance.json`), which matches its Unity version.
+/// Opens `root` in a new Unity Editor: the one the project last ran
+/// (`Library/EditorInstance.json`), which matches its Unity version.
 pub fn open_in_unity(project: &Path, root: &Path) -> Result<()> {
-    let instance = read_json(&project.join("Library/EditorInstance.json"))
+    let instance = editor_instance(project)
         .context("open the project in Unity once first, so Haze knows which Editor it uses")?;
     let app = instance
         .get("app_path")
@@ -482,6 +498,64 @@ mod tests {
         )
         .unwrap();
         let err = open_in_unity(dir.path(), dir.path()).unwrap_err();
+        assert!(err.to_string().contains("not a Unity Editor"), "{err}");
+    }
+
+    #[test]
+    fn a_seeded_worktree_opens_with_the_main_checkouts_editor() {
+        let parent = tempfile::tempdir().unwrap();
+        let main = parent.path().join("Game");
+        unity_project(&main);
+        let git = |dir: &Path, args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(ok.success());
+        };
+        git(&main, &["init", "-q", "-b", "main"]);
+        git(
+            &main,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        );
+        let wt = parent.path().join("Game-task");
+        git(
+            &main,
+            &["worktree", "add", "-q", "-b", "task", wt.to_str().unwrap()],
+        );
+        // A checkout has the tracked folders only, no Library.
+        for dir in ["Assets", "ProjectSettings"] {
+            std::fs::create_dir_all(wt.join(dir)).unwrap();
+        }
+        seed_worktree(&main, &main, &wt).unwrap();
+        assert!(
+            wt.join("Library/ScriptAssemblies/Game.dll").exists() || !wt.join("Library").exists()
+        );
+        assert!(!wt.join("Library/EditorInstance.json").exists());
+
+        // Without a main checkout's file: asks to open the project once.
+        std::fs::remove_file(main.join("Library/EditorInstance.json")).unwrap();
+        let err = open_in_unity(&wt, &wt).unwrap_err();
+        assert!(err.to_string().contains("once first"), "{err}");
+        // With one: its Editor is the one used (refused here, being no Editor).
+        std::fs::write(
+            main.join("Library/EditorInstance.json"),
+            r#"{"app_path":"/bin/sh"}"#,
+        )
+        .unwrap();
+        let err = open_in_unity(&wt, &wt).unwrap_err();
         assert!(err.to_string().contains("not a Unity Editor"), "{err}");
     }
 }
