@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { api, errorMessage, onPtyEvent, type AgentStatus, type PtyEvent, type SessionInfo } from "../lib/ipc";
 import { useTheme } from "../lib/theme";
-import { projectForPath, useWorkspace } from "./workspace";
+import { projectForPath, useWorkspace, type AgentSessionRef } from "./workspace";
 
 interface TerminalsState {
   sessions: Record<string, SessionInfo>;
@@ -82,10 +82,72 @@ function cancelDone(id: string) {
   pendingDone.delete(id);
 }
 
+/** The command that resumes an agent's conversation, or null for agents that cannot. */
+export function resumeCommand(agent: string, sessionId: string): string | null {
+  if (!/^[\w-]+$/.test(sessionId)) return null;
+  if (agent === "claude") return `claude --resume ${sessionId}`;
+  if (agent === "codex") return `codex resume ${sessionId}`;
+  return null;
+}
+
+/**
+ * Keeps what it takes to resume a terminal's agent once the terminal is gone
+ * (the PTY host dies with a reboot): set while the agent reports its
+ * conversation, dropped when the agent ends or the tab is closed.
+ */
+function trackAgentSession(projectId: string | null, id: string, title: string, cwd: string, status: AgentStatus | null) {
+  if (!projectId) return;
+  const ui = useWorkspace.getState().ui[projectId];
+  if (!ui) return;
+  const cur = ui.agentSessions[id];
+  const next: AgentSessionRef | undefined =
+    status?.sessionId && resumeCommand(status.agent, status.sessionId)
+      ? { agent: status.agent, sessionId: status.sessionId, cwd, title }
+      : status
+        ? cur // a status without a conversation (a notification) changes nothing
+        : undefined;
+  if (next === cur || (next && cur && next.agent === cur.agent && next.sessionId === cur.sessionId && next.title === cur.title && next.cwd === cur.cwd)) return;
+  useWorkspace.getState().updateUi(projectId, (u) => {
+    const agentSessions = { ...u.agentSessions };
+    if (next) agentSessions[id] = next;
+    else delete agentSessions[id];
+    return { agentSessions };
+  });
+}
+
+const resuming = new Set<string>();
+
+/** Starts a new terminal in the saved folder and resumes the agent's conversation in it. */
+export async function resumeAgent(projectId: string, terminalId: string): Promise<void> {
+  const ref = useWorkspace.getState().ui[projectId]?.agentSessions[terminalId];
+  const command = ref && resumeCommand(ref.agent, ref.sessionId);
+  if (!ref || !command || resuming.has(terminalId)) return;
+  resuming.add(terminalId);
+  try {
+    const id = await newTerminal(projectId, ref.cwd, { title: ref.title });
+    if (!id) return;
+    // Typed ahead of the shell's prompt: the terminal holds it until the shell reads.
+    await api.ptyWrite(id, command + "\r");
+    dismissAgentSession(projectId, terminalId);
+  } finally {
+    resuming.delete(terminalId);
+  }
+}
+
+export function dismissAgentSession(projectId: string, terminalId: string): void {
+  if (!useWorkspace.getState().ui[projectId]?.agentSessions[terminalId]) return;
+  useWorkspace.getState().updateUi(projectId, (u) => {
+    const agentSessions = { ...u.agentSessions };
+    delete agentSessions[terminalId];
+    return { agentSessions };
+  });
+}
+
 function onAgent(id: string, status: AgentStatus | null) {
   const prev = useTerminals.getState().sessions[id];
   if (!prev) return;
   useTerminals.setState((s) => ({ sessions: { ...s.sessions, [id]: { ...prev, agent: status } } }));
+  trackAgentSession(prev.projectId, id, prev.title, prev.cwd, status);
   if (!status || !needsLook(status)) return cancelDone(id);
   // A check finishing on a turn already announced (or about to be) is not news.
   if (needsLook(prev.agent) && prev.agent?.state === status.state) return;
@@ -203,6 +265,8 @@ export async function syncSessions(): Promise<void> {
   // Terminals started by `haze agent` / `haze run` belong to the project their folder is in.
   const sessions = Object.fromEntries(list.map((s) => [s.id, s.projectId ? s : { ...s, projectId: projectForPath(s.cwd)?.id ?? null }]));
   useTerminals.setState({ sessions, connected: true, error: null });
+  // Statuses the host kept while Haze was closed never came as events.
+  for (const s of Object.values(sessions)) trackAgentSession(s.projectId, s.id, s.title, s.cwd, s.agent);
   const ws = useWorkspace.getState();
   for (const p of ws.projects) {
     const ui = ws.ui[p.id];
@@ -263,6 +327,7 @@ export async function busyTerminals(ids: string[]): Promise<string[]> {
 }
 
 export async function closeTerminal(projectId: string, id: string): Promise<void> {
+  dismissAgentSession(projectId, id);
   try {
     await api.ptyClose(id);
   } catch (e) {

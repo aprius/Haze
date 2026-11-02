@@ -4,7 +4,7 @@ import type { DiffSpec } from "../components/DiffView";
 import { hostDocument } from "../components/Overlays";
 import { useWorkspace } from "./workspace";
 
-export type SeTab = "all" | "files" | "symbols" | "actions" | "text";
+export type SeTab = "all" | "files" | "symbols" | "actions" | "text" | "terminals";
 
 interface UiState {
   searchEverywhere: { open: boolean; tab: SeTab; nonce: number; query: string | null };

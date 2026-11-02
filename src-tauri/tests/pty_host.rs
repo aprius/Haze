@@ -87,6 +87,7 @@ fn session_survives_client_and_replays_output() {
                 message: Some("needs permission".into()),
                 at: 1,
                 checks: vec![],
+                session_id: None,
             }),
         })
         .unwrap();
@@ -126,6 +127,7 @@ fn session_survives_client_and_replays_output() {
             message: None,
             at: 2,
             checks: vec![],
+            session_id: None,
         }),
     };
     let checks = || {

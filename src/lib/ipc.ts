@@ -102,6 +102,8 @@ export interface AgentStatus {
   at: number;
   /** Checks its hooks ran when the turn ended (`haze report`); absent from an older host. */
   checks?: AgentCheck[];
+  /** The agent's own conversation id (Claude Code, Codex), used to resume it; absent otherwise. */
+  sessionId?: string | null;
 }
 
 export interface AgentCheck {

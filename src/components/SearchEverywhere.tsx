@@ -9,6 +9,8 @@ import { workspaceSymbols, type WorkspaceSymbolHit } from "../lib/lsp/csharp";
 import { basename, dirname, relative } from "../lib/path";
 import { shortcutLabel } from "../lib/keymap";
 import { keepSearchFocus } from "../lib/popupFocus";
+import { findTerminals, type TerminalHit } from "../lib/terminalSearch";
+import { agentBadge, shownState, useTerminals } from "../store/terminals";
 import { closeSearchEverywhere, toggleSeIncludeAll, useUi, type SeTab } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { CodePreview, type PreviewRange } from "./CodePreview";
@@ -19,7 +21,8 @@ type Item =
   | { kind: "file"; path: string; rel: string; indices: number[]; recent?: boolean }
   | { kind: "symbol"; symbol: WorkspaceSymbolHit; rel: string }
   | { kind: "action"; action: Action }
-  | { kind: "text"; path: string; rel: string; match: SearchMatch };
+  | { kind: "text"; path: string; rel: string; match: SearchMatch }
+  | { kind: "terminal"; hit: TerminalHit };
 
 const TABS: { id: SeTab; label: string }[] = [
   { id: "all", label: "All" },
@@ -27,6 +30,7 @@ const TABS: { id: SeTab; label: string }[] = [
   { id: "symbols", label: "Symbols" },
   { id: "actions", label: "Actions" },
   { id: "text", label: "Text" },
+  { id: "terminals", label: "Terminals" },
 ];
 
 /** `Foo.cs:12:4` → query `Foo.cs`, line 12, column 4. */
@@ -52,7 +56,7 @@ const NO_RANGES: PreviewRange[] = [];
 
 /** What the preview shows for a row: the file and where; actions have none. */
 function previewOf(item: Item | undefined, line?: number, column?: number): { path: string; range: PreviewRange } | null {
-  if (!item || item.kind === "action") return null;
+  if (!item || item.kind === "action" || item.kind === "terminal") return null;
   if (item.kind === "text") return { path: item.path, range: item.match };
   if (item.kind === "symbol") {
     const { path, line: l, column: c, name } = item.symbol;
@@ -142,6 +146,8 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
   const [preview, setPreview] = useState(loadPreview);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const sessions = useTerminals((s) => s.sessions);
+  const projects = useWorkspace((s) => s.projects);
   const recentFiles = useWorkspace((s) => (project ? s.ui[project.id]?.recentFiles : undefined)) ?? [];
   const { query, line, column } = splitLineSuffix(input);
 
@@ -236,11 +242,16 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
         .slice(0, tab === "all" ? 6 : 50);
       for (const { a } of scored) out.push({ kind: "action", action: a });
     }
+    if (tab === "terminals" || (tab === "all" && query)) {
+      const names = Object.fromEntries(projects.map((p) => [p.id, p.name]));
+      const hits = findTerminals(Object.values(sessions), names, query);
+      for (const hit of hits.slice(0, tab === "all" ? 4 : 60)) out.push({ kind: "terminal", hit });
+    }
     if (tab === "text" && project) {
       for (const t of text) out.push({ kind: "text", path: t.path, rel: relative(project.path, t.path), match: t.match });
     }
     return out;
-  }, [tab, project, query, files, symbols, text, recentFiles]);
+  }, [tab, project, projects, sessions, query, files, symbols, text, recentFiles]);
 
   useEffect(() => setSelected(0), [items.length, tab]);
 
@@ -267,6 +278,13 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
     closeSearchEverywhere();
     if (item.kind === "action") {
       item.action.run();
+    } else if (item.kind === "terminal") {
+      // Its project may be another one: switch to it and show the tab.
+      const { projectId, id } = item.hit.session;
+      if (!projectId) return;
+      const ws = useWorkspace.getState();
+      if (ws.activeProjectId !== projectId) ws.activateProject(projectId);
+      ws.updateUi(projectId, { activeTerminal: id, terminalVisible: true });
     } else if (project) {
       const pos =
         item.kind === "text"
@@ -318,7 +336,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
             className="se-input"
             value={input}
             spellCheck={false}
-            placeholder={tab === "actions" ? "Type action name" : tab === "text" ? "Search text in project" : tab === "symbols" ? "Type symbol name" : "Type / to see commands"}
+            placeholder={tab === "actions" ? "Type action name" : tab === "text" ? "Search text in project" : tab === "symbols" ? "Type symbol name" : tab === "terminals" ? "Find a terminal or agent" : "Type / to see commands"}
             onChange={(e) => setInput(e.target.value)}
           />
         </label>
@@ -331,7 +349,9 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
                   ? "Symbols"
                   : item.kind === "text"
                     ? "Text"
-                    : item.kind === "file" && item.recent
+                    : item.kind === "terminal"
+                      ? "Terminals"
+                      : item.kind === "file" && item.recent
                       ? "Recent Files"
                       : "Files";
             const header = tab === "all" && group !== lastGroup ? group : null;
@@ -375,6 +395,22 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
                       {item.action.command && <span className="se-shortcut">{shortcutLabel(item.action.command)}</span>}
                     </>
                   )}
+                  {item.kind === "terminal" && (
+                    <>
+                      {item.hit.session.agent ? (
+                        <span className={"agent-state " + shownState(item.hit.session.agent)}>{agentBadge(item.hit.session.agent.agent)}</span>
+                      ) : (
+                        <span className={"dot" + (item.hit.session.running ? " running" : "")} />
+                      )}
+                      <span className="se-name">
+                        <Highlighted text={item.hit.session.title} indices={matchIndices(item.hit.session.title, query)} />
+                      </span>
+                      <span className="se-detail">
+                        {item.hit.session.agent ? item.hit.session.agent.message || item.hit.session.agent.state : basename(item.hit.session.cwd)}
+                      </span>
+                      <span className="se-where">{item.hit.project}</span>
+                    </>
+                  )}
                   {item.kind === "text" && (
                     <>
                       <span className="se-line">
@@ -393,7 +429,7 @@ export function SearchEverywhere({ project }: { project: Project | null }) {
             );
           })}
           {items.length === 0 && (
-            <div className="se-empty">{query ? "Nothing found" : tab === "text" ? "Type at least 2 characters" : "No recent files"}</div>
+            <div className="se-empty">{query ? "Nothing found" : tab === "text" ? "Type at least 2 characters" : tab === "terminals" ? "No terminals" : "No recent files"}</div>
           )}
         </div>
         {preview && (

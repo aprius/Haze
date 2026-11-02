@@ -61,6 +61,10 @@ pub struct AgentStatus {
     /// first reported; they go when the agent works again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checks: Vec<Check>,
+    /// The agent's own id for its conversation (Claude Code, Codex), which
+    /// lets Haze resume it after a restart. Not the conversation itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -235,10 +235,21 @@ fn try_run_hook(args: &[String]) -> Result<()> {
                 "gemini" => gemini_state(&event, &payload),
                 _ => claude_state(&payload),
             };
+            // Claude Code and Codex name their conversation in every payload.
+            let session_id = payload
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .filter(|v| is_session_id(v))
+                .map(str::to_string);
             match state {
                 None => return Ok(()),
                 Some(None) => None,
-                Some(Some((state, message))) => Some(status(agent, state, message)),
+                Some(Some((state, message))) => Some(AgentStatus {
+                    session_id: matches!(agent, "claude" | "codex")
+                        .then_some(session_id)
+                        .flatten(),
+                    ..status(agent, state, message)
+                }),
             }
         }
     };
@@ -331,6 +342,14 @@ fn checkpoint_label(name: &str, prompt: Option<&str>) -> String {
     format!("{name}: {short}")
 }
 
+/// The id is typed into a shell to resume the conversation, so it must be
+/// plain: letters, digits, dashes and underscores only.
+fn is_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 100
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 fn status(agent: &str, state: &str, message: Option<String>) -> AgentStatus {
     AgentStatus {
         agent: agent.into(),
@@ -338,6 +357,7 @@ fn status(agent: &str, state: &str, message: Option<String>) -> AgentStatus {
         message: message.map(|m| m.chars().take(200).collect()),
         at: now_ms(),
         checks: Vec::new(),
+        session_id: None,
     }
 }
 
@@ -931,6 +951,15 @@ pub fn uninstall(agent: &str) -> Result<HookStatus> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn session_ids_are_plain() {
+        assert!(is_session_id("9f1c2d3e-0a1b-4c5d-8e9f-001122334455"));
+        assert!(!is_session_id(""));
+        assert!(!is_session_id("a b"));
+        assert!(!is_session_id("a;rm -rf ~"));
+        assert!(!is_session_id(&"a".repeat(101)));
+    }
+
     #[test]
     fn checkpoint_labels_carry_the_prompt_start() {
         use super::checkpoint_label as l;

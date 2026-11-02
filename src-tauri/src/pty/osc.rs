@@ -54,6 +54,7 @@ pub fn next_status(
         message,
         at,
         checks: Vec::new(),
+        session_id: None,
     };
     Some(match signal {
         Signal::Clear => None,
@@ -304,6 +305,7 @@ mod tests {
             message: None,
             at: 1,
             checks: Vec::new(),
+            session_id: None,
         };
         let state = |r: Option<Option<AgentStatus>>| r.map(|s| s.map(|a| (a.agent, a.state)));
         let pair = |a: &str, s: &str| Some(Some((a.to_string(), s.to_string())));

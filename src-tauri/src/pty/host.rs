@@ -284,6 +284,7 @@ fn set_agent(host: &Host, id: &str, s: &mut Session, status: Option<AgentStatus>
                 a.state.clone(),
                 a.message.clone(),
                 a.checks.clone(),
+                a.session_id.clone(),
             )
         })
     };
@@ -310,6 +311,10 @@ fn carry_checks(prev: Option<&AgentStatus>, next: Option<AgentStatus>) -> Option
         let new_turn = matches!(next.state.as_str(), "working" | "idle");
         if next.checks.is_empty() && !new_turn && prev.agent == next.agent {
             next.checks = prev.checks.clone();
+        }
+        // A status that does not know the conversation (a notification) keeps it.
+        if next.session_id.is_none() && prev.agent == next.agent {
+            next.session_id = prev.session_id.clone();
         }
     }
     Some(next)
@@ -586,6 +591,7 @@ mod tests {
             state: state.into(),
             message: None,
             at: 1,
+            session_id: None,
             checks: checks
                 .iter()
                 .map(|(name, state)| Check {

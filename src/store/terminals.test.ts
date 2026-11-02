@@ -18,7 +18,7 @@ vi.mock("../lib/ipc", () => ({
 
 vi.mock("../lib/theme", () => ({ useTheme: { getState: () => ({ mode: "dark" }) } }));
 
-const { checkLines, failedChecks, isChecking, needsLook, newTerminal, reconcileViews, shownState, useTerminals } = await import("./terminals");
+const { checkLines, failedChecks, isChecking, needsLook, newTerminal, reconcileViews, resumeCommand, shownState, useTerminals } = await import("./terminals");
 const { defaultUi, useWorkspace } = await import("./workspace");
 
 function session(id: string, projectId: string | null = "p"): SessionInfo {
@@ -87,5 +87,18 @@ describe("agent checks", () => {
     const done = status("done", [check("compile", "ok"), check("lint", "fail", "2 issues"), check("style", "running")]);
     expect(checkLines(done)).toEqual(["✓ compile", "✗ lint — 2 issues", "… style"]);
     expect(failedChecks(done).map((c) => c.name)).toEqual(["lint"]);
+  });
+});
+
+describe("resumeCommand", () => {
+  it("resumes Claude Code and Codex by conversation id", () => {
+    expect(resumeCommand("claude", "9f1c-22ab")).toBe("claude --resume 9f1c-22ab");
+    expect(resumeCommand("codex", "019a_b")).toBe("codex resume 019a_b");
+  });
+
+  it("refuses other agents and ids that are not plain", () => {
+    expect(resumeCommand("gemini", "abc")).toBeNull();
+    expect(resumeCommand("claude", "x; rm -rf ~")).toBeNull();
+    expect(resumeCommand("claude", "")).toBeNull();
   });
 });

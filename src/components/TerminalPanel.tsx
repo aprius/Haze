@@ -12,7 +12,7 @@ import { matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
 import { afterSplitDrag, splitDragging } from "../lib/splitDrag";
 import { terminalTheme, useGlass, useTheme } from "../lib/theme";
-import { agentBadge, agentName, checkLines, closeTerminal, failedChecks, isChecking, newTerminal, reconcileViews, shownState, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
+import { agentBadge, agentName, checkLines, closeTerminal, dismissAgentSession, failedChecks, isChecking, newTerminal, reconcileViews, resumeAgent, shownState, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openMenu } from "./Overlays";
@@ -571,6 +571,20 @@ export function TerminalPanel({ project }: { project: Project }) {
           </button>
         </div>
       )}
+      {connected &&
+        Object.entries(ui?.agentSessions ?? {})
+          .filter(([id]) => !sessions[id])
+          .map(([id, r]) => (
+            <div key={id} className="banner">
+              {agentName(r.agent)} · {r.title} ended with its terminal.
+              <button className="btn small" onClick={() => void resumeAgent(project.id, id)}>
+                Resume
+              </button>
+              <button className="btn small" onClick={() => dismissAgentSession(project.id, id)}>
+                Dismiss
+              </button>
+            </div>
+          ))}
       {searching && active && <SearchBar id={active} onClose={() => setSearching(false)} />}
       <div className="terminal-body">
         {order.map((id) => (

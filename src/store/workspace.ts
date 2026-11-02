@@ -43,6 +43,8 @@ export interface ProjectUi extends L.Editors {
   bottomHeight: number;
   terminalOrder: string[];
   activeTerminal: string | null;
+  /** Agent conversations of terminals that are gone (the PTY host died), to resume. Keyed by terminal id. */
+  agentSessions: Record<string, AgentSessionRef>;
   /** Most recently opened files, newest first (Ctrl+E). */
   recentFiles: string[];
   /** Tool window shown in the bottom panel. */
@@ -60,6 +62,14 @@ export interface ProjectUi extends L.Editors {
   gitCollapsed: string[];
   /** Selected run configuration id (see RunBar). */
   runConfig: string | null;
+}
+
+/** What it takes to resume an agent's conversation in a new terminal. */
+export interface AgentSessionRef {
+  agent: string;
+  sessionId: string;
+  cwd: string;
+  title: string;
 }
 
 export interface Reveal {
@@ -84,6 +94,7 @@ export const defaultUi = (): ProjectUi => ({
   bottomHeight: 280,
   terminalOrder: [],
   activeTerminal: null,
+  agentSessions: {},
   recentFiles: [],
   bottomTab: "build",
   commitGroupByDir: false,
