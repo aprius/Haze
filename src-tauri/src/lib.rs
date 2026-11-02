@@ -1,6 +1,7 @@
 pub mod agent_hooks;
 pub mod cli;
 mod cli_open;
+mod commit_message;
 mod dotnet;
 mod file_index;
 mod fs_ops;
@@ -428,6 +429,20 @@ async fn git_commit(
     amend: bool,
 ) -> CmdResult<git_ops::GitOutput> {
     blocking(move || git_ops::commit(root.as_ref(), &message, &paths, amend)).await
+}
+
+#[tauri::command]
+async fn generate_commit_message(
+    root: String,
+    paths: Vec<String>,
+    request: commit_message::Request,
+) -> CmdResult<String> {
+    blocking(move || commit_message::generate(root.as_ref(), &paths, &request)).await
+}
+
+#[tauri::command]
+async fn opencode_cli_models() -> CmdResult<Vec<String>> {
+    blocking(commit_message::opencode_models).await
 }
 
 #[tauri::command]
@@ -1245,6 +1260,8 @@ pub fn run() {
             git_log,
             git_toplevel,
             git_commit,
+            generate_commit_message,
+            opencode_cli_models,
             git_rollback,
             git_commit_details,
             git_file_at,

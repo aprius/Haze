@@ -660,6 +660,9 @@ export const api = {
   gitToplevel: (root: string) => invoke<string>("git_toplevel", { root }),
   gitCommit: (root: string, message: string, paths: string[], amend: boolean) =>
     invoke<GitOutput>("git_commit", { root, message, paths, amend }),
+  generateCommitMessage: (root: string, paths: string[], request: { command: string; model: string; prompt: string; timeoutSecs: number }) =>
+    invoke<string>("generate_commit_message", { root, paths, request }),
+  opencodeCliModels: () => invoke<string[]>("opencode_cli_models"),
   gitRollback: (root: string, paths: string[]) => invoke<void>("git_rollback", { root, paths }),
   gitCommitDetails: (root: string, hash: string) => invoke<CommitDetails>("git_commit_details", { root, hash }),
   gitFileAt: (root: string, rev: string, rel: string) => invoke<string | null>("git_file_at", { root, rev, rel }),

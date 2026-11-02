@@ -2,6 +2,7 @@
 // (Ollama, LM Studio, OpenAI- or Anthropic-compatible endpoints, a proxy…). Written to OpenCode's global config; keys go to files only the user can read.
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
+import { chooseGenerator, DEFAULT_PROMPT, GENERATORS, setCommitMessage, useCommitMessage } from "../lib/commitMessage";
 import { api, errorMessage, type OpenCodeConfig, type OpenCodeProvider } from "../lib/ipc";
 import { confirmAction, toast } from "./Overlays";
 import { PageHeader } from "./SettingsDialog";
@@ -449,5 +450,97 @@ export function OpenCodeModelsSection() {
       {config && <DefaultModels config={config} onChange={setConfig} />}
       {error && <div className="modal-error">{error}</div>}
     </>
+  );
+}
+
+/** Settings › AI Models › Commit message: the command the Commit window's Generate button runs. */
+export function CommitMessageSection() {
+  const s = useCommitMessage();
+  const g = GENERATORS.find((x) => x.id === s.generator) ?? GENERATORS[0];
+  const [models, setModels] = useState<string[]>([]);
+  useEffect(() => {
+    if (s.generator === "opencode") api.opencodeCliModels().then(setModels, () => setModels([]));
+  }, [s.generator]);
+  return (
+    <>
+      <PageHeader
+        title="Commit message"
+        desc="The Generate button in the Commit window sends the diff of the ticked files to a command and fills the message with its answer. The prompt goes to the command on stdin; {model} in the command becomes the model id (on macOS and Linux {prompt} can pass the prompt as an argument too, safely quoted). The command runs in an empty temp folder, in your login shell."
+      />
+      <div className="settings-card">
+        <div className="settings-agent-head">
+          <b>Generator</b>
+          <select value={s.generator} onChange={(e) => chooseGenerator(e.target.value)}>
+            {GENERATORS.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
+              </option>
+            ))}
+          </select>
+          {s.command.includes("{model}") && (
+            <>
+              <b>Model</b>
+              <input
+                className="input"
+                list="haze-cm-models"
+                value={s.model}
+                spellCheck={false}
+                placeholder={g.model || "model id"}
+                onChange={(e) => setCommitMessage({ model: e.target.value })}
+              />
+              <datalist id="haze-cm-models">{models.map((m) => <option key={m} value={m} />)}</datalist>
+            </>
+          )}
+        </div>
+        <div className="settings-agent-head">
+          <b>Command</b>
+          <input
+            className="input"
+            style={{ flex: 1 }}
+            value={s.command}
+            spellCheck={false}
+            placeholder="my-llm --model {model}   (the prompt arrives on stdin)"
+            onChange={(e) => setCommitMessage({ command: e.target.value, generator: g.id === "custom" || e.target.value === g.command ? g.id : "custom" })}
+          />
+        </div>
+        <div className="muted small">
+          {s.generator === "opencode" ? "Free models are listed as opencode/…-free. " : ""}Diffs are sent to that model's provider; with a free hosted model your code may be used for training.
+        </div>
+        <textarea className="input" rows={5} value={s.prompt} spellCheck={false} onChange={(e) => setCommitMessage({ prompt: e.target.value })} />
+        <div className="settings-agent-head">
+          <button className="btn small" onClick={() => setCommitMessage({ prompt: DEFAULT_PROMPT })}>
+            Reset prompt
+          </button>
+          <span className="run-spacer" />
+          <span className="muted small">Timeout (seconds)</span>
+          <TimeoutInput />
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** Typed freely, saved (clamped to 5–600) when it loses focus or Enter is pressed. */
+function TimeoutInput() {
+  const secs = useCommitMessage((s) => s.timeoutSecs);
+  const [text, setText] = useState(String(secs));
+  useEffect(() => setText(String(secs)), [secs]);
+  const commit = () => {
+    const n = Number(text);
+    if (text.trim() && Number.isFinite(n)) setCommitMessage({ timeoutSecs: n });
+    setText(String(useCommitMessage.getState().timeoutSecs));
+  };
+  return (
+    <input
+      className="input"
+      style={{ width: 70 }}
+      type="number"
+      min={5}
+      max={600}
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === "Enter" && commit()}
+    />
   );
 }

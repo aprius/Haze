@@ -58,7 +58,7 @@ import { popupClosed } from "../store/ui";
 import { checkForUpdates, openRelease, updateLabel, updateNow, useUpdates } from "../store/updates";
 import { useWorkspace, type PerfContextMode } from "../store/workspace";
 import { GitAccountsSection } from "./GitAccounts";
-import { OpenCodeModelsSection } from "./OpenCodeModels";
+import { CommitMessageSection, OpenCodeModelsSection } from "./OpenCodeModels";
 import { toast } from "./Overlays";
 import { parseRuleIds } from "../lib/lsp/diagnostics";
 
@@ -1019,7 +1019,13 @@ const PAGES: { id: Page; name: string; icon: LucideIcon; body: () => ReactNode }
   { id: "editor", name: "Editor", icon: Code, body: () => <EditorSection /> },
   { id: "keymap", name: "Keymap", icon: Keyboard, body: () => <KeymapSection /> },
   { id: "agents", name: "AI Agents", icon: Bot, body: () => <AgentsSection /> },
-  { id: "models", name: "AI Models", icon: BrainCircuit, body: () => <OpenCodeModelsSection /> },
+  { id: "models", name: "AI Models", icon: BrainCircuit, body: () => (
+      <>
+        <OpenCodeModelsSection />
+        <CommitMessageSection />
+      </>
+    ),
+  },
   { id: "vcs", name: "Version Control", icon: GitBranch, body: () => <GitAccountsSection /> },
   { id: "project", name: "Project View", icon: FolderTree, body: () => <ProjectViewSection /> },
   { id: "unity", name: "Unity", icon: Box, body: () => <UnitySection /> },

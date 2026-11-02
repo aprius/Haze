@@ -2,14 +2,15 @@
 // with the changes and message on the left and the selected file's diff on the
 // right. Tick files, write a message, Commit or Commit and Push — no staging
 // area to manage. Ctrl+D opens the diff in a floating window of its own.
-import { Camera, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Eye, FolderTree, RefreshCw, Undo2 } from "lucide-react";
+import { Camera, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Eye, FolderTree, RefreshCw, Sparkles, Undo2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { saveAll } from "./EditorArea";
 import { Splitter } from "./Shell";
-import { api, type GitChange } from "../lib/ipc";
+import { api, errorMessage, type GitChange } from "../lib/ipc";
 import { basename, dirname } from "../lib/path";
 import { FileIcon } from "./FileIcon";
 import { changeDiffSpec, changeRows, GROUPS, pickRows, shownFiles, toggleChecks } from "../lib/gitView";
+import { useCommitMessage } from "../lib/commitMessage";
 import { absPath, checkedPaths, createCheckpoint, patchRepo, refreshRepo, repo, runGit, toggleReviewed, useGit } from "../store/git";
 import { withTask } from "../store/tasks";
 import { refreshGit as refreshTreeGit } from "../store/tree";
@@ -39,6 +40,25 @@ export function showChangeDiff(project: Project, root: string, c: GitChange): vo
 function openChangedFile(project: Project, root: string, c: GitChange): void {
   closeCommitWindow();
   useWorkspace.getState().openFile(project.id, absPath(root, c.rel));
+}
+
+/** Fills the message from the ticked files' diff, with the command chosen in Settings › AI Models. */
+async function generateMessage(project: Project): Promise<void> {
+  const r = repo(project.id);
+  if (!r.root || r.busy) return;
+  const paths = [...checkedPaths(r)];
+  if (!paths.length) return toast("Tick the files to describe.", "error");
+  await saveAll();
+  const { generator: _g, ...cfg } = useCommitMessage.getState();
+  patchRepo(project.id, { busy: "Generating…" });
+  try {
+    const message = await api.generateCommitMessage(r.root, paths, cfg);
+    patchRepo(project.id, { message });
+  } catch (e) {
+    toast(errorMessage(e), "error");
+  } finally {
+    patchRepo(project.id, { busy: null });
+  }
 }
 
 export async function commitChanges(project: Project, push: boolean): Promise<void> {
@@ -597,6 +617,14 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
             Amend
           </label>
           <span className="muted small">{checked.size} selected</span>
+          <button
+            className="btn small"
+            disabled={!!r.busy}
+            onClick={() => void generateMessage(project)}
+            title="Generate the message from the ticked files (command set in Settings › AI Models)"
+          >
+            <Sparkles size={13} /> {r.busy === "Generating…" ? "Generating…" : "Generate"}
+          </button>
           <span className="run-spacer" />
           <button className="btn" disabled={!!r.busy} onClick={() => void commitChanges(project, true)} title="Commit and Push (Ctrl+Alt+K)">
             Commit and Push…

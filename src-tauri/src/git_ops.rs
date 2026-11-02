@@ -1420,3 +1420,74 @@ mod tests {
         assert_eq!(parse_track(""), (0, 0));
     }
 }
+
+// ---------------------------------------------------------------- commit message input
+
+/// What a commit of `paths` would contain, as text for a model: the recent
+/// subjects (for style), the diff against HEAD, and the start of each
+/// untracked file. Cut to `limit` bytes.
+pub fn diff_for_message(root: &Path, paths: &[String], limit: usize) -> Result<(String, String)> {
+    if paths.is_empty() {
+        bail!("nothing selected to describe");
+    }
+    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let list = PathList::new(&refs)?;
+    let recent = run_ok(root, &["log", "-n", "8", "--format=%s"]).unwrap_or_default();
+    let tracked: HashSet<String> = run_ok_os(root, &["ls-files", "-z"], &list)
+        .unwrap_or_default()
+        .split('\0')
+        .map(str::to_owned)
+        .collect();
+    let mut diff = run_ok_os(root, &["diff", "HEAD", "--no-color", "--no-ext-diff"], &list)
+        .or_else(|_| run_ok_os(root, &["diff", "--cached", "--no-color", "--no-ext-diff"], &list))
+        .unwrap_or_default();
+    for p in paths.iter().filter(|p| !tracked.contains(p.as_str())) {
+        let Ok(bytes) = std::fs::read(root.join(p)) else { continue };
+        diff.push_str(&format!("\nnew file: {p}\n"));
+        match text_head(&bytes, 4000) {
+            Some(text) => {
+                diff.push_str(text);
+                if text.len() < bytes.len() {
+                    diff.push_str("\n… (file cut)\n");
+                }
+            }
+            None => diff.push_str("(binary)\n"),
+        }
+    }
+    if diff.len() > limit {
+        let mut end = limit;
+        while !diff.is_char_boundary(end) {
+            end -= 1;
+        }
+        diff.truncate(end);
+        diff.push_str("\n… (diff cut)\n");
+    }
+    Ok((recent, diff))
+}
+
+/// The first `max` bytes of a text file, ending on a whole character; `None`
+/// when it isn't UTF-8 text. A character the cut splits isn't a reason to
+/// call the file binary.
+fn text_head(bytes: &[u8], max: usize) -> Option<&str> {
+    let head = &bytes[..bytes.len().min(max)];
+    let text = match std::str::from_utf8(head) {
+        Ok(t) => t,
+        Err(e) if e.error_len().is_none() => std::str::from_utf8(&head[..e.valid_up_to()]).ok()?,
+        Err(_) => return None,
+    };
+    (!text.contains('\0')).then_some(text)
+}
+
+#[cfg(test)]
+mod message_tests {
+    use super::text_head;
+
+    #[test]
+    fn text_head_keeps_a_cut_character_out() {
+        let s = "aé"; // é is two bytes
+        assert_eq!(text_head(s.as_bytes(), 2), Some("a"));
+        assert_eq!(text_head(s.as_bytes(), 10), Some("aé"));
+        assert_eq!(text_head(&[0xff, 0x00], 10), None);
+        assert_eq!(text_head(b"a\0b", 10), None);
+    }
+}
