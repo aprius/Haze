@@ -191,12 +191,11 @@ export const rebaseSteps = (rows: readonly RebaseRow[]): RebaseStep[] =>
   rows.map((r) => ({ action: r.action, hash: r.hash, message: r.action === "reword" ? r.message : null }));
 
 /**
- * The checkpoint "Since checkpoint" shows after the list changed: the newest
- * when the newest was shown (an agent's prompt adds one each turn), else the
- * one picked while it lasts.
+ * The checkpoint "Since checkpoint" shows after the list changed: the one
+ * picked while it lasts, so a new prompt does not hide what the last turn
+ * changed before it was reviewed; else the newest.
  */
-export function pickCheckpoint(picked: string | null, before: Checkpoint[], now: Checkpoint[]): string | null {
-  const newest = now[0]?.hash ?? null;
-  if (!picked || picked === before[0]?.hash) return newest;
-  return now.some((c) => c.hash === picked) ? picked : newest;
+export function pickCheckpoint(picked: string | null, now: Checkpoint[]): string | null {
+  if (picked && now.some((c) => c.hash === picked)) return picked;
+  return now[0]?.hash ?? null;
 }

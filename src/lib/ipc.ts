@@ -679,6 +679,9 @@ export const api = {
   gitCheckpoint: (root: string, label: string) => invoke<string>("git_checkpoint", { root, label }),
   gitCheckpoints: (root: string) => invoke<Checkpoint[]>("git_checkpoints", { root }),
   gitChangesSince: (root: string, checkpoint: string) => invoke<ChangedFile[]>("git_changes_since", { root, checkpoint }),
+  gitRestoreCheckpoint: (root: string, checkpoint: string, paths: string[]) => invoke<void>("git_restore_checkpoint", { root, checkpoint, paths }),
+  autoCheckpointsGet: () => invoke<boolean>("auto_checkpoints_get"),
+  autoCheckpointsSet: (on: boolean) => invoke<void>("auto_checkpoints_set", { on }),
   gitDeleteCheckpoints: (root: string) => invoke<void>("git_delete_checkpoints", { root }),
   gitFingerprints: (root: string, rels: string[]) => invoke<(string | null)[]>("git_fingerprints", { root, rels }),
 

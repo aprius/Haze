@@ -925,6 +925,44 @@ pub fn changes_since(root: &Path, checkpoint: &str) -> Result<Vec<ChangedFile>> 
     Ok(parse_name_status(&out))
 }
 
+/// Puts `paths` (among those `changes_since` lists) back as the checkpoint had
+/// them: files added since are deleted, the others restored, a rename undone.
+/// The index and HEAD are left alone.
+pub fn restore_from_checkpoint(root: &Path, checkpoint: &str, paths: &[String]) -> Result<()> {
+    let wanted: HashSet<&str> = paths.iter().map(String::as_str).collect();
+    let mut restore: Vec<String> = Vec::new();
+    for f in changes_since(root, checkpoint)? {
+        if !wanted.contains(f.rel.as_str()) {
+            continue;
+        }
+        match f.status.as_str() {
+            "added" | "copied" => remove_file_if_present(&root.join(&f.rel))?,
+            "renamed" => {
+                remove_file_if_present(&root.join(&f.rel))?;
+                restore.extend(f.old_rel);
+            }
+            _ => restore.push(f.rel),
+        }
+    }
+    if !restore.is_empty() {
+        let refs: Vec<&str> = restore.iter().map(String::as_str).collect();
+        let list = PathList::new(&refs)?;
+        run_ok_os(
+            root,
+            &["restore", &format!("--source={checkpoint}"), "--worktree"],
+            &list,
+        )?;
+    }
+    Ok(())
+}
+
+fn remove_file_if_present(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+
 pub fn delete_checkpoints(root: &Path) -> Result<()> {
     let out = run_ok(
         root,
@@ -1310,6 +1348,29 @@ mod tests {
 
         delete_checkpoints(r.path()).unwrap();
         assert!(checkpoints(r.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn restoring_from_a_checkpoint_undoes_edits_additions_and_deletions() {
+        let r = Repo::new();
+        r.write("a.cs", "0");
+        r.write("b.cs", "b");
+        r.git(&["add", "."]);
+        r.git(&["commit", "-q", "-m", "init"]);
+        let cp = checkpoint(r.path(), "before agent").unwrap();
+        r.write("a.cs", "1");
+        r.write("new.cs", "n");
+        std::fs::remove_file(r.path().join("b.cs")).unwrap();
+        restore_from_checkpoint(
+            r.path(),
+            &cp,
+            &["a.cs".into(), "new.cs".into(), "b.cs".into()],
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(r.path().join("a.cs")).unwrap(), "0");
+        assert_eq!(std::fs::read_to_string(r.path().join("b.cs")).unwrap(), "b");
+        assert!(!r.path().join("new.cs").exists());
+        assert!(changes_since(r.path(), &cp).unwrap().is_empty());
     }
 
     #[test]

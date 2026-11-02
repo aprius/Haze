@@ -755,16 +755,32 @@ function KeymapSection() {
 
 function AgentsSection() {
   const notifyAgents = useWorkspace((s) => s.notifyAgents);
+  const [autoCheckpoints, setAutoCheckpoints] = useState(true);
+  useEffect(() => {
+    api.autoCheckpointsGet().then(setAutoCheckpoints, () => {});
+  }, []);
   return (
     <>
       <PageHeader
         title="AI Agents"
-        desc="Agents running in Haze terminals report their state through these hooks. Nothing from your prompts or transcripts is stored. Restart running agents after installing."
+        desc="Agents running in Haze terminals report their state through these hooks. Transcripts are not stored; the only prompt text kept is the first line, as the label of an automatic checkpoint. Restart running agents after installing."
       />
       {AGENTS.map((a) => (
         <AgentRow key={a.id} {...a} />
       ))}
       <div className="settings-card">
+        <SwitchRow
+          label="Automatic checkpoints"
+          desc="Snapshots the working tree when you send a prompt to an agent, labelled with the start of the prompt, so the Commit window can list what it changed (Since checkpoint) and restore it. Only kept in the repository's .git; applies to agents running in Haze terminals with hooks installed."
+          checked={autoCheckpoints}
+          onChange={(on) => {
+            setAutoCheckpoints(on);
+            api.autoCheckpointsSet(on).catch((e) => {
+              setAutoCheckpoints(!on);
+              toast(errorMessage(e), "error");
+            });
+          }}
+        />
         <SwitchRow
           label="Desktop notifications"
           desc="When an agent needs you or finishes, while Haze is in the background."

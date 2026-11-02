@@ -16,6 +16,7 @@ import { refreshGit as refreshTreeGit } from "../store/tree";
 import { closeCommitWindow, openDiffWindow, useUi } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { UnifiedDiffView } from "./DiffView";
+import { resolveSide } from "./ConflictsDialog";
 import { openMerge } from "./MergeView";
 import { choose, FloatWindow, openMenu, toast } from "./Overlays";
 import { openPushDialog } from "./GitDialogs";
@@ -147,6 +148,26 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     refreshTreeGit(project.id, project.path, 0);
   };
 
+  // Puts files back as the shown checkpoint had them: what an agent changed since is undone.
+  const restoreSince = async (rels: string[]) => {
+    const cp = r.checkpoint;
+    if (!cp || !rels.length) return;
+    const names = rels.length === 1 ? basename(rels[0]) : `${rels.length} files`;
+    const answer = await choose("Restore from Checkpoint", `Restore ${names} as the checkpoint had ${rels.length === 1 ? "it" : "them"}? Changes made since, and files added since, will be lost.`, [
+      { label: "Cancel", value: "cancel" },
+      { label: "Restore", value: "ok", primary: true, danger: true },
+    ]);
+    if (answer !== "ok") return;
+    try {
+      await saveAll();
+      await api.gitRestoreCheckpoint(root, cp, rels);
+    } catch (e) {
+      toast(`Restore failed: ${String(e)}`, "error");
+    }
+    refreshRepo(project.id, project.path);
+    refreshTreeGit(project.id, project.path, 0);
+  };
+
   const rollbackChecked = () => void rollback(r.changes.filter((c) => checked.has(c.rel)));
 
   const pickedChanges = () => r.changes.filter((c) => picked.has(c.rel));
@@ -229,13 +250,6 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     e.stopPropagation();
   };
 
-  const resolveSide = async (c: GitChange, side: "--ours" | "--theirs") => {
-    const out = await runGit(project.id, ["checkout", side, "--", c.rel], { quiet: true });
-    // The file may not exist on that side (deleted there): resolve by removing it.
-    if (out && !out.ok) await runGit(project.id, ["rm", "-q", "--", c.rel], { quiet: true });
-    else await runGit(project.id, ["add", "--", c.rel], { quiet: true });
-  };
-
   /** Menu for several picked rows. */
   const multiMenu = (list: GitChange[]) => {
     return [
@@ -266,8 +280,8 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
     ...(c.status === "conflict"
       ? [
           { label: "Merge…", action: () => openMerge(project.id, { root, rel: c.rel }) },
-          { label: "Accept Yours", action: () => void resolveSide(c, "--ours") },
-          { label: "Accept Theirs", action: () => void resolveSide(c, "--theirs") },
+          { label: "Accept Yours", action: () => void resolveSide(project.id, c.rel, "--ours") },
+          { label: "Accept Theirs", action: () => void resolveSide(project.id, c.rel, "--theirs") },
           { separator: true },
         ]
       : []),
@@ -393,6 +407,14 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
               </span>
               <button
                 className="btn small"
+                disabled={r.since.length === 0}
+                title="Put every file listed here back as the checkpoint had it"
+                onClick={() => void restoreSince(r.since.map((f) => f.rel))}
+              >
+                Restore all
+              </button>
+              <button
+                className="btn small"
                 title="Delete all checkpoints"
                 onClick={async () => {
                   await api.gitDeleteCheckpoints(root).catch(() => {});
@@ -417,6 +439,16 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
                     <FileIcon name={basename(f.rel)} />
                     <span className="tree-name">{basename(f.rel)}</span>
                     <span className="tree-hint">{dirname(f.rel)}</span>
+                    <button
+                      className="icon-btn since-restore"
+                      title="Restore this file as the checkpoint had it"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void restoreSince([f.rel]);
+                      }}
+                    >
+                      <Undo2 size={14} />
+                    </button>
                   </div>
                 ))
               ))}

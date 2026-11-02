@@ -200,14 +200,17 @@ describe("interactive rebase", () => {
 describe("pickCheckpoint", () => {
   const cp = (hash: string) => ({ hash, time: 0, label: hash });
 
-  it("follows the newest when the newest was shown", () => {
-    expect(pickCheckpoint("b", [cp("b"), cp("a")], [cp("c"), cp("b"), cp("a")])).toBe("c");
-    expect(pickCheckpoint(null, [], [cp("a")])).toBe("a");
+  it("starts with the newest", () => {
+    expect(pickCheckpoint(null, [cp("a")])).toBe("a");
+    expect(pickCheckpoint(null, [])).toBeNull();
   });
 
-  it("keeps an older one picked while it lasts", () => {
-    expect(pickCheckpoint("a", [cp("b"), cp("a")], [cp("c"), cp("b"), cp("a")])).toBe("a");
-    expect(pickCheckpoint("a", [cp("b"), cp("a")], [cp("c"), cp("b")])).toBe("c");
-    expect(pickCheckpoint("a", [cp("a")], [])).toBeNull();
+  it("keeps the picked one when newer ones arrive", () => {
+    expect(pickCheckpoint("a", [cp("c"), cp("b"), cp("a")])).toBe("a");
+  });
+
+  it("falls back to the newest when the picked one is gone", () => {
+    expect(pickCheckpoint("a", [cp("c"), cp("b")])).toBe("c");
+    expect(pickCheckpoint("a", [])).toBeNull();
   });
 });

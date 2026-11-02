@@ -186,7 +186,7 @@ fn try_run_hook(args: &[String]) -> Result<()> {
     let agent = args.first().map(String::as_str).unwrap_or("claude");
     let arg = args.get(1).map(String::as_str);
     // Where the agent works, when this hook is it getting a prompt.
-    let mut prompt_in: Option<PathBuf> = None;
+    let mut prompt_in: Option<(PathBuf, Option<String>)> = None;
     let status = match (agent, arg) {
         // Codex `notify` passes its notification JSON as the last argument.
         ("codex", Some(a)) if a.starts_with('{') => {
@@ -223,11 +223,13 @@ fn try_run_hook(args: &[String]) -> Result<()> {
                 .unwrap_or("")
                 .to_string();
             if matches!(event.as_str(), "UserPromptSubmit" | "BeforeAgent") {
+                let text = payload.get("prompt").and_then(|p| p.as_str()).map(str::to_string);
                 prompt_in = payload
                     .get("cwd")
                     .and_then(|c| c.as_str())
                     .map(PathBuf::from)
-                    .or_else(|| std::env::current_dir().ok());
+                    .or_else(|| std::env::current_dir().ok())
+                    .map(|dir| (dir, text));
             }
             let state = match agent {
                 "gemini" => gemini_state(&event, &payload),
@@ -251,8 +253,8 @@ fn try_run_hook(args: &[String]) -> Result<()> {
         )
     });
     // After the state, so the badge does not wait for the snapshot.
-    if let Some(dir) = prompt_in {
-        let _ = checkpoint_turn(&dir, agent);
+    if let Some((dir, prompt)) = prompt_in {
+        let _ = checkpoint_turn(&dir, agent, prompt.as_deref());
     }
     Ok(sent?)
 }
@@ -267,9 +269,38 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 /// Auto checkpoints a repository keeps: enough to look a few prompts back.
 const AUTO_CHECKPOINTS: usize = 10;
 
+/// The hook runs in its own process, so the setting is a marker file (present
+/// = off) rather than UI state.
+fn auto_checkpoint_off_marker() -> Result<PathBuf> {
+    Ok(home()?.join(".haze").join("no-auto-checkpoint"))
+}
+
+pub fn auto_checkpoints_enabled() -> bool {
+    auto_checkpoint_off_marker().map_or(true, |m| !m.exists())
+}
+
+pub fn set_auto_checkpoints(on: bool) -> Result<()> {
+    let marker = auto_checkpoint_off_marker()?;
+    if on {
+        match std::fs::remove_file(&marker) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => {}
+        }
+    } else {
+        if let Some(dir) = marker.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&marker, b"")?;
+    }
+    Ok(())
+}
+
 /// Snapshots the agent's repository as it gets a prompt, so the Commit window
 /// can show what that turn changed.
-fn checkpoint_turn(dir: &Path, agent: &str) -> Result<()> {
+fn checkpoint_turn(dir: &Path, agent: &str, prompt: Option<&str>) -> Result<()> {
+    if !auto_checkpoints_enabled() {
+        return Ok(());
+    }
     let root = crate::git_ops::toplevel(dir)?;
     // A home folder kept in git (dotfiles) would snapshot everything under it.
     if dirs::home_dir().is_some_and(|home| same_dir(&home, &root)) || root.parent().is_none() {
@@ -281,8 +312,23 @@ fn checkpoint_turn(dir: &Path, agent: &str) -> Result<()> {
         "gemini" => "Gemini CLI",
         other => other,
     };
-    crate::git_ops::auto_checkpoint(&root, &format!("{name} prompt"), AUTO_CHECKPOINTS)?;
+    crate::git_ops::auto_checkpoint(&root, &checkpoint_label(name, prompt), AUTO_CHECKPOINTS)?;
     Ok(())
+}
+
+/// "Claude Code: fix the login bug": the prompt's first line, cut short.
+fn checkpoint_label(name: &str, prompt: Option<&str>) -> String {
+    let line = prompt
+        .and_then(|p| p.lines().map(str::trim).find(|l| !l.is_empty()))
+        .unwrap_or("");
+    if line.is_empty() {
+        return format!("{name} prompt");
+    }
+    let mut short: String = line.chars().take(60).collect();
+    if line.chars().count() > 60 {
+        short.push('…');
+    }
+    format!("{name}: {short}")
 }
 
 fn status(agent: &str, state: &str, message: Option<String>) -> AgentStatus {
@@ -885,6 +931,15 @@ pub fn uninstall(agent: &str) -> Result<HookStatus> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn checkpoint_labels_carry_the_prompt_start() {
+        use super::checkpoint_label as l;
+        assert_eq!(l("Codex", None), "Codex prompt");
+        assert_eq!(l("Codex", Some("  \n")), "Codex prompt");
+        assert_eq!(l("Claude Code", Some("\nfix the bug\nmore")), "Claude Code: fix the bug");
+        assert!(l("X", Some(&"a".repeat(100))).ends_with('…'));
+    }
+
     use super::*;
     use serde_json::json;
 

@@ -2,6 +2,7 @@
 // root, local changes, branches, stashes, and a console of commands run.
 import { create } from "zustand";
 import { isAuthFailure } from "../components/GitAccounts";
+import { openConflictsDialog } from "../components/ConflictsDialog";
 import { toast } from "../components/Overlays";
 import { openSettings } from "../components/SettingsDialog";
 import { saveAll } from "../components/EditorArea";
@@ -11,7 +12,7 @@ import { api, errorMessage, type BranchesInfo, type ChangedFile, type Checkpoint
 import { isWithin, relative } from "../lib/path";
 import { withTask } from "./tasks";
 import { cappedDelay, isIgnored, onGitStatus, refreshGit as refreshTreeGit, useTree } from "./tree";
-import { openCommitWindow, useUi } from "./ui";
+import { useUi } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export interface ConsoleEntry {
@@ -204,7 +205,7 @@ async function reload(projectId: string, projectPath: string): Promise<void> {
     refs ? api.gitCheckpoints(root).catch(retry(cur.checkpoints)) : cur.checkpoints,
     reviewedRels.length ? api.gitFingerprints(root, reviewedRels).catch(() => []) : Promise.resolve([]),
   ]);
-  const checkpoint = pickCheckpoint(cur.checkpoint, cur.checkpoints, checkpoints);
+  const checkpoint = pickCheckpoint(cur.checkpoint, checkpoints);
   // Diffing against a checkpoint snapshots the whole working tree (`git add -A`
   // into a scratch index); only the Commit window shows it, and opening it refreshes.
   const since = !checkpoint ? [] : commitWindowShown(projectId) ? await api.gitChangesSince(root, checkpoint).catch(() => []) : cur.since;
@@ -229,6 +230,29 @@ async function reload(projectId: string, projectPath: string): Promise<void> {
 
 export { checkedPaths } from "../lib/gitView";
 
+async function headOf(root: string): Promise<string> {
+  const o = await api.gitRun(root, ["rev-parse", "HEAD"]).catch(() => null);
+  return o?.ok ? o.stdout.trim() : "";
+}
+
+/** Rider-style pull summary: commits received, files updated, and whether a merge commit was made. */
+async function describePull(root: string, before: string, stdout: string): Promise<string | null> {
+  const after = await headOf(root);
+  if (!after || after === before) return /up to date/i.test(stdout) ? "Pull: already up to date" : null;
+  const count = async (range: string) => {
+    const o = await api.gitRun(root, ["rev-list", "--count", range]).catch(() => null);
+    return o?.ok ? parseInt(o.stdout.trim(), 10) || 0 : 0;
+  };
+  const parents = await api.gitRun(root, ["rev-list", "--parents", "-n", "1", after]).catch(() => null);
+  const merged = (parents?.stdout.trim().split(" ").length ?? 0) > 2 && (await count(`${before}..${after}^1`)) === 0;
+  // A merge commit's second parent holds what came in; otherwise everything since `before` did.
+  const received = await count(merged ? `${before}..${after}^2` : `${before}..${after}`);
+  const files = /(\d+) files? changed/.exec(stdout)?.[1];
+  const parts = [`${received} commit${received === 1 ? "" : "s"} received`];
+  if (files) parts.push(`${files} file${files === "1" ? "" : "s"} updated`);
+  return `Pull successful: ${parts.join(", ")}${merged ? " — merge commit created" : ""}`;
+}
+
 /** Runs git and records it in the console; failures become an error toast. */
 export async function runGit(projectId: string, args: string[], opts: { label?: string; quiet?: boolean } = {}): Promise<GitOutput | null> {
   const r = repo(projectId);
@@ -239,12 +263,13 @@ export async function runGit(projectId: string, args: string[], opts: { label?: 
   const label = opts.label ?? `git ${args[0]}`;
   patchRepo(projectId, (s) => ({ busy: label, console: [...s.console.slice(-199), entry] }));
   try {
+    const before = args[0] === "pull" ? await headOf(r.root) : null;
     const out = await withTask(projectId, label, () => api.gitRun(r.root!, args));
     entry.output = out;
+    const pulled = out.ok && before ? await describePull(r.root, before, out.stdout) : null;
     if (/^CONFLICT|Merge conflict in|could not apply/m.test(out.stdout + out.stderr)) {
-      // Open the conflicts list: the Commit window's "Merge Conflicts" group.
-      openCommitWindow(projectId);
-      toast("Conflicts need to be resolved — see Merge Conflicts in the Commit window (double-click to merge).", "error");
+      // Rider's Conflicts popup; the Commit window's "Merge Conflicts" group keeps the list.
+      openConflictsDialog(projectId);
     } else if (!out.ok && isAuthFailure(out.stderr + out.stdout))
       // Offer to log in when the remote rejects the credentials.
       toast(`${opts.label ?? "git " + args[0]} failed: the remote needs you to log in. Add a GitHub/GitLab account in Settings.`, "error", {
@@ -252,6 +277,7 @@ export async function runGit(projectId: string, args: string[], opts: { label?: 
         run: () => openSettings("vcs"),
       });
     else if (!out.ok) toast(`${opts.label ?? "git " + args[0]} failed: ${(out.stderr || out.stdout).trim().split("\n").slice(-3).join(" ")}`, "error");
+    else if (pulled) toast(pulled);
     else if (!opts.quiet && opts.label) toast(`${opts.label}: done`);
     return out;
   } catch (e) {

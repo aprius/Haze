@@ -501,6 +501,15 @@ async fn git_changes_since(
 }
 
 #[tauri::command]
+async fn git_restore_checkpoint(
+    root: String,
+    checkpoint: String,
+    paths: Vec<String>,
+) -> CmdResult<()> {
+    blocking(move || git_ops::restore_from_checkpoint(root.as_ref(), &checkpoint, &paths)).await
+}
+
+#[tauri::command]
 async fn git_delete_checkpoints(root: String) -> CmdResult<()> {
     blocking(move || git_ops::delete_checkpoints(root.as_ref())).await
 }
@@ -550,6 +559,16 @@ async fn git_run(root: String, args: Vec<String>) -> CmdResult<git_ops::GitOutpu
 }
 
 // ---------------------------------------------------------------- AI agent hooks
+
+#[tauri::command]
+async fn auto_checkpoints_get() -> CmdResult<bool> {
+    blocking(|| Ok(agent_hooks::auto_checkpoints_enabled())).await
+}
+
+#[tauri::command]
+async fn auto_checkpoints_set(on: bool) -> CmdResult<()> {
+    blocking(move || agent_hooks::set_auto_checkpoints(on)).await
+}
 
 #[tauri::command]
 async fn agent_hooks_status(agent: String) -> CmdResult<agent_hooks::HookStatus> {
@@ -1245,6 +1264,9 @@ pub fn run() {
             git_changes_since,
             git_delete_checkpoints,
             git_fingerprints,
+            auto_checkpoints_get,
+            auto_checkpoints_set,
+            git_restore_checkpoint,
             agent_hooks_status,
             agent_hooks_install,
             agent_hooks_uninstall,

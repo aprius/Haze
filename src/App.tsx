@@ -18,6 +18,7 @@ import { DiffWindow } from "./components/DiffView";
 import { BranchesPopup, openBranchesPopup, openPullDialog, openPushDialog, PullDialog, PushDialog, updateProject } from "./components/GitDialogs";
 import { FindPanel } from "./components/FindPanel";
 import { GitPanel } from "./components/GitPanel";
+import { ConflictsDialog } from "./components/ConflictsDialog";
 import { RebaseDialog } from "./components/RebaseDialog";
 import { openSettings, SettingsDialog } from "./components/SettingsDialog";
 import { refreshRepo } from "./store/git";
@@ -413,6 +414,7 @@ export default function App() {
           <PushDialog project={hostProject} />
           <PullDialog project={hostProject} />
           <RebaseDialog project={hostProject} />
+          <ConflictsDialog project={hostProject} />
         </>,
       )}
       <UsagesPopup active={active} />
