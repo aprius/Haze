@@ -194,15 +194,16 @@ kbd {
 
 .center {
   flex: 1;
-  min-width: 0;
+  /* The side terminal gives way before the editor is squeezed out. */
+  min-width: 240px;
   display: flex;
   background: var(--editor-bg);
 }
 
 .side-dock {
-  flex: none;
+  flex: 0 1 auto;
   display: flex;
-  min-width: 0;
+  min-width: 200px;
   background: var(--panel);
 }
 
@@ -4093,6 +4094,15 @@ html:has(.float-external) body {
   cursor: pointer;
 }
 
+.since-restore {
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.since-section .change-row:hover .since-restore {
+  visibility: visible;
+}
+
 .checkpoint-select {
   max-width: 130px;
   font-weight: 400;
@@ -4899,3 +4909,9 @@ html:has(.float-external) body {
   height: 22px;
   box-sizing: border-box;
 }
+
+.conflicts-dialog { min-width: 560px; max-width: 80vw; }
+.conflict-list { max-height: 50vh; overflow: auto; margin: 8px 0; }
+.conflict-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px; }
+.conflict-name { white-space: nowrap; }
+.conflict-dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
