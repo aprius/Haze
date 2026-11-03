@@ -314,8 +314,9 @@ mod tests {
     #[test]
     fn lingering_helper_does_not_hang() {
         let start = Instant::now();
-        let out = run("(sleep 30 &) ; echo done", "", "", Duration::from_secs(1)).unwrap();
+        // The timeout also covers login-shell startup, which is slow on CI runners.
+        let out = run("(sleep 120 &) ; echo done", "", "", Duration::from_secs(5)).unwrap();
         assert_eq!(out.trim(), "done");
-        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(start.elapsed() < Duration::from_secs(15));
     }
 }

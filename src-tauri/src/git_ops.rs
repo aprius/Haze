@@ -1430,17 +1430,36 @@ pub fn diff_for_message(root: &Path, paths: &[String], limit: usize) -> Result<(
     if paths.is_empty() {
         bail!("nothing selected to describe");
     }
-    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-    let list = PathList::new(&refs)?;
     let recent = run_ok(root, &["log", "-n", "8", "--format=%s"]).unwrap_or_default();
-    let tracked: HashSet<String> = run_ok_os(root, &["ls-files", "-z"], &list)
-        .unwrap_or_default()
-        .split('\0')
-        .map(str::to_owned)
-        .collect();
-    let mut diff = run_ok_os(root, &["diff", "HEAD", "--no-color", "--no-ext-diff"], &list)
-        .or_else(|_| run_ok_os(root, &["diff", "--cached", "--no-color", "--no-ext-diff"], &list))
-        .unwrap_or_default();
+    // `diff` and `ls-files` take no --pathspec-from-file: the paths go after `--`
+    // (literal, see git_command), a batch at a time to stay under the argument limit.
+    let by_paths = |head: &[&str]| -> Result<String> {
+        let mut out = String::new();
+        for chunk in paths.chunks(200) {
+            let mut args: Vec<&str> = head.to_vec();
+            args.push("--");
+            args.extend(chunk.iter().map(String::as_str));
+            out.push_str(&run_ok(root, &args)?);
+        }
+        Ok(out)
+    };
+    let tracked: HashSet<String> = by_paths(&["ls-files", "-z"])?.split('\0').map(str::to_owned).collect();
+    // Against HEAD; a repository with no commit yet has only the index.
+    let base: &[&str] = if run_ok(root, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok() { &["HEAD"] } else { &["--cached"] };
+    let diff_args = |extra: &[&'static str]| -> Vec<&str> {
+        let mut a = vec!["diff"];
+        a.extend_from_slice(base);
+        a.extend_from_slice(&["--no-color", "--no-ext-diff"]);
+        a.extend_from_slice(extra);
+        a
+    };
+    // The file list first, so a diff cut at `limit` still names every file.
+    let stat = by_paths(&diff_args(&["--stat=100"])).unwrap_or_default();
+    let mut diff = String::new();
+    if !stat.trim().is_empty() {
+        diff.push_str(&format!("Summary:\n{}\n\nDiff:\n", stat.trim_end()));
+    }
+    diff.push_str(&by_paths(&diff_args(&[]))?);
     for p in paths.iter().filter(|p| !tracked.contains(p.as_str())) {
         let Ok(bytes) = std::fs::read(root.join(p)) else { continue };
         diff.push_str(&format!("\nnew file: {p}\n"));
@@ -1489,5 +1508,40 @@ mod message_tests {
         assert_eq!(text_head(s.as_bytes(), 10), Some("aé"));
         assert_eq!(text_head(&[0xff, 0x00], 10), None);
         assert_eq!(text_head(b"a\0b", 10), None);
+    }
+}
+
+#[cfg(test)]
+mod message_input_tests {
+    use super::*;
+
+    fn git_in(dir: &Path, args: &[&str]) {
+        let ok = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+
+    #[test]
+    fn message_input_has_the_diff_of_tracked_and_the_head_of_new_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        git_in(d, &["init", "-q"]);
+        std::fs::write(d.join("a.txt"), "one\n").unwrap();
+        git_in(d, &["add", "."]);
+        git_in(d, &["commit", "-qm", "first"]);
+        std::fs::write(d.join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(d.join("b.txt"), "fresh\n").unwrap();
+        std::fs::write(d.join("other.txt"), "not selected\n").unwrap();
+        let (recent, diff) = diff_for_message(d, &["a.txt".into(), "b.txt".into()], 30_000).unwrap();
+        assert_eq!(recent.trim(), "first");
+        assert!(diff.contains("+two"), "{diff}");
+        assert!(!diff.contains("new file: a.txt"), "{diff}");
+        assert!(diff.contains("new file: b.txt") && diff.contains("fresh"), "{diff}");
+        assert!(!diff.contains("not selected"), "{diff}");
     }
 }
