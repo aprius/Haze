@@ -23,7 +23,7 @@ import { absPath, repo, useGit } from "../store/git";
 import { DiffView, diffTitle, openDiff, parseDiffPath } from "./DiffView";
 import { MergeView, mergeTitle, parseMergePath } from "./MergeView";
 import { showHistory } from "./GitPanel";
-import { choose, externalWindows, FloatWindow, hostDocument, openMenu, prompt, toast, windowFocusedAt, type MenuItem } from "./Overlays";
+import { choose, externalWindows, FloatWindow, hostDocument, openMenu, prompt, toast, windowFocusedAt, windowOpensAt, type MenuItem } from "./Overlays";
 import { forgetFindWindow, WithFindWindow } from "./FindPanel";
 import { showAssetUsages, showDeclarations, showLocations, type UsagesAnchor } from "./UsagesPopup";
 import type { AssetUsage } from "../lib/ipc";
@@ -865,7 +865,8 @@ function splitMenu(project: Project, group: string, path: string): MenuItem[] {
 type TabDrop =
   | { kind: "tab"; group: string; index: number; rect: DOMRect }
   | { kind: "group"; group: string; side: L.Side | null; rect: DOMRect }
-  | { kind: "window" };
+  /** `screen`: the pointer on screen in logical pixels, when known. */
+  | { kind: "window"; screen?: { x: number; y: number } };
 
 /** The pointer during a tab drag: the window and document it is over, there, and the drop it would make. */
 interface TabDragAt {
@@ -930,7 +931,8 @@ function tabDropAt(projectId: string, doc: Document, x: number, y: number, boxes
       return { doc: b.win.document, label: b.label, x: cx, y: cy, drop: tabDropIn(b.win.document, cx, cy, owns) };
     }
   }
-  return { doc, label: null, x, y, drop: { kind: "window" } };
+  const screen = from ? { x: from.left + x * from.zoom, y: from.top + y * from.zoom } : undefined;
+  return { doc, label: null, x, y, drop: { kind: "window", screen } };
 }
 
 /** The drop at `x`, `y` in `doc`, on a group of the project (`owns`). */
@@ -984,7 +986,12 @@ function aloneInWindow(e: L.Editors, group: string): boolean {
 /** Applies a tab drop: reorder, move to another group (in another window too), split, or a window of its own. */
 function dropTab(project: Project, from: string, path: string, drop: TabDrop) {
   useWorkspace.getState().editors(project.id, (e) => {
-    if (drop.kind === "window") return aloneInWindow(e, from) ? e : L.detachTab(e, from, path);
+    if (drop.kind === "window") {
+      if (aloneInWindow(e, from)) return e;
+      const id = L.newGroupId();
+      if (drop.screen) windowOpensAt.set(id, drop.screen);
+      return L.detachTab(e, from, path, id);
+    }
     if (drop.kind === "tab") {
       // Within its own bar, the index counts the tab itself.
       const g = L.groupById(e, drop.group);
@@ -1702,6 +1709,7 @@ function EditorWindowView({ project, index, win }: { project: Project; index: nu
       height={700}
       escapeCloses={false}
       appShortcuts
+      placeId={win.id}
       onClose={() => void closeEditorWindow(project.id, win.id)}
     >
       <WithFindWindow project={project} windowId={win.id}>

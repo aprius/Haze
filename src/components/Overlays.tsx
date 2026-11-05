@@ -287,6 +287,12 @@ const isTauri = "__TAURI_INTERNALS__" in window;
 export const externalWindows = new Map<Window, string>();
 
 /** When each of Haze's windows last took focus: the later, the nearer the front. */
+/**
+ * Where a window should open, by the id of what it shows (an editor window
+ * dragged out of a tab bar): the pointer's place on screen, in logical pixels.
+ * Without one the native side centres it over the main window.
+ */
+export const windowOpensAt = new Map<string, { x: number; y: number }>();
 export const windowFocusedAt = new Map<Window, number>([[window, Date.now()]]);
 window.addEventListener("focus", () => windowFocusedAt.set(window, Date.now()));
 
@@ -390,7 +396,7 @@ type ExternalHost = { win: Window; root: HTMLElement; label: string };
  * Opens a real window that our React tree renders into (same JS context, so
  * stores and Monaco models are shared). Null outside Tauri or when refused.
  */
-function useExternalWindow(width: number, height: number, onClose: () => void, shortcuts: boolean): ExternalHost | "opening" | null {
+function useExternalWindow(width: number, height: number, onClose: () => void, shortcuts: boolean, placeId?: string): ExternalHost | "opening" | null {
   const [host, setHost] = useState<ExternalHost | "opening" | null>(isTauri ? "opening" : null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -478,6 +484,13 @@ function useExternalWindow(width: number, height: number, onClose: () => void, s
       // with no styles yet (the swap above) otherwise flashes white.
       const rgb = getComputedStyle(document.body).backgroundColor.match(/\d+(\.\d+)?/g)?.slice(0, 3).map(Number);
       if (rgb?.length === 3) await w.setBackgroundColor(rgb as [number, number, number]).catch(() => {});
+      // Dragged out of a tab bar: it opens with its title bar under the pointer.
+      const at = placeId ? windowOpensAt.get(placeId) : undefined;
+      if (placeId) windowOpensAt.delete(placeId);
+      if (at) {
+        const { LogicalPosition } = await import("@tauri-apps/api/dpi");
+        await w.setPosition(new LogicalPosition(Math.round(at.x - Math.min(width, screen.availWidth - 40) / 2), Math.round(Math.max(0, at.y - 14)))).catch(() => {});
+      }
       // The window opens hidden: show it once our content and stylesheets are in.
       const pending = Array.from(doc.querySelectorAll<HTMLLinkElement>("link[rel=stylesheet]")).filter((l) => !l.sheet);
       await Promise.race([
@@ -525,6 +538,7 @@ export function FloatWindow({
   modal = false,
   escapeCloses = true,
   appShortcuts = false,
+  placeId,
   onClose,
   children,
 }: {
@@ -538,10 +552,12 @@ export function FloatWindow({
   escapeCloses?: boolean;
   /** The app's shortcuts work here too (an editor window). */
   appShortcuts?: boolean;
+  /** Opens where `windowOpensAt` has this id, when it does. */
+  placeId?: string;
   onClose: () => void;
   children: ReactNode;
 }) {
-  const host = useExternalWindow(width, height, onClose, appShortcuts);
+  const host = useExternalWindow(width, height, onClose, appShortcuts, placeId);
   const external = host === "opening" ? null : host;
   const [size] = useState(() => ({ w: Math.min(width, window.innerWidth - 32), h: Math.min(height, window.innerHeight - 32) }));
   const [pos, setPos] = useState(() => ({ x: (window.innerWidth - size.w) / 2, y: Math.max(16, (window.innerHeight - size.h) / 3) }));
