@@ -10,6 +10,7 @@ import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker";
 import { csharpLanguage } from "./csharpGrammar";
 import { registerShaderLanguages } from "./shaderGrammar";
+import { findColors, formatColor } from "./unity/colors";
 import { codeFontFamily, codeLineHeight, loadCodeFont, useFonts } from "./fonts";
 import { monacoTheme, useGlass, useTheme } from "./theme";
 import { useWorkspace } from "../store/workspace";
@@ -164,6 +165,34 @@ defineMonokai("haze-light-glass", "vs", MONOKAI.light, true);
 monaco.languages.setMonarchTokensProvider("csharp", csharpLanguage);
 // Shaders: Monaco has no grammar for HLSL, GLSL or ShaderLab.
 registerShaderLanguages(monaco);
+
+// Colour swatches and the picker for Unity colours in C# (unity/colors.ts).
+// No language server involved: Roslyn has no colour provider.
+monaco.languages.registerColorProvider("csharp", {
+  provideDocumentColors(model) {
+    const out: monaco.languages.IColorInformation[] = [];
+    for (let n = 1; n <= model.getLineCount(); n++) {
+      for (const hit of findColors(model.getLineContent(n))) {
+        const { r, g, b, a } = hit.rgba;
+        out.push({
+          range: { startLineNumber: n, startColumn: hit.start + 1, endLineNumber: n, endColumn: hit.end + 1 },
+          color: { red: r, green: g, blue: b, alpha: a },
+        });
+      }
+    }
+    return out;
+  },
+  provideColorPresentations(model, info) {
+    const { startLineNumber: n, startColumn, endColumn } = info.range;
+    // The hit is found again on its line (hex digits need their quotes around
+    // them), as the picker may have moved the range since.
+    const hit = findColors(model.getLineContent(n)).find((h) => h.start === startColumn - 1 && h.end === endColumn - 1);
+    if (!hit) return [];
+    const { red: r, green: g, blue: b, alpha: a } = info.color;
+    const label = formatColor(hit, { r, g, b, a });
+    return [{ label, textEdit: { range: info.range, text: label } }];
+  },
+});
 
 // Comments are dim by design, too dim on a diff block's tint. Token classes
 // are numbered from the theme's colour map, so look up the comment's class
