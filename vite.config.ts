@@ -54,10 +54,62 @@ function exposeMonacoWindows() {
   };
 }
 
+// Monaco's colour picker has no field to type or paste a colour into (its
+// header only shows the value; a click cycles rgb/hsl/hex). Add one: a row of
+// its own under the header, with a hex field that applies on Enter, on blur and
+// after a paste. Spliced into the header's constructor, where the model, `$`,
+// `append` and `Color` are in scope. Styled in styles.css (`.haze-hex-row`).
+const MONACO_PICKER_HEADER = /monaco-editor\/esm\/vs\/editor\/contrib\/colorPicker\/browser\/colorPickerParts\/colorPickerHeader\.js$/;
+const PICKER_ANCHOR = "this.onDidChangeColor(this.model.color);";
+const PICKER_HEX_FIELD = `
+        {
+            const model = this.model;
+            const input = append(append(container, $('.haze-hex-row')), $('input.haze-hex'));
+            input.type = 'text';
+            input.spellcheck = false;
+            input.placeholder = '#RRGGBB';
+            input.title = 'Hex color: type or paste, then Enter';
+            let dirty = false;
+            const show = (c) => { if (!dirty) input.value = Color.Format.CSS.formatHexA(c, true); };
+            const apply = () => {
+                const text = input.value.trim();
+                // parseHex reads any non-hex digit as 0, so check the digits first.
+                const color = /^#?([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(text) ? Color.Format.CSS.parseHex(text.startsWith('#') ? text : '#' + text) : null;
+                dirty = false;
+                input.classList.toggle('invalid', !color);
+                if (!color) return;
+                model.color = color;
+                model.flushColor();
+                show(color);
+            };
+            show(model.color);
+            this._register(model.onDidChangeColor(show));
+            this._register(addDisposableListener(input, 'input', () => { dirty = true; input.classList.remove('invalid'); }));
+            this._register(addDisposableListener(input, 'paste', () => setTimeout(apply, 0)));
+            this._register(addDisposableListener(input, 'change', apply));
+            this._register(addDisposableListener(input, 'keydown', (e) => {
+                if (e.key === 'Enter') apply();
+                // Keys typed here are not the editor's; Escape gives it the focus back.
+                e.stopPropagation();
+                if (e.key === 'Escape') input.closest('.monaco-editor')?.querySelector('textarea')?.focus();
+            }));
+        }`;
+
+function pickerHexField(): Plugin {
+  return {
+    name: "haze-monaco-picker-hex",
+    transform(code: string, id: string) {
+      if (!MONACO_PICKER_HEADER.test(id.replace(/\\/g, "/").split("?")[0])) return;
+      if (!code.includes(PICKER_ANCHOR)) throw new Error("monaco-editor's colorPickerHeader.js changed: update pickerHexField in vite.config.ts");
+      return code.replace(PICKER_ANCHOR, PICKER_ANCHOR + PICKER_HEX_FIELD);
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [trimMonaco(), exposeMonacoWindows(), react()],
+  plugins: [trimMonaco(), exposeMonacoWindows(), pickerHexField(), react()],
   optimizeDeps: {
-    rolldownOptions: { plugins: [exposeMonacoWindows()] },
+    rolldownOptions: { plugins: [exposeMonacoWindows(), pickerHexField()] },
   },
   clearScreen: false,
   server: {

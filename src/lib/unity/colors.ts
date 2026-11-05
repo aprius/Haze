@@ -4,6 +4,8 @@
 // Found, on one line:
 //   new Color(r, g, b[, a])      float literals, 0..1
 //   new Color32(r, g, b[, a])    integer literals, 0..255
+//   Color c = new(r, g, b)       target-typed, when the line declares a Color
+//                                or Color32 right before the `new`
 //   Color.red, Color.clear ...   Unity's named colours (UnityEngine.Color too)
 //   "#RRGGBB" / "#RRGGBBAA"      a whole string, as ColorUtility.TryParseHtmlString
 //                                reads it, and <color=#RRGGBB> in rich text
@@ -28,6 +30,8 @@ export interface ColorHit {
   arity: number;
   /** For `hex`: the digits had upper-case letters. */
   upper: boolean;
+  /** For `color` and `color32`: written `new(...)`, the type left to the declaration. */
+  typed: boolean;
 }
 
 const NAMED: Record<string, [number, number, number, number]> = {
@@ -46,7 +50,9 @@ const NAMED: Record<string, [number, number, number, number]> = {
 
 const NUM = String.raw`[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fF]?`;
 const ARGS = String.raw`\s*(${NUM})\s*,\s*(${NUM})\s*,\s*(${NUM})\s*(?:,\s*(${NUM})\s*)?`;
-const CTOR = new RegExp(String.raw`(?<![\w.])new\s+(?:UnityEngine\.)?(Color32|Color)\s*\(${ARGS}\)`, "g");
+const CTOR = new RegExp(String.raw`(?<![\w.])new\s*(?:\s(?:UnityEngine\.)?(Color32|Color)\s*)?\(${ARGS}\)`, "g");
+// What a target-typed `new(` follows: `Color name =` or `Color32 Name =>`.
+const DECL = /\b(?:UnityEngine\.)?(Color32|Color)\??\s+\w+\s*=>?\s*$/;
 const NAME = new RegExp(String.raw`(?<![\w.])(?:UnityEngine\.)?Color\.(${Object.keys(NAMED).join("|")})\b(?!\s*[(\w.])`, "g");
 const HEX = /("#|<color=#)([0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?)(?=["<>])/g;
 
@@ -56,17 +62,20 @@ const num = (s: string) => Number.parseFloat(s.replace(/[fF]$/, ""));
 /** Every colour on `line`, in order of appearance. */
 export function findColors(line: string): ColorHit[] {
   const hits: ColorHit[] = [];
-  const base = { upper: false };
+  const base = { upper: false, typed: false };
 
   if (line.includes("new")) {
     for (const m of line.matchAll(CTOR)) {
-      const wide = m[1] === "Color32";
+      const typed = m[1] === undefined;
+      const type = typed ? DECL.exec(line.slice(0, m.index))?.[1] : m[1];
+      if (!type) continue;
+      const wide = type === "Color32";
       const arity = m[5] === undefined ? 3 : 4;
       const v = [m[2], m[3], m[4], m[5] ?? (wide ? "255" : "1")].map(num);
       if (v.some((n) => !Number.isFinite(n))) continue;
       const scale = wide ? 255 : 1;
       const [r, g, b, a] = v.map((n) => clamp(n / scale, 0, 1));
-      hits.push({ ...base, start: m.index, end: m.index + m[0].length, rgba: { r, g, b, a }, kind: wide ? "color32" : "color", arity });
+      hits.push({ ...base, start: m.index, end: m.index + m[0].length, rgba: { r, g, b, a }, kind: wide ? "color32" : "color", arity, typed });
     }
   }
 
@@ -89,6 +98,7 @@ export function findColors(line: string): ColorHit[] {
         kind: "hex",
         arity: digits.length,
         upper: /[A-F]/.test(digits),
+        typed: false,
       });
     }
   }
@@ -107,7 +117,7 @@ const byte = (n: number) => Math.round(clamp(n, 0, 1) * 255);
 /**
  * The text that stands for `rgba` in place of `hit`. A constructor keeps its
  * type and gets an alpha argument only when the colour is not opaque (or had
- * one); a named colour becomes `new Color(...)`; hex keeps its case and length.
+ * one); a named colour becomes `new Color(...)`; `new(...)` stays target-typed; hex keeps its case and length.
  */
 export function formatColor(hit: ColorHit, rgba: Rgba): string {
   const { r, g, b, a } = rgba;
@@ -119,9 +129,9 @@ export function formatColor(hit: ColorHit, rgba: Rgba): string {
   if (hit.kind === "color32") {
     const args = [byte(r), byte(g), byte(b)];
     if (hit.arity === 4 || byte(a) !== 255) args.push(byte(a));
-    return `new Color32(${args.join(", ")})`;
+    return `new${hit.typed ? "" : " Color32"}(${args.join(", ")})`;
   }
   const args = [r, g, b].map(floatLiteral);
   if (hit.arity === 4 || Math.round(a * 1000) !== 1000) args.push(floatLiteral(a));
-  return `new Color(${args.join(", ")})`;
+  return `new${hit.typed ? "" : " Color"}(${args.join(", ")})`;
 }

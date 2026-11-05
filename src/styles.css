@@ -4915,3 +4915,38 @@ html:has(.float-external) body {
 .conflict-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px; }
 .conflict-name { white-space: nowrap; }
 .conflict-dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Hex field Monaco's colour picker lacks (vite.config.ts, pickerHexField): a
+   row under the header, so the widget grows by that row. */
+.monaco-editor .colorpicker-widget {
+  height: 216px;
+}
+.monaco-editor .colorpicker-widget .haze-hex-row {
+  display: flex;
+  height: 26px;
+  padding: 0 8px;
+  align-items: center;
+  box-sizing: border-box;
+}
+.monaco-editor .colorpicker-widget .haze-hex {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  font: 12px var(--font-mono, monospace);
+  color: inherit;
+  background: var(--vscode-input-background, transparent);
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
+  border-radius: 3px;
+  outline: none;
+  /* The picker is user-select: none, which would also stop a caret and a paste here. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+.monaco-editor .colorpicker-widget .haze-hex:focus {
+  border-color: var(--vscode-focusBorder, #4a90e2);
+}
+.monaco-editor .colorpicker-widget .haze-hex.invalid {
+  border-color: #e5484d;
+}

@@ -30,6 +30,22 @@ describe("findColors", () => {
     expect(h.rgba.a).toBeCloseTo(0.2);
   });
 
+  it("reads a target-typed new after a Color declaration", () => {
+    const line = "        private static readonly Color WallShadow = new(0.05f, 0.04f, 0.2f);";
+    const h = one(line);
+    expect(text(line)).toBe("new(0.05f, 0.04f, 0.2f)");
+    expect(h.typed).toBe(true);
+    expect(h.rgba.b).toBeCloseTo(0.2);
+    expect(one("Color32 c = new(255, 0, 0);").kind).toBe("color32");
+    expect(one("public Color Tint => new(1, 1, 1, 0.5f);").rgba.a).toBe(0.5);
+  });
+
+  it("leaves a target-typed new alone when it is not a Color", () => {
+    expect(findColors("Vector3 v = new(1f, 2f, 3f);")).toEqual([]);
+    expect(findColors("Foo(new(1f, 2f, 3f));")).toEqual([]);
+    expect(findColors("var c = new(1f, 2f, 3f);")).toEqual([]);
+  });
+
   it("skips arguments that are not literals", () => {
     expect(findColors("new Color(r, g, b)")).toEqual([]);
     expect(findColors("new Color(1f, 0f, other.x)")).toEqual([]);
@@ -88,6 +104,12 @@ describe("formatColor", () => {
   it("writes Color32 as bytes", () => {
     expect(formatColor(one("new Color32(0, 0, 0)"), { r: 1, g: 0.5, b: 0, a: 1 })).toBe("new Color32(255, 128, 0)");
     expect(formatColor(one("new Color32(0, 0, 0)"), { r: 0, g: 0, b: 0, a: 0 })).toBe("new Color32(0, 0, 0, 0)");
+  });
+
+  it("keeps a target-typed new target-typed", () => {
+    const h = one("Color c = new(1, 0, 0);");
+    expect(formatColor(h, { r: 0, g: 0, b: 1, a: 1 })).toBe("new(0f, 0f, 1f)");
+    expect(formatColor(one("Color32 c = new(1, 0, 0);"), { r: 0, g: 0, b: 1, a: 0.5 })).toBe("new(0, 0, 255, 128)");
   });
 
   it("turns a named colour into new Color", () => {
