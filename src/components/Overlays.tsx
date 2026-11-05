@@ -489,7 +489,7 @@ function useExternalWindow(width: number, height: number, onClose: () => void, s
       if (placeId) windowOpensAt.delete(placeId);
       if (at) {
         const { LogicalPosition } = await import("@tauri-apps/api/dpi");
-        await w.setPosition(new LogicalPosition(Math.round(at.x - Math.min(width, screen.availWidth - 40) / 2), Math.round(Math.max(0, at.y - 14)))).catch(() => {});
+        await w.setPosition(new LogicalPosition(Math.round(at.x - Math.min(width, screen.availWidth - 40) / 2), Math.round(Math.max(0, at.y - 14)))).catch((err) => console.warn("setPosition", err));
       }
       // The window opens hidden: show it once our content and stylesheets are in.
       const pending = Array.from(doc.querySelectorAll<HTMLLinkElement>("link[rel=stylesheet]")).filter((l) => !l.sheet);
