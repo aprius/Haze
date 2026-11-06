@@ -665,6 +665,7 @@ export const api = {
   opencodeCliModels: () => invoke<string[]>("opencode_cli_models"),
   gitRollback: (root: string, paths: string[]) => invoke<void>("git_rollback", { root, paths }),
   gitCommitDetails: (root: string, hash: string) => invoke<CommitDetails>("git_commit_details", { root, hash }),
+  gitImageAt: (root: string, rev: string, rel: string) => invoke<{ mime: string; base64: string } | null>("git_image_at", { root, rev, rel }),
   gitFileAt: (root: string, rev: string, rel: string) => invoke<string | null>("git_file_at", { root, rev, rel }),
   gitBranches: (root: string) => invoke<BranchesInfo>("git_branches", { root }),
   gitStashes: (root: string) => invoke<StashEntry[]>("git_stashes", { root }),

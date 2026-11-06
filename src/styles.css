@@ -2575,6 +2575,29 @@ button.toggle.on {
   background: repeating-conic-gradient(#8882 0% 25%, transparent 0% 50%) 50% / 16px 16px;
 }
 
+.image-diff {
+  display: flex;
+  gap: 1px;
+}
+.image-diff-side {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 8px;
+}
+.image-diff-side .image-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-diff-side .image-view img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
 .markdown-body {
   position: absolute;
   inset: 0;

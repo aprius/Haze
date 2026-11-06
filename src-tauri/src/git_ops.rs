@@ -445,6 +445,12 @@ pub fn file_at(root: &Path, rev: &str, rel: &str) -> Result<Option<String>> {
     })
 }
 
+/// Raw bytes of `rel` at `rev`; `None` when it does not exist there.
+pub fn bytes_at(root: &Path, rev: &str, rel: &str) -> Result<Option<Vec<u8>>> {
+    let out = git(root).args(["show", &format!("{rev}:{rel}")]).output()?;
+    Ok(out.status.success().then_some(out.stdout))
+}
+
 // ---------------------------------------------------------------- branches
 
 #[derive(Debug, Serialize, PartialEq)]

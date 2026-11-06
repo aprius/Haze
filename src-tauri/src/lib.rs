@@ -375,6 +375,23 @@ async fn media_url(app: AppHandle, path: String) -> CmdResult<String> {
     .await
 }
 
+fn image_mime(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
 #[tauri::command]
 async fn read_image(path: String) -> CmdResult<ImageData> {
     blocking(move || {
@@ -384,20 +401,7 @@ async fn read_image(path: String) -> CmdResult<ImageData> {
             meta.len() <= 20 * 1024 * 1024,
             "image is too large to preview"
         );
-        let ext = std::path::Path::new(&path)
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        let mime = match ext.as_str() {
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "gif" => "image/gif",
-            "webp" => "image/webp",
-            "bmp" => "image/bmp",
-            "ico" => "image/x-icon",
-            "svg" => "image/svg+xml",
-            _ => "application/octet-stream",
-        };
+        let mime = image_mime(&path);
         let base64 = base64::engine::general_purpose::STANDARD.encode(std::fs::read(&path)?);
         Ok(ImageData { mime, base64 })
     })
@@ -458,6 +462,21 @@ async fn git_commit_details(root: String, hash: String) -> CmdResult<git_ops::Co
 #[tauri::command]
 async fn git_file_at(root: String, rev: String, rel: String) -> CmdResult<Option<String>> {
     blocking(move || git_ops::file_at(root.as_ref(), &rev, &rel)).await
+}
+
+/// An image as committed at `rev` (the Diff tab's image preview); `None` when absent there.
+#[tauri::command]
+async fn git_image_at(root: String, rev: String, rel: String) -> CmdResult<Option<ImageData>> {
+    blocking(move || {
+        use base64::Engine;
+        let Some(bytes) = git_ops::bytes_at(root.as_ref(), &rev, &rel)? else {
+            return Ok(None);
+        };
+        anyhow::ensure!(bytes.len() <= 20 * 1024 * 1024, "image is too large to preview");
+        let base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        Ok(Some(ImageData { mime: image_mime(&rel), base64 }))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1265,6 +1284,7 @@ pub fn run() {
             git_rollback,
             git_commit_details,
             git_file_at,
+            git_image_at,
             git_branches,
             git_stashes,
             git_blame,

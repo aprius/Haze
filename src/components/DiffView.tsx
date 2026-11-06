@@ -6,6 +6,7 @@ import { ensureBuffer, getModel } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
 import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, revertEdit, toChunk, type Chunk, type ChunkKind } from "../lib/diffLink";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
+import { extname } from "../lib/path";
 import { monacoTheme } from "../lib/theme";
 import { diffPath, diffTitle, type DiffSpec } from "../lib/diffSpec";
 import { absPath } from "../store/git";
@@ -58,6 +59,47 @@ async function diffModels(spec: DiffSpec, owned: monaco.editor.ITextModel[]) {
   return { original, modified: getModel(path) ?? (await fromRev(null, spec.rel)) };
 }
 
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"];
+const isImage = (rel: string) => IMAGE_EXTS.includes(extname(rel));
+
+/** One side of an image diff: the file at a revision, or on disk. */
+async function imageSide(spec: DiffSpec, rev: string | null, rel: string): Promise<string | null> {
+  const img = rev === "working" ? await api.readImage(absPath(spec.root, rel)).catch(() => null) : rev ? await api.gitImageAt(spec.root, rev, rel) : null;
+  return img ? `data:${img.mime};base64,${img.base64}` : null;
+}
+
+/** Image diff: the old and the new picture side by side (Monaco can only show text). */
+function ImageDiff({ spec }: { spec: DiffSpec }) {
+  const [sides, setSides] = useState<[string | null, string | null] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    setSides(null);
+    setError(null);
+    Promise.all([imageSide(spec, spec.left, spec.oldRel ?? spec.rel), imageSide(spec, spec.right, spec.rel)])
+      .then((s) => !stale && setSides(s))
+      .catch((e) => !stale && setError(errorMessage(e)));
+    return () => {
+      stale = true;
+    };
+  }, [spec.root, spec.rel, spec.oldRel, spec.left, spec.right]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pane = (label: string, src: string | null | undefined) => (
+    <div className="image-diff-side">
+      <div className="muted small">{label}</div>
+      <div className="image-view">{src ? <img src={src} alt={label} /> : <span className="muted">{sides ? "No file" : "Loading…"}</span>}</div>
+    </div>
+  );
+  return (
+    <div className="diff-view">
+      <div className="diff-toolbar">{error && <span className="error">{error}</span>}</div>
+      <div className="diff-host image-diff">
+        {pane("Before", sides?.[0])}
+        {pane("After", sides?.[1])}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Side-by-side diff: two plain editors (no filler lines), curved connectors
  * between matching blocks in the gap, scrolling kept in step block by block.
@@ -66,6 +108,10 @@ async function diffModels(spec: DiffSpec, owned: monaco.editor.ITextModel[]) {
  * one is drawn here and the left editor shows no line numbers of its own.
  */
 export function DiffView({ spec }: { spec: DiffSpec }) {
+  return isImage(spec.rel) ? <ImageDiff spec={spec} /> : <TextDiffView spec={spec} />;
+}
+
+function TextDiffView({ spec }: { spec: DiffSpec }) {
   const leftHost = useRef<HTMLDivElement>(null);
   const rightHost = useRef<HTMLDivElement>(null);
   const differHost = useRef<HTMLDivElement>(null);
@@ -457,6 +503,10 @@ export function DiffView({ spec }: { spec: DiffSpec }) {
  * own. Ctrl+D opens the side-by-side diff.
  */
 export function UnifiedDiffView({ spec }: { spec: DiffSpec }) {
+  return isImage(spec.rel) ? <ImageDiff spec={spec} /> : <UnifiedTextDiffView spec={spec} />;
+}
+
+function UnifiedTextDiffView({ spec }: { spec: DiffSpec }) {
   const host = useRef<HTMLDivElement>(null);
   const diff = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const [error, setError] = useState<string | null>(null);
