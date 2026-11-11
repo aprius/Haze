@@ -760,6 +760,7 @@ function KeymapSection() {
 
 function AgentsSection() {
   const notifyAgents = useWorkspace((s) => s.notifyAgents);
+  const showAgentLimits = useWorkspace((s) => s.showAgentLimits);
   const [autoCheckpoints, setAutoCheckpoints] = useState(true);
   useEffect(() => {
     api.autoCheckpointsGet().then(setAutoCheckpoints, () => {});
@@ -774,6 +775,12 @@ function AgentsSection() {
         <AgentRow key={a.id} {...a} />
       ))}
       <div className="settings-card">
+        <SwitchRow
+          label="Show usage limits in status bar"
+          desc="Displays 5h and 7d usage limits for Claude Code, Codex and Antigravity in the bottom status bar."
+          checked={showAgentLimits}
+          onChange={(on) => useWorkspace.setState({ showAgentLimits: on })}
+        />
         <SwitchRow
           label="Automatic checkpoints"
           desc="Snapshots the working tree when you send a prompt to an agent, labelled with the start of the prompt, so the Commit window can list what it changed (Since checkpoint) and restore it. Only kept in the repository's .git; applies to agents running in Haze terminals with hooks installed."

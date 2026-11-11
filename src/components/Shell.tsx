@@ -24,6 +24,7 @@ import { disposeView, toggleTerminal } from "./TerminalPanel";
 import { shortcutLabel } from "../lib/keymap";
 import { setSplitDragging } from "../lib/splitDrag";
 import { DEFAULT_ZOOM, resetZoom, useZoom } from "../lib/zoom";
+import { AgentLimitsBar } from "./AgentLimits";
 
 export async function openFolder(): Promise<void> {
   const dir = await open({ directory: true, multiple: false, title: "Open Folder" });
@@ -447,6 +448,7 @@ export function StatusBar({ project }: { project: Project | null }) {
       )}
       <span className="status-spacer" />
       <BackgroundTasks projectId={project?.id ?? null} />
+      <AgentLimitsBar />
       {project && <ErrorsIndicator project={project} activeTab={activeTab} />}
       {meta?.status === "text" && (
         <>

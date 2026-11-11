@@ -10,12 +10,13 @@
 //! sequences an agent prints, see `pty::osc`), and nothing from the prompt or
 //! transcript is stored.
 
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{bail, Context, Result};
 use interprocess::local_socket::{prelude::*, Stream};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::pty::protocol::{write_frame, AgentStatus, ClientMsg, Request};
 use crate::pty::{now_ms, socket_name};
@@ -204,21 +205,35 @@ pub fn run_notify_hook() -> bool {
 }
 
 fn try_run_hook(args: &[String]) -> Result<()> {
-    let Ok(id) = std::env::var("HAZE_TERMINAL_ID") else {
-        return Ok(());
-    };
     let agent = args.first().map(String::as_str).unwrap_or("claude");
     let arg = args.get(1).map(String::as_str);
-    // Where the agent works, when this hook is it getting a prompt.
-    let mut prompt_in: Option<(PathBuf, Option<String>)> = None;
+    // `StatusLine` only reports rate limits (and prints nothing to stdout).
+    if arg == Some("StatusLine") {
+        let mut input = String::new();
+        let _ = std::io::stdin().take(1 << 20).read_to_string(&mut input);
+        if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&input) {
+            if let Some(limit) = parse_limits(agent, &payload, now_ms()) {
+                let _ = save_agent_limit(limit);
+            }
+        }
+        return Ok(());
+    }
     // Antigravity parses a hook's stdout as JSON; `{}` means "no change".
     if agent == "antigravity" {
         println!("{{}}");
     }
+    let Ok(id) = std::env::var("HAZE_TERMINAL_ID") else {
+        return Ok(());
+    };
+    // Where the agent works, when this hook is it getting a prompt.
+    let mut prompt_in: Option<(PathBuf, Option<String>)> = None;
     let status = match (agent, arg) {
         // Codex `notify` passes its notification JSON as the last argument.
         ("codex", Some(a)) if a.starts_with('{') => {
             let payload: serde_json::Value = serde_json::from_str(a).unwrap_or_default();
+            if let Some(limit) = parse_limits(agent, &payload, now_ms()) {
+                let _ = save_agent_limit(limit);
+            }
             let kind = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
             match kind {
                 "agent-turn-complete" => Some(status("codex", "done", None)),
@@ -242,6 +257,9 @@ fn try_run_hook(args: &[String]) -> Result<()> {
             let _ = std::io::stdin().take(1 << 20).read_to_string(&mut input);
             let mut payload: serde_json::Value =
                 serde_json::from_str(&input).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(limit) = parse_limits(agent, &payload, now_ms()) {
+                let _ = save_agent_limit(limit);
+            }
             if let (Some(event), Some(obj)) = (arg, payload.as_object_mut()) {
                 obj.insert("hook_event_name".into(), event.into());
             }
@@ -446,6 +464,10 @@ fn antigravity_hooks_path() -> Result<PathBuf> {
     Ok(home()?.join(".gemini").join("config").join("hooks.json"))
 }
 
+fn antigravity_cli_settings_path() -> Result<PathBuf> {
+    Ok(home()?.join(".gemini").join("antigravity-cli").join("settings.json"))
+}
+
 fn deepcode_settings_path() -> Result<PathBuf> {
     Ok(home()?.join(".deepcode").join("settings.json"))
 }
@@ -516,6 +538,11 @@ fn is_ours(hook: &serde_json::Value) -> bool {
 
 /// Removes Haze's hook groups from a settings document.
 fn strip_hooks(settings: &mut serde_json::Value) {
+    if let Some(obj) = settings.as_object_mut() {
+        if obj.get("statusLine").is_some_and(is_ours) {
+            obj.remove("statusLine");
+        }
+    }
     let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) else {
         return;
     };
@@ -529,6 +556,37 @@ fn strip_hooks(settings: &mut serde_json::Value) {
         }
     }
     hooks.retain(|_, v| v.as_array().is_none_or(|a| !a.is_empty()));
+}
+
+fn install_status_line_in(settings: &mut serde_json::Value, command: &str, antigravity: bool) -> bool {
+    if !settings.is_object() {
+        *settings = serde_json::json!({});
+    }
+    let obj = settings.as_object_mut().unwrap();
+    if let Some(existing) = obj.get("statusLine") {
+        if !existing.is_null() && !is_ours(existing) {
+            return false;
+        }
+    }
+    let entry = if antigravity {
+        serde_json::json!({
+            "type": "command",
+            "command": command,
+            "enabled": true,
+            "padding": 0,
+            "stack_with_default": true
+        })
+    } else {
+        serde_json::json!({
+            "type": "command",
+            "command": command
+        })
+    };
+    if obj.get("statusLine") == Some(&entry) {
+        return false;
+    }
+    obj.insert("statusLine".into(), entry);
+    true
 }
 
 fn install_hooks_in(
@@ -980,6 +1038,13 @@ pub fn install(agent: &str) -> Result<HookStatus> {
             let file = hook_file(agent, &me)?;
             let mut settings = read_json(&file.path)?;
             install_hooks_in(&mut settings, file.events, &*file.command, file.timeout);
+            if agent == "claude" {
+                install_status_line_in(
+                    &mut settings,
+                    &event_command(&me, "claude", "StatusLine"),
+                    false,
+                );
+            }
             write_with_backup(
                 &file.path,
                 &(serde_json::to_string_pretty(&settings)? + "\n"),
@@ -1006,6 +1071,20 @@ pub fn install(agent: &str) -> Result<HookStatus> {
             install_antigravity_in(&mut settings, &me)
                 .with_context(|| format!("{} was not changed", path.display()))?;
             write_with_backup(&path, &(serde_json::to_string_pretty(&settings)? + "\n"))?;
+            if let Ok(cli_path) = antigravity_cli_settings_path() {
+                if let Ok(mut cli_settings) = read_json(&cli_path) {
+                    if install_status_line_in(
+                        &mut cli_settings,
+                        &event_command(&me, "antigravity", "StatusLine"),
+                        true,
+                    ) {
+                        let _ = write_with_backup(
+                            &cli_path,
+                            &(serde_json::to_string_pretty(&cli_settings).unwrap_or_default() + "\n"),
+                        );
+                    }
+                }
+            }
         }
         "opencode" => {
             let path = opencode_plugin_path()?;
@@ -1036,7 +1115,8 @@ pub fn uninstall(agent: &str) -> Result<HookStatus> {
             let file = hook_file(agent, &me)?;
             if file.path.exists() {
                 let mut settings = read_json(&file.path)?;
-                if !our_commands(&settings).is_empty() {
+                let has_status_line = settings.get("statusLine").is_some_and(is_ours);
+                if !our_commands(&settings).is_empty() || has_status_line {
                     strip_hooks(&mut settings);
                     write_with_backup(
                         &file.path,
@@ -1060,6 +1140,22 @@ pub fn uninstall(agent: &str) -> Result<HookStatus> {
                     write_with_backup(&path, &(serde_json::to_string_pretty(&settings)? + "\n"))?;
                 }
             }
+            if let Ok(cli_path) = antigravity_cli_settings_path() {
+                if cli_path.exists() {
+                    if let Ok(mut cli_settings) = read_json(&cli_path) {
+                        if cli_settings.get("statusLine").is_some_and(is_ours) {
+                            if let Some(obj) = cli_settings.as_object_mut() {
+                                obj.remove("statusLine");
+                                let _ = write_with_backup(
+                                    &cli_path,
+                                    &(serde_json::to_string_pretty(&cli_settings).unwrap_or_default()
+                                        + "\n"),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
         "opencode" => {
             let path = opencode_plugin_path()?;
@@ -1079,6 +1175,608 @@ pub fn uninstall(agent: &str) -> Result<HookStatus> {
         other => bail!("unknown agent {other}"),
     }
     status_of(agent)
+}
+
+// --- AI Rate Limit Tracking (5h / 7d) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LimitWindow {
+    pub used_percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentLimit {
+    pub agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub five_hour: Option<LimitWindow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seven_day: Option<LimitWindow>,
+    pub updated_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+fn now_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn agent_limits_path() -> Result<PathBuf> {
+    Ok(home()?.join(".haze/agent-limits.json"))
+}
+
+fn normalize_window(mut win: LimitWindow, now_ms: u64) -> LimitWindow {
+    win.used_percent = win.used_percent.clamp(0.0, 100.0);
+    if let Some(resets) = win.resets_at {
+        if resets > 0 && resets <= now_ms {
+            win.used_percent = 0.0;
+            win.resets_at = None;
+        }
+    }
+    win
+}
+
+/// Parses a reset timestamp from seconds, milliseconds, or ISO-8601 into Unix milliseconds.
+fn parse_timestamp_ms(val: &serde_json::Value) -> Option<u64> {
+    if let Some(n) = val.as_u64() {
+        if n == 0 {
+            return None;
+        }
+        // Heuristic: values under 1e11 are seconds; 1e11+ are milliseconds.
+        return Some(if n < 100_000_000_000 { n * 1000 } else { n });
+    }
+    if let Some(f) = val.as_f64() {
+        if !f.is_finite() || f <= 0.0 {
+            return None;
+        }
+        return Some(if f < 100_000_000_000.0 {
+            (f * 1000.0).round() as u64
+        } else {
+            f.round() as u64
+        });
+    }
+    if let Some(s) = val.as_str() {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        if let Ok(n) = s.parse::<u64>() {
+            return Some(if n < 100_000_000_000 { n * 1000 } else { n });
+        }
+        return parse_iso8601_ms(s);
+    }
+    None
+}
+
+/// Minimal RFC3339 / ISO-8601 timestamp parser returning Unix epoch in milliseconds.
+fn parse_iso8601_ms(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.len() < 19 {
+        return None;
+    }
+    let year: i64 = s.get(0..4)?.parse().ok()?;
+    if s.as_bytes().get(4) != Some(&b'-') {
+        return None;
+    }
+    let month: i64 = s.get(5..7)?.parse().ok()?;
+    if s.as_bytes().get(7) != Some(&b'-') {
+        return None;
+    }
+    let day: i64 = s.get(8..10)?.parse().ok()?;
+    let sep = *s.as_bytes().get(10)?;
+    if sep != b'T' && sep != b't' && sep != b' ' {
+        return None;
+    }
+    let hour: i64 = s.get(11..13)?.parse().ok()?;
+    if s.as_bytes().get(13) != Some(&b':') {
+        return None;
+    }
+    let min: i64 = s.get(14..16)?.parse().ok()?;
+    if s.as_bytes().get(16) != Some(&b':') {
+        return None;
+    }
+    let sec: i64 = s.get(17..19)?.parse().ok()?;
+
+    let mut rest = &s[19..];
+    let mut millis: i64 = 0;
+    if let Some(after_dot) = rest.strip_prefix('.') {
+        let digits_len = after_dot
+            .bytes()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        let frac = &after_dot[..digits_len];
+        if !frac.is_empty() {
+            let mut m_str = frac.chars().take(3).collect::<String>();
+            while m_str.len() < 3 {
+                m_str.push('0');
+            }
+            millis = m_str.parse().unwrap_or(0);
+        }
+        rest = &after_dot[digits_len..];
+    }
+
+    let mut offset_secs: i64 = 0;
+    let rest = rest.trim();
+    if !rest.is_empty() && rest != "Z" && rest != "z" {
+        let sign = match rest.as_bytes().first()? {
+            b'+' => 1,
+            b'-' => -1,
+            _ => return None,
+        };
+        let tz = &rest[1..];
+        let (tz_h, tz_m) = if let Some((h, m)) = tz.split_once(':') {
+            (h.parse::<i64>().ok()?, m.parse::<i64>().ok()?)
+        } else if tz.len() == 4 {
+            (tz[0..2].parse::<i64>().ok()?, tz[2..4].parse::<i64>().ok()?)
+        } else if tz.len() == 2 {
+            (tz.parse::<i64>().ok()?, 0)
+        } else {
+            return None;
+        };
+        offset_secs = sign * (tz_h * 3600 + tz_m * 60);
+    }
+
+    let days = days_from_civil(year, month, day)?;
+    let total_secs = days * 86_400 + hour * 3600 + min * 60 + sec - offset_secs;
+    if total_secs <= 0 {
+        return None;
+    }
+    Some((total_secs as u64) * 1000 + (millis as u64))
+}
+
+fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = m + if m > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+fn parse_window_obj(v: &serde_json::Value, now_ms: u64) -> Option<LimitWindow> {
+    let obj = v.as_object()?;
+    let used_percent = obj
+        .get("used_percentage")
+        .or_else(|| obj.get("used_percent"))
+        .or_else(|| obj.get("percentUsed"))
+        .or_else(|| obj.get("usedPercent"))
+        .and_then(|x| x.as_f64())
+        .or_else(|| {
+            obj.get("remaining_fraction")
+                .or_else(|| obj.get("remainingFraction"))
+                .and_then(|x| x.as_f64())
+                .map(|rem| (1.0 - rem.clamp(0.0, 1.0)) * 100.0)
+        })?;
+    if !used_percent.is_finite() {
+        return None;
+    }
+    let resets_at = obj
+        .get("resets_at")
+        .or_else(|| obj.get("resetsAt"))
+        .or_else(|| obj.get("reset_time"))
+        .or_else(|| obj.get("resetTime"))
+        .and_then(parse_timestamp_ms)
+        .or_else(|| {
+            obj.get("reset_in_seconds")
+                .or_else(|| obj.get("resetInSeconds"))
+                .and_then(|x| x.as_f64())
+                .filter(|s| s.is_finite() && *s > 0.0)
+                .map(|s| now_ms + (s * 1000.0).round() as u64)
+        });
+    Some(normalize_window(
+        LimitWindow {
+            used_percent,
+            resets_at,
+        },
+        now_ms,
+    ))
+}
+
+/// Extracts 5h and 7d rate limit windows from a hook or statusLine JSON payload.
+pub fn parse_limits(agent: &str, payload: &serde_json::Value, now_ms: u64) -> Option<AgentLimit> {
+    let canonical = match agent {
+        "claude" | "codex" | "antigravity" => agent,
+        _ => return None,
+    };
+
+    let mut five_hour: Option<LimitWindow> = None;
+    let mut seven_day: Option<LimitWindow> = None;
+    let mut label: Option<String> = payload
+        .get("model")
+        .and_then(|m| {
+            m.as_str()
+                .or_else(|| m.get("display_name").and_then(|d| d.as_str()))
+                .or_else(|| m.get("id").and_then(|d| d.as_str()))
+        })
+        .map(str::to_string);
+
+    // 1. Direct or nested `rate_limits` object (Claude statusLine & Codex token_count event).
+    let rate_limits = payload
+        .get("rate_limits")
+        .or_else(|| payload.pointer("/payload/rate_limits"))
+        .or_else(|| payload.pointer("/info/rate_limits"));
+    if let Some(rl) = rate_limits {
+        if let Some(w) = rl
+            .get("five_hour")
+            .or_else(|| rl.get("fiveHour"))
+            .and_then(|v| parse_window_obj(v, now_ms))
+        {
+            five_hour = Some(w);
+        }
+        if let Some(w) = rl
+            .get("seven_day")
+            .or_else(|| rl.get("sevenDay"))
+            .and_then(|v| parse_window_obj(v, now_ms))
+        {
+            seven_day = Some(w);
+        }
+        for key in ["primary", "secondary"] {
+            if let Some(entry) = rl.get(key) {
+                if let Some(w) = parse_window_obj(entry, now_ms) {
+                    let mins = entry
+                        .get("window_minutes")
+                        .and_then(|m| m.as_u64())
+                        .unwrap_or(if key == "primary" { 300 } else { 10_080 });
+                    if mins <= 720 {
+                        five_hour = Some(w);
+                    } else {
+                        seven_day = Some(w);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Claude Code `rateLimits` array format (`[{ kind: "five_hour", percentUsed, resetsAt }, ...]`).
+    if let Some(arr) = payload.get("rateLimits").and_then(|v| v.as_array()) {
+        for item in arr {
+            let Some(kind) = item.get("kind").and_then(|k| k.as_str()) else {
+                continue;
+            };
+            if let Some(w) = parse_window_obj(item, now_ms) {
+                if kind == "five_hour" || kind == "5h" {
+                    five_hour = Some(w);
+                } else if kind == "seven_day" || kind == "7d" || kind == "weekly" {
+                    seven_day = Some(w);
+                }
+            }
+        }
+    }
+
+    // 3. Antigravity `quota` object (`gemini-5h`, `gemini-weekly`, `3p-5h`, `3p-weekly`, ...).
+    if let Some(quota) = payload.get("quota").and_then(|q| q.as_object()) {
+        let model_lower = label.as_deref().unwrap_or_default().to_ascii_lowercase();
+        let prefer_3p = model_lower.contains("claude")
+            || model_lower.contains("sonnet")
+            || model_lower.contains("opus")
+            || model_lower.contains("gpt")
+            || model_lower.contains("3p");
+
+        let pick_bucket = |candidates: &[&str], suffix: &str| -> Option<LimitWindow> {
+            for &k in candidates {
+                if let Some(v) = quota.get(k) {
+                    if let Some(w) = parse_window_obj(v, now_ms) {
+                        return Some(w);
+                    }
+                }
+            }
+            let mut best: Option<LimitWindow> = None;
+            for (k, v) in quota {
+                if k.ends_with(suffix) {
+                    if let Some(w) = parse_window_obj(v, now_ms) {
+                        if best
+                            .as_ref()
+                            .is_none_or(|b| w.used_percent > b.used_percent)
+                        {
+                            best = Some(w);
+                        }
+                    }
+                }
+            }
+            best
+        };
+
+        let five_candidates: &[&str] = if prefer_3p {
+            &["3p-5h", "gemini-5h"]
+        } else {
+            &["gemini-5h", "3p-5h"]
+        };
+        let seven_candidates: &[&str] = if prefer_3p {
+            &["3p-weekly", "3p-7d", "gemini-weekly", "gemini-7d"]
+        } else {
+            &["gemini-weekly", "gemini-7d", "3p-weekly", "3p-7d"]
+        };
+
+        if let Some(w) = pick_bucket(five_candidates, "-5h") {
+            five_hour = Some(w);
+        }
+        if let Some(w) = pick_bucket(seven_candidates, "-weekly")
+            .or_else(|| pick_bucket(seven_candidates, "-7d"))
+        {
+            seven_day = Some(w);
+        }
+        if label.is_none() {
+            label = Some(if prefer_3p { "3P" } else { "Gemini" }.to_string());
+        }
+    }
+
+    if five_hour.is_none() && seven_day.is_none() {
+        return None;
+    }
+
+    Some(AgentLimit {
+        agent: canonical.to_string(),
+        five_hour,
+        seven_day,
+        updated_at: now_ms,
+        label,
+    })
+}
+
+fn read_stored_limits(path: &Path) -> Vec<AgentLimit> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<AgentLimit>>(&text).unwrap_or_default()
+}
+
+fn merge_into_limits(list: &mut Vec<AgentLimit>, incoming: AgentLimit, now_ms: u64) {
+    let incoming_five = incoming.five_hour.map(|w| normalize_window(w, now_ms));
+    let incoming_seven = incoming.seven_day.map(|w| normalize_window(w, now_ms));
+    if let Some(existing) = list.iter_mut().find(|x| x.agent == incoming.agent) {
+        if incoming.updated_at >= existing.updated_at {
+            if incoming_five.is_some() {
+                existing.five_hour = incoming_five;
+            }
+            if incoming_seven.is_some() {
+                existing.seven_day = incoming_seven;
+            }
+            if incoming.label.is_some() {
+                existing.label = incoming.label;
+            }
+            existing.updated_at = incoming.updated_at;
+        } else {
+            if existing.five_hour.is_none() && incoming_five.is_some() {
+                existing.five_hour = incoming_five;
+            }
+            if existing.seven_day.is_none() && incoming_seven.is_some() {
+                existing.seven_day = incoming_seven;
+            }
+        }
+    } else {
+        list.push(AgentLimit {
+            agent: incoming.agent,
+            five_hour: incoming_five,
+            seven_day: incoming_seven,
+            updated_at: incoming.updated_at,
+            label: incoming.label,
+        });
+    }
+}
+
+pub fn save_agent_limit(limit: AgentLimit) -> Result<Vec<AgentLimit>> {
+    let path = agent_limits_path()?;
+    let now_ms = now_epoch_ms();
+    let mut list = read_stored_limits(&path);
+    merge_into_limits(&mut list, limit, now_ms);
+    for item in &mut list {
+        if let Some(w) = item.five_hour.take() {
+            item.five_hour = Some(normalize_window(w, now_ms));
+        }
+        if let Some(w) = item.seven_day.take() {
+            item.seven_day = Some(normalize_window(w, now_ms));
+        }
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string(&list)?)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(list)
+}
+
+#[derive(Default)]
+struct CodexCache {
+    file: Option<PathBuf>,
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+    limit: Option<AgentLimit>,
+}
+
+static CODEX_CACHE: Mutex<CodexCache> = Mutex::new(CodexCache {
+    file: None,
+    modified: None,
+    len: 0,
+    limit: None,
+});
+
+fn latest_dir_entry(dir: &Path) -> Option<PathBuf> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+    entries.sort();
+    entries.pop()
+}
+
+fn find_latest_codex_rollout(sessions_dir: &Path) -> Option<PathBuf> {
+    let year = latest_dir_entry(sessions_dir)?;
+    let month = latest_dir_entry(&year)?;
+    let day = latest_dir_entry(&month)?;
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(&day)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("jsonl"))
+        .filter_map(|e| {
+            let m = e.metadata().ok()?.modified().ok()?;
+            Some((m, e.path()))
+        })
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    files.pop().map(|(_, p)| p)
+}
+
+fn parse_codex_rollout_tail(path: &Path, now_ms: u64) -> Option<AgentLimit> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    let len = meta.len();
+    let tail_bytes = 512 * 1024;
+    if len > tail_bytes {
+        let _ = file.seek(SeekFrom::End(-(tail_bytes as i64)));
+    }
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf);
+    let file_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(now_ms);
+
+    for line in text.lines().rev() {
+        if !line.contains("\"rate_limits\"") {
+            continue;
+        }
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if let Some(mut limit) = parse_limits("codex", &val, now_ms) {
+            limit.updated_at = val
+                .get("timestamp")
+                .and_then(parse_timestamp_ms)
+                .unwrap_or(file_ms);
+            return Some(limit);
+        }
+    }
+    None
+}
+
+pub fn read_codex_session_limits(codex_dir: &Path, now_ms: u64) -> Option<AgentLimit> {
+    let sessions_dir = codex_dir.join("sessions");
+    let rollout = find_latest_codex_rollout(&sessions_dir)?;
+    let meta = std::fs::metadata(&rollout).ok()?;
+    let modified = meta.modified().ok();
+    let len = meta.len();
+
+    if let Ok(cache) = CODEX_CACHE.lock() {
+        if cache.file.as_deref() == Some(rollout.as_path())
+            && cache.modified == modified
+            && cache.len == len
+        {
+            return cache.limit.clone().map(|mut l| {
+                l.five_hour = l.five_hour.map(|w| normalize_window(w, now_ms));
+                l.seven_day = l.seven_day.map(|w| normalize_window(w, now_ms));
+                l
+            });
+        }
+    }
+
+    let parsed = parse_codex_rollout_tail(&rollout, now_ms);
+    if let Ok(mut cache) = CODEX_CACHE.lock() {
+        cache.file = Some(rollout);
+        cache.modified = modified;
+        cache.len = len;
+        cache.limit = parsed.clone();
+    }
+    parsed
+}
+
+static STATUS_LINE_ENSURED: std::sync::Once = std::sync::Once::new();
+
+/// Ensures existing Haze hook installations also have `statusLine` configured for Claude and Antigravity.
+fn ensure_status_lines_once() {
+    STATUS_LINE_ENSURED.call_once(|| {
+        let Ok(me) = exe() else {
+            return;
+        };
+        if let Ok(claude_path) = claude_settings_path() {
+            if claude_path.exists() {
+                if let Ok(mut settings) = read_json(&claude_path) {
+                    if !our_commands(&settings).is_empty()
+                        && install_status_line_in(
+                            &mut settings,
+                            &event_command(&me, "claude", "StatusLine"),
+                            false,
+                        )
+                    {
+                        let _ = write_with_backup(
+                            &claude_path,
+                            &(serde_json::to_string_pretty(&settings).unwrap_or_default() + "\n"),
+                        );
+                    }
+                }
+            }
+        }
+        if let Ok(ag_hooks) = antigravity_hooks_path() {
+            if ag_hooks.exists() {
+                if let Ok(hooks_doc) = read_json(&ag_hooks) {
+                    let installed = hooks_doc
+                        .as_object()
+                        .is_some_and(|o| o.values().any(antigravity_is_ours));
+                    if installed {
+                        if let Ok(cli_path) = antigravity_cli_settings_path() {
+                            if let Ok(mut cli_settings) = read_json(&cli_path) {
+                                if install_status_line_in(
+                                    &mut cli_settings,
+                                    &event_command(&me, "antigravity", "StatusLine"),
+                                    true,
+                                ) {
+                                    let _ = write_with_backup(
+                                        &cli_path,
+                                        &(serde_json::to_string_pretty(&cli_settings)
+                                            .unwrap_or_default()
+                                            + "\n"),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+pub fn agent_limits() -> Result<Vec<AgentLimit>> {
+    ensure_status_lines_once();
+    let now_ms = now_epoch_ms();
+    let path = agent_limits_path()?;
+    let mut list = read_stored_limits(&path);
+    for item in &mut list {
+        item.five_hour = item.five_hour.take().map(|w| normalize_window(w, now_ms));
+        item.seven_day = item.seven_day.take().map(|w| normalize_window(w, now_ms));
+    }
+    if let Ok(codex_dir) = codex_home() {
+        if let Some(codex_limit) = read_codex_session_limits(&codex_dir, now_ms) {
+            merge_into_limits(&mut list, codex_limit, now_ms);
+        }
+    }
+    let order = |a: &str| match a {
+        "claude" => 0,
+        "codex" => 1,
+        "antigravity" => 2,
+        _ => 3,
+    };
+    list.sort_by_key(|x| order(&x.agent));
+    Ok(list)
+}
+
+pub fn report_agent_limit(limit: AgentLimit) -> Result<Vec<AgentLimit>> {
+    save_agent_limit(limit)?;
+    agent_limits()
 }
 
 #[cfg(test)]
@@ -1312,5 +2010,104 @@ mod tests {
         strip_hooks(&mut s);
         assert_eq!(s["hooks"]["Stop"].as_array().unwrap().len(), 1);
         assert!(s["hooks"].get("PreToolUse").is_none());
+    }
+
+    #[test]
+    fn parses_claude_codex_and_antigravity_rate_limits() {
+        let now = 1_776_000_000_000u64;
+
+        // Claude statusLine format
+        let claude = parse_limits(
+            "claude",
+            &json!({
+                "model": { "display_name": "Opus 4.7" },
+                "rate_limits": {
+                    "five_hour": { "used_percentage": 42.5, "resets_at": 1_776_010_000u64 },
+                    "seven_day": { "used_percentage": 18.0, "resets_at": 1_776_500_000u64 }
+                }
+            }),
+            now,
+        )
+        .unwrap();
+        assert_eq!(claude.agent, "claude");
+        assert_eq!(claude.label.as_deref(), Some("Opus 4.7"));
+        assert_eq!(claude.five_hour.unwrap().used_percent, 42.5);
+        assert_eq!(claude.seven_day.unwrap().used_percent, 18.0);
+
+        // Codex rollout token_count event format
+        let codex = parse_limits(
+            "codex",
+            &json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "rate_limits": {
+                        "primary": { "used_percent": 15.0, "window_minutes": 300, "resets_at": 1_776_010_000u64 },
+                        "secondary": { "used_percent": 87.0, "window_minutes": 10080, "resets_at": 1_776_500_000u64 }
+                    }
+                }
+            }),
+            now,
+        )
+        .unwrap();
+        assert_eq!(codex.agent, "codex");
+        assert_eq!(codex.five_hour.unwrap().used_percent, 15.0);
+        assert_eq!(codex.seven_day.unwrap().used_percent, 87.0);
+
+        // Antigravity statusLine quota format
+        let ag = parse_limits(
+            "antigravity",
+            &json!({
+                "model": "Gemini 3.1 Pro",
+                "quota": {
+                    "gemini-5h": { "remaining_fraction": 0.65, "reset_in_seconds": 3600 },
+                    "gemini-weekly": { "remaining_fraction": 0.20, "reset_time": "2026-04-15T12:00:00Z" }
+                }
+            }),
+            now,
+        )
+        .unwrap();
+        assert_eq!(ag.agent, "antigravity");
+        assert!((ag.five_hour.unwrap().used_percent - 35.0).abs() < 1e-6);
+        assert!((ag.seven_day.unwrap().used_percent - 80.0).abs() < 1e-6);
+
+        // Expired window rolls over to 0%
+        let expired = parse_limits(
+            "claude",
+            &json!({
+                "rate_limits": {
+                    "five_hour": { "used_percentage": 95.0, "resets_at": 1_775_000_000u64 }
+                }
+            }),
+            now,
+        )
+        .unwrap();
+        assert_eq!(expired.five_hour.unwrap().used_percent, 0.0);
+    }
+
+    #[test]
+    fn status_line_respects_user_command_and_cleans_up_ours() {
+        let mut s = json!({});
+        assert!(install_status_line_in(
+            &mut s,
+            "\"/x/haze\" --agent-hook claude StatusLine",
+            false
+        ));
+        assert_eq!(
+            s["statusLine"]["command"],
+            "\"/x/haze\" --agent-hook claude StatusLine"
+        );
+        strip_hooks(&mut s);
+        assert!(s.get("statusLine").is_none());
+
+        let mut user_s = json!({
+            "statusLine": { "type": "command", "command": "/usr/local/bin/my-status" }
+        });
+        assert!(!install_status_line_in(
+            &mut user_s,
+            "\"/x/haze\" --agent-hook claude StatusLine",
+            false
+        ));
+        assert_eq!(user_s["statusLine"]["command"], "/usr/local/bin/my-status");
     }
 }

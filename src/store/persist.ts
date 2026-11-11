@@ -23,6 +23,7 @@ interface Persisted {
   rainbowBrackets?: boolean;
   rainbowGuides?: boolean;
   notifyAgents?: boolean;
+  showAgentLimits?: boolean;
   unityAutoRefresh?: boolean;
   unityPerfContext?: PerfContextMode;
   unityPerfHints?: boolean;
@@ -55,6 +56,7 @@ function snapshot(): Persisted {
     rainbowBrackets: s.rainbowBrackets,
     rainbowGuides: s.rainbowGuides,
     notifyAgents: s.notifyAgents,
+    showAgentLimits: s.showAgentLimits,
     unityAutoRefresh: s.unityAutoRefresh,
     unityPerfContext: s.unityPerfContext,
     unityPerfHints: s.unityPerfHints,
@@ -134,6 +136,7 @@ async function doRestore(): Promise<void> {
       rainbowBrackets: data.rainbowBrackets ?? true,
       rainbowGuides: data.rainbowGuides ?? true,
       notifyAgents: data.notifyAgents ?? true,
+      showAgentLimits: data.showAgentLimits ?? true,
       unityAutoRefresh: data.unityAutoRefresh ?? true,
       unityPerfContext: data.unityPerfContext ?? "everywhere",
       unityPerfHints: data.unityPerfHints ?? true,

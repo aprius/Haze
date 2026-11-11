@@ -562,6 +562,21 @@ export interface Checkpoint {
 /** A project and/or file to open, from the command line (see cli_open.rs). */
 export type HookAgent = "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "deepcode";
 
+export type LimitAgent = "claude" | "codex" | "antigravity";
+
+export interface LimitWindow {
+  usedPercent: number;
+  resetsAt?: number | null;
+}
+
+export interface AgentLimit {
+  agent: LimitAgent;
+  fiveHour?: LimitWindow | null;
+  sevenDay?: LimitWindow | null;
+  updatedAt: number;
+  label?: string | null;
+}
+
 /** A model provider in OpenCode's global config (see opencode_config.rs). */
 export interface OpenCodeProvider {
   id: string;
@@ -649,6 +664,8 @@ export const api = {
   agentHooksStatus: (agent: HookAgent) => invoke<HookStatus>("agent_hooks_status", { agent }),
   agentHooksInstall: (agent: HookAgent) => invoke<HookStatus>("agent_hooks_install", { agent }),
   agentHooksUninstall: (agent: HookAgent) => invoke<HookStatus>("agent_hooks_uninstall", { agent }),
+  agentLimits: () => invoke<AgentLimit[]>("agent_limits"),
+  agentLimitsReport: (limit: AgentLimit) => invoke<AgentLimit[]>("agent_limits_report", { limit }),
   opencodeConfig: () => invoke<OpenCodeConfig>("opencode_config"),
   opencodeSaveProvider: (input: OpenCodeProviderInput) => invoke<OpenCodeConfig>("opencode_save_provider", { input }),
   opencodeRemoveProvider: (id: string) => invoke<OpenCodeConfig>("opencode_remove_provider", { id }),

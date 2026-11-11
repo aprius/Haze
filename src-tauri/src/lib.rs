@@ -619,6 +619,18 @@ async fn agent_hooks_uninstall(agent: String) -> CmdResult<agent_hooks::HookStat
     blocking(move || agent_hooks::uninstall(&agent)).await
 }
 
+#[tauri::command]
+async fn agent_limits() -> CmdResult<Vec<agent_hooks::AgentLimit>> {
+    blocking(agent_hooks::agent_limits).await
+}
+
+#[tauri::command]
+async fn agent_limits_report(
+    limit: agent_hooks::AgentLimit,
+) -> CmdResult<Vec<agent_hooks::AgentLimit>> {
+    blocking(move || agent_hooks::report_agent_limit(limit)).await
+}
+
 // ---------------------------------------------------------------- OpenCode providers
 
 #[tauri::command]
@@ -1307,6 +1319,8 @@ pub fn run() {
             agent_hooks_status,
             agent_hooks_install,
             agent_hooks_uninstall,
+            agent_limits,
+            agent_limits_report,
             opencode_config,
             opencode_save_provider,
             opencode_remove_provider,

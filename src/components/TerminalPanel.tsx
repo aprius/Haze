@@ -13,6 +13,7 @@ import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
 import { afterSplitDrag, splitDragging } from "../lib/splitDrag";
 import { terminalTheme, useGlass, useTheme } from "../lib/theme";
 import { agentBadge, agentName, checkLines, closeTerminal, dismissAgentSession, failedChecks, isChecking, newTerminal, reconcileViews, resumeAgent, shownState, subscribeSession, syncSessions, terminalsListening, useTerminals } from "../store/terminals";
+import { scanTerminalOutputForLimits } from "../store/agentLimits";
 import { popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openMenu } from "./Overlays";
@@ -298,6 +299,7 @@ function createView(id: string, project: Project): View {
     },
   });
 
+  const utf8 = new TextDecoder();
   subscribeSession(id, (e) => {
     if (e.t === "snapshot") {
       term.reset();
@@ -309,10 +311,16 @@ function createView(id: string, project: Project): View {
         term.resize(cols, rows);
         view.lastSize = `${cols}x${rows}`;
       }
-      term.write(decode(e.data), () => view.refit?.());
+      const bytes = decode(e.data);
+      term.write(bytes, () => view.refit?.());
       view.ready = true;
+      const tail = bytes.length > 8192 ? bytes.subarray(bytes.length - 8192) : bytes;
+      scanTerminalOutputForLimits(utf8.decode(tail), useTerminals.getState().sessions[id]?.agent?.agent);
     } else if (e.t === "output") {
-      if (view.ready) term.write(decode(e.data));
+      const bytes = decode(e.data);
+      if (view.ready) term.write(bytes);
+      const tail = bytes.length > 4096 ? bytes.subarray(bytes.length - 4096) : bytes;
+      scanTerminalOutputForLimits(utf8.decode(tail), useTerminals.getState().sessions[id]?.agent?.agent);
     } else if (e.t === "exit") {
       term.write(`\r\n\x1b[2m[Process exited${e.code != null ? ` with code ${e.code}` : ""}]\x1b[0m\r\n`);
     } else if (e.t === "disconnected") {

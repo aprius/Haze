@@ -128,6 +128,8 @@ interface WorkspaceState {
   rainbowGuides: boolean;
   /** Desktop notifications when an agent needs you or finishes. */
   notifyAgents: boolean;
+  /** Shows 5h and 7d AI usage limits (Claude, Codex, Antigravity) in the bottom status bar. */
+  showAgentLimits: boolean;
   /** Unity refreshes its assets (and compiles) when files change on disk, without waiting for focus. */
   unityAutoRefresh: boolean;
   /** Where the gutter marks Unity's performance-critical context (methods run every frame). */
@@ -176,6 +178,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   rainbowBrackets: true,
   rainbowGuides: true,
   notifyAgents: true,
+  showAgentLimits: true,
   unityAutoRefresh: true,
   unityPerfContext: "everywhere",
   unityPerfHints: true,
