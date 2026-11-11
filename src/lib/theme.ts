@@ -80,10 +80,37 @@ export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
   },
 };
 
+// Over a background image the light island is darker and uneven: deeper inks
+// and ANSI greys (brightBlack is what CLI agents draw dim text and borders in)
+// and a translucent selection keep the terminal legible on the glass.
+const TERMINAL_LIGHT_GLASS: ITheme = {
+  background: "#f8f3f100",
+  foreground: "#1d191e",
+  cursor: "#1d191e",
+  cursorAccent: "#f8f3f1",
+  selectionBackground: "#1d191e2e",
+  black: "#1d191e",
+  red: "#c92c5d",
+  green: "#1b8254",
+  yellow: "#a86000",
+  blue: "#c74a1c",
+  magenta: "#5c43ab",
+  cyan: "#12748f",
+  white: "#6e686b",
+  brightBlack: "#5c5659",
+  brightRed: "#c92c5d",
+  brightGreen: "#1b8254",
+  brightYellow: "#a86000",
+  brightBlue: "#c74a1c",
+  brightMagenta: "#5c43ab",
+  brightCyan: "#12748f",
+  brightWhite: "#1d191e",
+};
+
 // Glass: the background clear, but its colour kept, as xterm draws inverse
 // text in it made opaque (black, from #00000000: unreadable in the light theme).
 export const terminalTheme = (mode: ThemeMode = useTheme.getState().mode, glass = useGlass.getState().on): ITheme =>
-  glass ? { ...TERMINAL_THEMES[mode], background: TERMINAL_THEMES[mode].background + "00" } : TERMINAL_THEMES[mode];
+  !glass ? TERMINAL_THEMES[mode] : mode === "light" ? TERMINAL_LIGHT_GLASS : { ...TERMINAL_THEMES.dark, background: TERMINAL_THEMES.dark.background + "00" };
 
 function apply(mode: ThemeMode): void {
   document.documentElement.dataset.theme = mode;

@@ -35,18 +35,27 @@ const MONOKAI = {
     yellow: "#cc7a0a", green: "#269d69", blue: "#1c8ca8", purple: "#7058be",
     gutter: "#bfb9ba", gutterActive: "#706b6e", widget: "#ede7e5", border: "#d3cdcc",
   },
+  // Over a background image the light island is darker than #faf4f2: comments
+  // (#a59fa0), delimiters (#918c8e) and line numbers (#bfb9ba) vanish into it,
+  // and the accents need a step more weight.
+  lightGlass: {
+    bg: "#fffcfa", fg: "#1d191e", dim: "#5c5659", comment: "#6e686b", red: "#c92c5d", orange: "#c74a1c",
+    yellow: "#a86000", green: "#1b8254", blue: "#12748f", purple: "#5c43ab",
+    gutter: "#7a7377", gutterActive: "#1d191e", widget: "#f3ecea", border: "#c5bdbc",
+  },
 };
 
 function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)["dark"], glass = false) {
   const strip = (hex: string) => hex.slice(1);
+  const lightGlass = glass && base === "vs";
   // Rainbow Brackets: one colour per nesting depth, cycling after six. Each
   // pair's guide takes its brackets' colour, faint until the caret is inside.
   const rainbow = [c.yellow, c.purple, c.blue, c.green, c.orange, c.red];
   const rainbowColors = Object.fromEntries(
     rainbow.flatMap((col, i) => [
       [`editorBracketHighlight.foreground${i + 1}`, col],
-      [`editorBracketPairGuide.background${i + 1}`, col + "30"],
-      [`editorBracketPairGuide.activeBackground${i + 1}`, col + "a0"],
+      [`editorBracketPairGuide.background${i + 1}`, col + (lightGlass ? "48" : "30")],
+      [`editorBracketPairGuide.activeBackground${i + 1}`, col + (lightGlass ? "b8" : "a0")],
     ]),
   );
   monaco.editor.defineTheme(name, {
@@ -150,6 +159,19 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
         "editorStickyScroll.background": c.bg + "f2",
         // Its line numbers: by default the editor's background, clear here.
         "editorStickyScrollGutter.background": c.bg + "f2",
+        ...(lightGlass && {
+          "editor.lineHighlightBackground": c.fg + "14",
+          "editor.selectionBackground": c.fg + "2e",
+          "editor.inactiveSelectionBackground": c.fg + "1c",
+          "editor.wordHighlightBackground": c.fg + "22",
+          "editorIndentGuide.background1": c.fg + "1a",
+          "editorIndentGuide.activeBackground1": c.fg + "48",
+          "editorSuggestWidget.selectedBackground": c.fg + "1f",
+          "diffEditor.insertedTextBackground": c.green + "38",
+          "diffEditor.removedTextBackground": c.red + "38",
+          "diffEditor.insertedLineBackground": c.green + "22",
+          "diffEditor.removedLineBackground": c.red + "22",
+        }),
       }),
     },
   });
@@ -158,7 +180,7 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
 defineMonokai("haze-dark", "vs-dark", MONOKAI.dark);
 defineMonokai("haze-light", "vs", MONOKAI.light);
 defineMonokai("haze-dark-glass", "vs-dark", MONOKAI.dark, true);
-defineMonokai("haze-light-glass", "vs", MONOKAI.light, true);
+defineMonokai("haze-light-glass", "vs", MONOKAI.lightGlass, true);
 
 // Replaces Monaco's grammar (registered tokenizers win over the lazy one;
 // the language configuration still comes from Monaco).

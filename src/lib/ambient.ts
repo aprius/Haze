@@ -258,7 +258,10 @@ async function update(): Promise<void> {
 }
 
 useBackdropImage.subscribe(schedule);
-useGlass.subscribe(schedule);
+useGlass.subscribe(() => {
+  colours.clear();
+  schedule();
+});
 useBackdrop.subscribe((s, prev) => (s.ambient !== prev.ambient || s.agentGlow !== prev.agentGlow) && schedule());
 // Agents report on every tool they use: drawn again only when the light changes.
 let lastAgent: AgentLight | null = null;
