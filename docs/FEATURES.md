@@ -114,6 +114,7 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
   - **Claude Code**: hooks in `~/.claude/settings.json`.
   - **Codex**: lifecycle hooks in `~/.codex/hooks.json` (Codex may ask you to trust them in `/hooks`), plus `notify` in `config.toml` for older versions unless you use it already.
   - **Gemini CLI** (0.26+): hooks in `~/.gemini/settings.json`.
+  - **Antigravity** (`agy`): a `haze` entry in `~/.gemini/config/hooks.json`; it reports working and done (Antigravity has no permission hook, so no waiting).
   - **OpenCode**: a `haze.js` plugin in `~/.config/opencode/plugins/`.
   - **Deep Code**: `notify` in `~/.deepcode/settings.json`, pointing at Haze; it reports finished and failed turns (Deep Code has no working or waiting hooks).
 - **AI Models** (Settings) picks the models OpenCode uses, so one agent can run Claude, GPT, Gemini, DeepSeek, OpenRouter's catalog or a local model. It edits OpenCode's global config (`~/.config/opencode/opencode.json`, other settings kept, `.haze-backup` on the first write):
@@ -122,7 +123,7 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
   - **Default and small model** (`provider/model`).
   - Keys are saved in `~/.config/opencode/haze-keys/`, readable only by you, and the config refers to them as `{file:haze-keys/<id>}`, so `opencode.json` holds no secret. Keys added with `/connect` in OpenCode keep working.
 - **No hook needed** for agents that print their state: Haze reads its own `OSC 6973;<state>[;<agent>[;<message>]]`, which any script can print (`printf '\e]6973;working;mybot\a'`; states: idle, working, waiting, done, error, clear), and notifications (`OSC 9`, `OSC 777`) that name Claude, Codex, Gemini, OpenCode or Deep Code. Once an agent is known, the progress sequence `OSC 9;4` updates it while that program is in front; a progress bar alone (`dotnet build` draws one) does not count. An installed hook takes precedence.
-- Terminal tabs running an agent show a badge (**CC** Claude Code, **CX** Codex, **GM** Gemini, **OC** OpenCode, **DC** Deep Code): pulsing blue = working, yellow = waiting for you (permission, question), green = done, red = error. Projects in the sidebar show a matching dot.
+- Terminal tabs running an agent show a badge (**CC** Claude Code, **CX** Codex, **GM** Gemini, **AG** Antigravity, **OC** OpenCode, **DC** Deep Code): pulsing blue = working, yellow = waiting for you (permission, question), green = done, red = error. Projects in the sidebar show a matching dot.
 - **Resume after a restart**: for Claude Code and Codex, Haze keeps the agent's conversation id (not the conversation) per terminal. When the terminals are gone (a reboot ends the PTY host), the Terminal panel offers **Resume**, which opens a new terminal in the same folder and runs `claude --resume <id>` or `codex resume <id>`. Needs the status hooks installed.
 - **Terminals in Search Everywhere**: the *Terminals* tab (and matches in *All*) lists terminals and agents of every project, agents waiting for you first; Enter switches to the project and shows the tab.
 - **Desktop notifications** when an agent needs you or finishes in a terminal you are not looking at.
@@ -133,7 +134,7 @@ A Rider/Rebased-style Git client built on top of the system `git` CLI.
 
   ```bash
   haze agent claude --worktree fix/login "Fix the login redirect"   # new worktree, new terminal, prints its id
-  haze agent codex -p "Write tests for OrderService"                # also gemini, opencode, deepcode, or any command name
+  haze agent codex -p "Write tests for OrderService"                # also gemini, agy, opencode, deepcode, or any command name
   haze run --dir src/Api -- dotnet watch                            # any command in a new terminal
   haze list                                                         # terminals and their agent state
   haze send 3f2a "Also update the docs"                             # type into a terminal and press Enter

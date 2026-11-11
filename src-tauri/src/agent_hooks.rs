@@ -1,4 +1,4 @@
-//! AI agent hooks. Claude Code, Codex, Gemini CLI and OpenCode call
+//! AI agent hooks. Claude Code, Codex, Gemini CLI, Antigravity and OpenCode call
 //! `haze --agent-hook <agent> …` (installed into their user config on
 //! request); the hook reports the agent's state for the terminal it runs in
 //! (`HAZE_TERMINAL_ID`) to the PTY host, which keeps it with the session and
@@ -61,6 +61,13 @@ const GEMINI_EVENTS: &[&str] = &[
     "AfterAgent",
     "SessionEnd",
 ];
+
+/// Antigravity CLI hooks (`~/.gemini/config/hooks.json`). Its tool hook has no
+/// permission event, so tabs show working / done but never waiting.
+const ANTIGRAVITY_EVENTS: &[&str] = &["SessionStart", "PreInvocation", "PostToolUse", "Stop"];
+
+/// Name of Haze's entry in Antigravity's `hooks.json`.
+const ANTIGRAVITY_ENTRY: &str = "haze";
 
 /// Maps a Claude Code hook payload to a state (`None` = clear the agent).
 pub fn claude_state(payload: &serde_json::Value) -> Option<Option<(&'static str, Option<String>)>> {
@@ -129,6 +136,23 @@ pub fn gemini_state(
     })
 }
 
+/// Maps an Antigravity hook event to a state.
+pub fn antigravity_state(
+    event: &str,
+    payload: &serde_json::Value,
+) -> Option<Option<(&'static str, Option<String>)>> {
+    Some(match event {
+        "SessionStart" => Some(("idle", None)),
+        "PreInvocation" | "PostToolUse" => Some(("working", None)),
+        // Stop also fires when the loop pauses with work left (`fullyIdle` false).
+        "Stop" => match payload.get("terminationReason").and_then(|r| r.as_str()) {
+            Some("error") => Some(("error", payload.get("error").and_then(|e| e.as_str()).map(str::to_string))),
+            _ => Some(("done", None)),
+        },
+        _ => return None,
+    })
+}
+
 /// States the OpenCode plugin reports as they are.
 fn opencode_state(state: &str) -> Option<Option<&'static str>> {
     Some(match state {
@@ -187,6 +211,10 @@ fn try_run_hook(args: &[String]) -> Result<()> {
     let arg = args.get(1).map(String::as_str);
     // Where the agent works, when this hook is it getting a prompt.
     let mut prompt_in: Option<(PathBuf, Option<String>)> = None;
+    // Antigravity parses a hook's stdout as JSON; `{}` means "no change".
+    if agent == "antigravity" {
+        println!("{{}}");
+    }
     let status = match (agent, arg) {
         // Codex `notify` passes its notification JSON as the last argument.
         ("codex", Some(a)) if a.starts_with('{') => {
@@ -231,8 +259,24 @@ fn try_run_hook(args: &[String]) -> Result<()> {
                     .or_else(|| std::env::current_dir().ok())
                     .map(|dir| (dir, text));
             }
+            // Antigravity's first model call of a turn carries the prompt.
+            if agent == "antigravity"
+                && event == "PreInvocation"
+                && payload.get("invocationNum").and_then(|n| n.as_u64()) == Some(0)
+            {
+                let text = payload.get("lastUserInput").and_then(|p| p.as_str()).map(str::to_string);
+                prompt_in = payload
+                    .get("workspacePaths")
+                    .and_then(|w| w.as_array())
+                    .and_then(|w| w.first())
+                    .and_then(|c| c.as_str())
+                    .map(PathBuf::from)
+                    .or_else(|| std::env::current_dir().ok())
+                    .map(|dir| (dir, text));
+            }
             let state = match agent {
                 "gemini" => gemini_state(&event, &payload),
+                "antigravity" => antigravity_state(&event, &payload),
                 _ => claude_state(&payload),
             };
             // Claude Code and Codex name their conversation in every payload.
@@ -321,6 +365,7 @@ fn checkpoint_turn(dir: &Path, agent: &str, prompt: Option<&str>) -> Result<()> 
         "claude" => "Claude Code",
         "codex" => "Codex",
         "gemini" => "Gemini CLI",
+        "antigravity" => "Antigravity",
         other => other,
     };
     crate::git_ops::auto_checkpoint(&root, &checkpoint_label(name, prompt), AUTO_CHECKPOINTS)?;
@@ -395,6 +440,10 @@ fn codex_home() -> Result<PathBuf> {
 
 fn gemini_settings_path() -> Result<PathBuf> {
     Ok(home()?.join(".gemini").join("settings.json"))
+}
+
+fn antigravity_hooks_path() -> Result<PathBuf> {
+    Ok(home()?.join(".gemini").join("config").join("hooks.json"))
 }
 
 fn deepcode_settings_path() -> Result<PathBuf> {
@@ -570,6 +619,56 @@ pub(crate) fn write_with_backup(path: &Path, text: &str) -> Result<()> {
     }
     std::fs::write(path, text)?;
     Ok(())
+}
+
+// Antigravity: `hooks.json` maps a hook name to its events. Haze owns one
+// entry; tool events take `{matcher, hooks}` groups, the others a handler list.
+
+fn antigravity_entry(exe: &str) -> serde_json::Value {
+    let handler = |e: &str| {
+        serde_json::json!({ "type": "command", "command": event_command(exe, "antigravity", e), "timeout": 10 })
+    };
+    let mut entry = serde_json::Map::new();
+    for e in ANTIGRAVITY_EVENTS {
+        let value = if *e == "PostToolUse" {
+            serde_json::json!([{ "matcher": "*", "hooks": [handler(e)] }])
+        } else {
+            serde_json::json!([handler(e)])
+        };
+        entry.insert((*e).into(), value);
+    }
+    serde_json::Value::Object(entry)
+}
+
+fn antigravity_is_ours(entry: &serde_json::Value) -> bool {
+    entry.as_object().is_some_and(|o| {
+        o.values().filter_map(|v| v.as_array()).flatten().any(|item| {
+            is_ours(item)
+                || item
+                    .get("hooks")
+                    .and_then(|h| h.as_array())
+                    .is_some_and(|hs| hs.iter().any(is_ours))
+        })
+    })
+}
+
+fn install_antigravity_in(settings: &mut serde_json::Value, exe: &str) -> Result<()> {
+    if !settings.is_object() {
+        bail!("hooks.json is not a JSON object");
+    }
+    let obj = settings.as_object_mut().unwrap();
+    obj.retain(|_, v| !antigravity_is_ours(v));
+    obj.insert(ANTIGRAVITY_ENTRY.into(), antigravity_entry(exe));
+    Ok(())
+}
+
+fn uninstall_antigravity_in(settings: &mut serde_json::Value) -> bool {
+    let Some(obj) = settings.as_object_mut() else {
+        return false;
+    };
+    let before = obj.len();
+    obj.retain(|_, v| !antigravity_is_ours(v));
+    obj.len() != before
 }
 
 // Codex `notify`: older Codex versions have no lifecycle hooks, only this.
@@ -799,6 +898,23 @@ pub fn status_of(agent: &str) -> Result<HookStatus> {
                 conflict: None,
             })
         }
+        "antigravity" => {
+            let path = antigravity_hooks_path()?;
+            let settings = read_json(&path)?;
+            let ours: Vec<&serde_json::Value> = settings
+                .as_object()
+                .into_iter()
+                .flat_map(|o| o.values())
+                .filter(|v| antigravity_is_ours(v))
+                .collect();
+            Ok(HookStatus {
+                installed: !ours.is_empty(),
+                stale: !ours.is_empty()
+                    && !(ours.len() == 1 && settings.get(ANTIGRAVITY_ENTRY) == Some(&antigravity_entry(&me))),
+                config_path: path.to_string_lossy().into_owned(),
+                conflict: None,
+            })
+        }
         "codex" => {
             let file = hook_file("codex", &me)?;
             let (hooks, complete) = hooks_state(&read_json(&file.path)?, &file);
@@ -884,6 +1000,13 @@ pub fn install(agent: &str) -> Result<HookStatus> {
                 }
             }
         }
+        "antigravity" => {
+            let path = antigravity_hooks_path()?;
+            let mut settings = read_json(&path)?;
+            install_antigravity_in(&mut settings, &me)
+                .with_context(|| format!("{} was not changed", path.display()))?;
+            write_with_backup(&path, &(serde_json::to_string_pretty(&settings)? + "\n"))?;
+        }
         "opencode" => {
             let path = opencode_plugin_path()?;
             if let Some(c) = status_of("opencode")?.conflict {
@@ -926,6 +1049,15 @@ pub fn uninstall(agent: &str) -> Result<HookStatus> {
                 if codex_notify(&doc).iter().any(|a| a == HOOK_FLAG) {
                     doc.remove("notify");
                     write_with_backup(&path, &doc.to_string())?;
+                }
+            }
+        }
+        "antigravity" => {
+            let path = antigravity_hooks_path()?;
+            if path.exists() {
+                let mut settings = read_json(&path)?;
+                if uninstall_antigravity_in(&mut settings) {
+                    write_with_backup(&path, &(serde_json::to_string_pretty(&settings)? + "\n"))?;
                 }
             }
         }
@@ -1044,6 +1176,25 @@ mod tests {
         assert_eq!(deepcode_state("completed"), Some("done"));
         assert_eq!(deepcode_state("failed"), Some("error"));
         assert_eq!(deepcode_state("interrupted"), None);
+    }
+
+    #[test]
+    fn maps_antigravity_events_and_installs_its_entry() {
+        let st = |e: &str, v: serde_json::Value| antigravity_state(e, &v).map(|s| s.map(|(st, _)| st));
+        assert_eq!(st("SessionStart", json!({})), Some(Some("idle")));
+        assert_eq!(st("PreInvocation", json!({})), Some(Some("working")));
+        assert_eq!(st("Stop", json!({"terminationReason": "model_stop"})), Some(Some("done")));
+        assert_eq!(st("Stop", json!({"terminationReason": "error"})), Some(Some("error")));
+        assert_eq!(st("PostInvocation", json!({})), None);
+
+        let mut s = json!({ "mine": { "SessionStart": [{ "command": "./init.sh" }] } });
+        install_antigravity_in(&mut s, "/x/haze").unwrap();
+        install_antigravity_in(&mut s, "/x/haze").unwrap();
+        assert_eq!(s["mine"]["SessionStart"][0]["command"], "./init.sh");
+        assert_eq!(s["haze"], antigravity_entry("/x/haze"));
+        assert!(uninstall_antigravity_in(&mut s));
+        assert!(s.get("haze").is_none() && s.get("mine").is_some());
+        assert!(!uninstall_antigravity_in(&mut s));
     }
 
     #[test]

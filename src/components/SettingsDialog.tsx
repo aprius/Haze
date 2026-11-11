@@ -93,6 +93,11 @@ const AGENTS: { id: HookAgent; name: string; what: string }[] = [
     what: "Adds hooks to ~/.gemini/settings.json (your other settings and hooks are kept). Needs Gemini CLI 0.26 or later.",
   },
   {
+    id: "antigravity",
+    name: "Antigravity",
+    what: "Adds a `haze` entry to ~/.gemini/config/hooks.json (your other hooks are kept) for working / done. Antigravity has no permission hook, so tabs never show waiting for you.",
+  },
+  {
     id: "opencode",
     name: "OpenCode",
     what: "Adds a plugin, haze.js, to OpenCode's global plugins folder; it reports working / waiting for you / done.",

@@ -2,7 +2,7 @@
 //! another agent, through the PTY host's socket:
 //!
 //! ```text
-//! haze agent <claude|codex|gemini|opencode|deepcode|…> [--worktree <branch>] [--prompt <text> | <text>…]
+//! haze agent <claude|codex|gemini|agy|opencode|deepcode|…> [--worktree <branch>] [--prompt <text> | <text>…]
 //! haze run [--worktree <branch>] [--] <command…>
 //! haze list [--json]
 //! haze send <id> <text…>

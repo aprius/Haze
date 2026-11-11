@@ -207,6 +207,7 @@ fn notification(text: &str) -> Signal {
         ("claude", "claude"),
         ("codex", "codex"),
         ("gemini", "gemini"),
+        ("antigravity", "antigravity"),
         ("opencode", "opencode"),
         ("deepcode", "deepcode"),
         ("deep code", "deepcode"),
