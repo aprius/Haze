@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { AgentLimit, LimitAgent, LimitWindow } from "../lib/ipc";
-import { formatResetRemaining, initAgentLimitsWatcher, limitTone, useAgentLimits } from "../store/agentLimits";
+import { formatResetRemaining, initAgentLimitsWatcher, limitTone, observedWindow, usageStatus, useAgentLimits } from "../store/agentLimits";
 import { useTerminals } from "../store/terminals";
 import { useWorkspace } from "../store/workspace";
 
@@ -119,7 +119,8 @@ function normalizeAgentName(name?: string | null): LimitAgent | null {
   return null;
 }
 
-function WindowMetric({ label, win }: { label: "5h" | "7d"; win?: LimitWindow | null }) {
+function WindowMetric({ label, win, nowMs }: { label: "5h" | "7d"; win?: LimitWindow | null; nowMs: number }) {
+  win = observedWindow(win, nowMs);
   if (!win) {
     return (
       <span className="agent-limit-metric is-empty">
@@ -147,6 +148,8 @@ function PopoverWindowRow({
   win?: LimitWindow | null;
   nowMs: number;
 }) {
+  const expired = !!win?.resetsAt && win.resetsAt <= nowMs;
+  win = observedWindow(win, nowMs);
   const pct = win ? Math.round(Math.max(0, Math.min(100, win.usedPercent))) : null;
   const tone = pct !== null ? limitTone(pct) : "ok";
   const resetText = formatResetRemaining(win?.resetsAt, nowMs);
@@ -163,7 +166,7 @@ function PopoverWindowRow({
       <span className={`agent-limit-popover-pct ${pct !== null ? `tone-${tone}` : "is-empty"}`}>
         {formatPct(win)}
       </span>
-      <span className="agent-limit-popover-reset">{resetText || "—"}</span>
+      <span className="agent-limit-popover-reset">{expired ? "Awaiting update" : resetText || "—"}</span>
     </div>
   );
 }
@@ -172,6 +175,8 @@ export function AgentLimitsBar() {
   const showAgentLimits = useWorkspace((s) => s.showAgentLimits);
   const limits = useAgentLimits((s) => s.limits);
   const refresh = useAgentLimits((s) => s.refresh);
+  const refreshing = useAgentLimits((s) => s.refreshing);
+  const error = useAgentLimits((s) => s.error);
   const sessions = useTerminals((s) => s.sessions);
   const activeTermId = useWorkspace((s) => (s.activeProjectId ? s.ui[s.activeProjectId]?.activeTerminal : null));
   const [open, setOpen] = useState(false);
@@ -183,10 +188,15 @@ export function AgentLimitsBar() {
   }, [showAgentLimits]);
 
   useEffect(() => {
+    if (!showAgentLimits) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [showAgentLimits]);
+
+  useEffect(() => {
     if (!open || !showAgentLimits) return;
     setNowMs(Date.now());
     void refresh();
-    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
     const onPointerDown = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
         setOpen(false);
@@ -198,7 +208,6 @@ export function AgentLimitsBar() {
     window.addEventListener("mousedown", onPointerDown);
     window.addEventListener("keydown", onKey);
     return () => {
-      window.clearInterval(timer);
       window.removeEventListener("mousedown", onPointerDown);
       window.removeEventListener("keydown", onKey);
     };
@@ -216,16 +225,15 @@ export function AgentLimitsBar() {
   const visibleAgents = AGENTS.filter(
     (a) => limits[a] !== null || runningAgents.has(a) || a === activeAgent,
   );
-  const barAgents: readonly LimitAgent[] = visibleAgents.length > 0 ? visibleAgents : AGENTS;
 
   const buildTooltip = (agent: LimitAgent, data: AgentLimit | null): string => {
     const title = AGENT_LABELS[agent] + (data?.label ? ` (${data.label})` : "");
     if (!data) return `${title}: no usage data yet`;
     const r5 = formatResetRemaining(data.fiveHour?.resetsAt, nowMs);
     const r7 = formatResetRemaining(data.sevenDay?.resetsAt, nowMs);
-    const p5 = `5h: ${formatPct(data.fiveHour)}${r5 ? ` (resets in ${r5})` : ""}`;
-    const p7 = `7d: ${formatPct(data.sevenDay)}${r7 ? ` (resets in ${r7})` : ""}`;
-    return `${title} — ${p5} · ${p7}`;
+    const p5 = `5h: ${formatPct(observedWindow(data.fiveHour, nowMs))}${r5 ? ` (resets in ${r5})` : ""}`;
+    const p7 = `7d: ${formatPct(observedWindow(data.sevenDay, nowMs))}${r7 ? ` (resets in ${r7})` : ""}`;
+    return `${title} — ${p5} · ${p7} · ${usageStatus(data, nowMs)}`;
   };
 
   return (
@@ -236,7 +244,8 @@ export function AgentLimitsBar() {
         onClick={() => setOpen((v) => !v)}
         aria-label="AI 5h / 7d Usage Limits"
       >
-        {barAgents.map((agent, idx) => {
+        {visibleAgents.length === 0 && <span>AI Usage</span>}
+        {visibleAgents.map((agent, idx) => {
           const data = limits[agent];
           const isFocused = agent === activeAgent;
           return (
@@ -249,9 +258,9 @@ export function AgentLimitsBar() {
               <AgentBrandIcon agent={agent} size={13} />
               {data ? (
                 <span className="agent-limit-metrics">
-                  <WindowMetric label="5h" win={data.fiveHour} />
+                  <WindowMetric label="5h" nowMs={nowMs} win={data.fiveHour} />
                   <span className="agent-limit-dot" aria-hidden="true">·</span>
-                  <WindowMetric label="7d" win={data.sevenDay} />
+                  <WindowMetric label="7d" nowMs={nowMs} win={data.sevenDay} />
                 </span>
               ) : (
                 <span className="agent-limit-metrics">
@@ -273,13 +282,18 @@ export function AgentLimitsBar() {
               type="button"
               className="agent-limits-refresh-btn"
               onClick={() => void refresh()}
-              title="Refresh limits"
+              disabled={refreshing}
+              title="Reread agent hooks and local session data; does not request quota from the provider"
+              aria-label="Reread usage data"
             >
               ↻
             </button>
           </div>
+          <p className="agent-limits-note">{refreshing ? "Reading usage…" : "Last reported quota. Reread checks local data; run the agent to receive a new report."}</p>
+          {error && <p className="agent-limits-note" role="status">{error}</p>}
           <div className="agent-limits-popover-list">
-            {AGENTS.map((agent) => {
+            {visibleAgents.length === 0 && <span>No usage data yet</span>}
+            {visibleAgents.map((agent) => {
               const data = limits[agent];
               return (
                 <div key={agent} className="agent-limit-popover-card">
@@ -288,6 +302,7 @@ export function AgentLimitsBar() {
                     <span className="agent-limit-popover-name">{AGENT_LABELS[agent]}</span>
                     {data?.label && <span className="agent-limit-popover-model">{data.label}</span>}
                   </div>
+                  {data && <p className="agent-limits-note">{usageStatus(data, nowMs)} · {data.accountId ? `Last reported account: ${data.accountId}` : "Account not reported"}</p>}
                   <PopoverWindowRow label="5h" win={data?.fiveHour} nowMs={nowMs} />
                   <PopoverWindowRow label="7d" win={data?.sevenDay} nowMs={nowMs} />
                 </div>

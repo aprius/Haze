@@ -574,6 +574,8 @@ export interface AgentLimit {
   fiveHour?: LimitWindow | null;
   sevenDay?: LimitWindow | null;
   updatedAt: number;
+  source?: "hook" | "session" | null;
+  accountId?: string | null;
   label?: string | null;
 }
 

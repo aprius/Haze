@@ -1,20 +1,37 @@
-import { describe, expect, it } from "vitest";
-import { extractLimitsFromTerminalText, formatResetRemaining, limitTone } from "./agentLimits";
+import { api } from "../lib/ipc";
+import { describe, expect, it, vi } from "vitest";
+import { observedWindow, usageStatus, formatResetRemaining, limitTone, useAgentLimits } from "./agentLimits";
 
 describe("agentLimits", () => {
-  it("extracts 5h and 7d usage limits from terminal status lines with ANSI sequences", () => {
+  it("preserves zero usage but hides an expired or invalid observation", () => {
     const now = 1_776_000_000_000;
-    const raw =
-      "\x1b[38;5;244m5h\x1b[0m \x1b[31m████████░░\x1b[0m \x1b[31m85%\x1b[0m \x1b[2m4h 12m\x1b[0m  " +
-      "\x1b[38;5;244m7d\x1b[0m \x1b[32m██░░░░░░░░\x1b[0m \x1b[32m18%\x1b[0m \x1b[2m1d 23h\x1b[0m";
+    expect(observedWindow({ usedPercent: 0, resetsAt: now + 1 }, now)?.usedPercent).toBe(0);
+    expect(observedWindow({ usedPercent: 95, resetsAt: now }, now)).toBeNull();
+    expect(observedWindow({ usedPercent: NaN }, now)).toBeNull();
+    expect(observedWindow(null, now)).toBeNull();
+  });
 
-    const parsed = extractLimitsFromTerminalText(raw, "claude", now);
-    expect(parsed).not.toBeNull();
-    expect(parsed?.agent).toBe("claude");
-    expect(parsed?.fiveHour?.usedPercent).toBe(85);
-    expect(parsed?.fiveHour?.resetsAt).toBe(now + (4 * 3600 + 12 * 60) * 1000);
-    expect(parsed?.sevenDay?.usedPercent).toBe(18);
-    expect(parsed?.sevenDay?.resetsAt).toBe(now + (1 * 86400 + 23 * 3600) * 1000);
+  it("labels old and legacy observations without pretending refresh made them fresh", () => {
+    const now = 1_776_000_000_000;
+    const data = { agent: "claude" as const, updatedAt: now - 600_000, source: "hook" as const };
+    expect(usageStatus(data, now)).toBe("Agent hook · Updated 10m ago · Stale");
+    expect(usageStatus({ ...data, updatedAt: now, source: null }, now)).toContain("Legacy cache");
+    expect(usageStatus({ ...data, updatedAt: now }, now)).not.toContain("Stale");
+  });
+
+  it("selects the newest account snapshot regardless of input order and retains it on read failure", async () => {
+    const latest = { agent: "claude" as const, accountId: "b", updatedAt: 200, source: "hook" as const };
+    const request = vi.spyOn(api, "agentLimits").mockResolvedValue([
+      latest, { ...latest, accountId: "a", updatedAt: 100 },
+    ]);
+    await useAgentLimits.getState().refresh();
+    expect(useAgentLimits.getState().limits.claude).toEqual(latest);
+    request.mockRejectedValueOnce(new Error("unavailable"));
+    await useAgentLimits.getState().refresh();
+    expect(useAgentLimits.getState().limits.claude).toEqual(latest);
+    expect(useAgentLimits.getState().error).toContain("Could not read");
+    expect(useAgentLimits.getState().refreshing).toBe(false);
+    request.mockRestore();
   });
 
   it("formats reset remaining time and color tones", () => {

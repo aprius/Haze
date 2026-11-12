@@ -5344,3 +5344,10 @@ html:has(.float-external) body {
   color: var(--muted);
   font-size: calc(var(--ui-font-size) * 10.5 / 13);
 }
+
+.agent-limits-note {
+  margin: 6px 0;
+  font-size: 11px;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}

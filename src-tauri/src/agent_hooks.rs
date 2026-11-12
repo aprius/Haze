@@ -1196,6 +1196,10 @@ pub struct AgentLimit {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seven_day: Option<LimitWindow>,
     pub updated_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
@@ -1211,14 +1215,8 @@ fn agent_limits_path() -> Result<PathBuf> {
     Ok(home()?.join(".haze/agent-limits.json"))
 }
 
-fn normalize_window(mut win: LimitWindow, now_ms: u64) -> LimitWindow {
+fn normalize_window(mut win: LimitWindow, _now_ms: u64) -> LimitWindow {
     win.used_percent = win.used_percent.clamp(0.0, 100.0);
-    if let Some(resets) = win.resets_at {
-        if resets > 0 && resets <= now_ms {
-            win.used_percent = 0.0;
-            win.resets_at = None;
-        }
-    }
     win
 }
 
@@ -1427,10 +1425,10 @@ pub fn parse_limits(agent: &str, payload: &serde_json::Value, now_ms: u64) -> Op
                         .get("window_minutes")
                         .and_then(|m| m.as_u64())
                         .unwrap_or(if key == "primary" { 300 } else { 10_080 });
-                    if mins <= 720 {
-                        five_hour = Some(w);
-                    } else {
-                        seven_day = Some(w);
+                    match mins {
+                        300 => five_hour = Some(w),
+                        10_080 => seven_day = Some(w),
+                        _ => {}
                     }
                 }
             }
@@ -1519,55 +1517,38 @@ pub fn parse_limits(agent: &str, payload: &serde_json::Value, now_ms: u64) -> Op
         five_hour,
         seven_day,
         updated_at: now_ms,
+        source: Some("hook".into()),
+        account_id: payload.get("account_id").and_then(|v| v.as_str()).map(str::to_owned),
         label,
     })
 }
 
-fn read_stored_limits(path: &Path) -> Vec<AgentLimit> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    serde_json::from_str::<Vec<AgentLimit>>(&text).unwrap_or_default()
+fn read_stored_limits(path: &Path) -> Result<Vec<AgentLimit>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(serde_json::from_str(&text)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn merge_into_limits(list: &mut Vec<AgentLimit>, incoming: AgentLimit, now_ms: u64) {
-    let incoming_five = incoming.five_hour.map(|w| normalize_window(w, now_ms));
-    let incoming_seven = incoming.seven_day.map(|w| normalize_window(w, now_ms));
-    if let Some(existing) = list.iter_mut().find(|x| x.agent == incoming.agent) {
+    let mut incoming = incoming;
+    incoming.five_hour = incoming.five_hour.map(|w| normalize_window(w, now_ms));
+    incoming.seven_day = incoming.seven_day.map(|w| normalize_window(w, now_ms));
+    if let Some(existing) = list.iter_mut().find(|x| x.agent == incoming.agent && x.account_id == incoming.account_id) {
+        // A report is one snapshot: never mix windows or identities from different reports.
         if incoming.updated_at >= existing.updated_at {
-            if incoming_five.is_some() {
-                existing.five_hour = incoming_five;
-            }
-            if incoming_seven.is_some() {
-                existing.seven_day = incoming_seven;
-            }
-            if incoming.label.is_some() {
-                existing.label = incoming.label;
-            }
-            existing.updated_at = incoming.updated_at;
-        } else {
-            if existing.five_hour.is_none() && incoming_five.is_some() {
-                existing.five_hour = incoming_five;
-            }
-            if existing.seven_day.is_none() && incoming_seven.is_some() {
-                existing.seven_day = incoming_seven;
-            }
+            *existing = incoming;
         }
     } else {
-        list.push(AgentLimit {
-            agent: incoming.agent,
-            five_hour: incoming_five,
-            seven_day: incoming_seven,
-            updated_at: incoming.updated_at,
-            label: incoming.label,
-        });
+        list.push(incoming);
     }
 }
 
 pub fn save_agent_limit(limit: AgentLimit) -> Result<Vec<AgentLimit>> {
     let path = agent_limits_path()?;
     let now_ms = now_epoch_ms();
-    let mut list = read_stored_limits(&path);
+    let mut list = read_stored_limits(&path)?;
     merge_into_limits(&mut list, limit, now_ms);
     for item in &mut list {
         if let Some(w) = item.five_hour.take() {
@@ -1653,11 +1634,10 @@ fn parse_codex_rollout_tail(path: &Path, now_ms: u64) -> Option<AgentLimit> {
         let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        if let Some(mut limit) = parse_limits("codex", &val, now_ms) {
-            limit.updated_at = val
-                .get("timestamp")
-                .and_then(parse_timestamp_ms)
-                .unwrap_or(file_ms);
+        let observed_at = val.get("timestamp").and_then(parse_timestamp_ms).unwrap_or(file_ms);
+        if let Some(mut limit) = parse_limits("codex", &val, observed_at) {
+            limit.source = Some("session".into());
+            limit.updated_at = observed_at;
             return Some(limit);
         }
     }
@@ -1754,7 +1734,7 @@ pub fn agent_limits() -> Result<Vec<AgentLimit>> {
     ensure_status_lines_once();
     let now_ms = now_epoch_ms();
     let path = agent_limits_path()?;
-    let mut list = read_stored_limits(&path);
+    let mut list = read_stored_limits(&path)?;
     for item in &mut list {
         item.five_hour = item.five_hour.take().map(|w| normalize_window(w, now_ms));
         item.seven_day = item.seven_day.take().map(|w| normalize_window(w, now_ms));
@@ -2071,7 +2051,7 @@ mod tests {
         assert!((ag.five_hour.unwrap().used_percent - 35.0).abs() < 1e-6);
         assert!((ag.seven_day.unwrap().used_percent - 80.0).abs() < 1e-6);
 
-        // Expired window rolls over to 0%
+        // Preserve the last observation after reset; the UI marks it as awaiting an update.
         let expired = parse_limits(
             "claude",
             &json!({
@@ -2082,7 +2062,62 @@ mod tests {
             now,
         )
         .unwrap();
-        assert_eq!(expired.five_hour.unwrap().used_percent, 0.0);
+        assert_eq!(expired.five_hour.unwrap().used_percent, 95.0);
+    }
+
+    #[test]
+    fn unreadable_usage_is_an_error_instead_of_an_empty_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("limits.json");
+        assert!(read_stored_limits(&path).unwrap().is_empty());
+        std::fs::write(&path, "broken json").unwrap();
+        assert!(read_stored_limits(&path).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "broken json");
+    }
+
+    #[test]
+    fn session_reread_preserves_observation_time_and_relative_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let observed_at = 1_776_000_000_000u64;
+        std::fs::write(&path, json!({
+            "timestamp": observed_at,
+            "payload": { "rate_limits": { "primary": {
+                "used_percent": 25.0, "window_minutes": 300, "reset_in_seconds": 60
+            } } }
+        }).to_string()).unwrap();
+        let first = parse_codex_rollout_tail(&path, observed_at + 100_000).unwrap();
+        let reread = parse_codex_rollout_tail(&path, observed_at + 200_000).unwrap();
+        assert_eq!(first, reread);
+        assert_eq!(first.updated_at, observed_at);
+        assert_eq!(first.source.as_deref(), Some("session"));
+        assert_eq!(first.five_hour.unwrap().resets_at, Some(observed_at + 60_000));
+        assert!(parse_limits("codex", &json!({ "rate_limits": {
+            "primary": { "used_percent": 80.0, "window_minutes": 60 }
+        } }), observed_at).is_none());
+    }
+
+    #[test]
+    fn quota_snapshots_do_not_mix_accounts_windows_or_older_reports() {
+        let report = |account: &str, now| parse_limits("claude", &json!({
+            "account_id": account,
+            "rate_limits": { "five_hour": { "used_percentage": 20.0 } }
+        }), now).unwrap();
+        let mut first = report("a", 100);
+        first.seven_day = Some(LimitWindow { used_percent: 90.0, resets_at: None });
+        let mut list = vec![first];
+        merge_into_limits(&mut list, report("b", 200), 200);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[1].account_id.as_deref(), Some("b"));
+        assert!(list[1].seven_day.is_none());
+        assert_eq!(list[1].source.as_deref(), Some("hook"));
+        merge_into_limits(&mut list, report("b", 150), 200);
+        assert_eq!(list[1].updated_at, 200);
+        merge_into_limits(&mut list, report("a", 300), 300);
+        assert!(list[0].seven_day.is_none());
+        let legacy: AgentLimit = serde_json::from_value(json!({ "agent": "claude", "updatedAt": 1 })).unwrap();
+        assert!(legacy.source.is_none());
+        assert!(legacy.account_id.is_none());
     }
 
     #[test]
