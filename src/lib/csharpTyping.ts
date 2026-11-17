@@ -83,7 +83,7 @@ function skipQualifier(t: string, i: number) {
 }
 
 /** End of the string or char literal starting at `i` (prefixes `$` and `@` included), or -1. */
-function skipLiteral(t: string, i: number): number {
+export function skipLiteral(t: string, i: number): number {
   let j = i;
   let verbatim = false;
   let interpolated = 0;

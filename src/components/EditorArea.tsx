@@ -9,7 +9,9 @@ import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, isWithin, join, relative } from "../lib/path";
-import { clearUnusedMarks, csharpAnswers, findImplementations, findUsages, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
+import { clearUnusedMarks, csharpAnswers, findImplementations, findUsages, importsForPaste, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
+import { addUsings } from "../lib/csharpUsings";
+import { moveStatement } from "../lib/csharpSelection";
 import { lineChanges, lineMapper } from "../lib/lineChanges";
 import { withNested } from "../lib/treeRows";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
@@ -30,6 +32,7 @@ import { showAssetUsages, showDeclarations, showLocations, type UsagesAnchor } f
 import type { AssetUsage } from "../lib/ipc";
 import { runUnityTests } from "../store/unity";
 import { generateUnityMember, registerUnityCompletion } from "../lib/unity/generate";
+import { registerCsharpProviders } from "../lib/csharpProviders";
 import { installUnityPerf } from "../lib/unity/perfDecorations";
 import { installUnityInspections } from "../lib/unity/inspectionMarkers";
 import { isMac, matches, shortcutLabel } from "../lib/keymap";
@@ -161,8 +164,9 @@ function installIdeKeymap() {
     { keybinding: M.Alt | K.DownArrow, command: "-editor.action.moveLinesDownAction" },
     { keybinding: M.Alt | K.UpArrow, command: "editor.action.smartSelect.expand", when: "editorTextFocus" },
     { keybinding: M.Alt | K.DownArrow, command: "editor.action.smartSelect.shrink", when: "editorTextFocus" },
-    { keybinding: M.WinCtrl | M.Alt | M.Shift | K.UpArrow, command: "editor.action.moveLinesUpAction", when: edit },
-    { keybinding: M.WinCtrl | M.Alt | M.Shift | K.DownArrow, command: "editor.action.moveLinesDownAction", when: edit },
+    // In C# these are Move Statement (haze.moveStatementUp/Down).
+    { keybinding: M.WinCtrl | M.Alt | M.Shift | K.UpArrow, command: "editor.action.moveLinesUpAction", when: `${edit} && editorLangId != csharp` },
+    { keybinding: M.WinCtrl | M.Alt | M.Shift | K.DownArrow, command: "editor.action.moveLinesDownAction", when: `${edit} && editorLangId != csharp` },
     { keybinding: M.WinCtrl | K.KeyH, command: "editor.action.startFindReplaceAction", when: "editorFocus" },
     { keybinding: M.Alt | K.KeyH, command: "editor.action.startFindReplaceAction", when: "editorFocus" },
     { keybinding: M.Alt | M.Shift | K.Period, command: "editor.action.addSelectionToNextFindMatch", when: "editorFocus" },
@@ -189,6 +193,7 @@ function installIdeKeymap() {
   // Ctrl+Click / Ctrl+B in languages Roslyn does not cover, and in C# until it is up.
   registerTextNavigation();
   registerUnityCompletion();
+  registerCsharpProviders();
   // Navigating to another file (Ctrl+click, F12…) opens it in Haze's tabs.
   monaco.editor.registerEditorOpener({
     openCodeEditor(source, resource, selectionOrPosition) {
@@ -1379,8 +1384,10 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
       codeLens: useWorkspace.getState().codeVision,
       suggest: suggestOptions,
-      // C# statements and blocks are reformatted on `;` and `}` (lsp/csharp.ts).
+      // C# statements and blocks are reformatted on `;` and `}`, pasted code
+      // where it lands (Roslyn, lsp/csharp.ts).
       formatOnType: true,
+      formatOnPaste: true,
       // Roslyn's semantic tokens (lsp/csharp.ts); the theme alone would leave them off.
       "semanticHighlighting.enabled": true,
       // The context menu in our DOM, not a shadow root: glass like the other
@@ -1504,6 +1511,44 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       e.stopPropagation();
       applyTyping(at.model, edit, "haze.typing");
     });
+    // Pasted C# gets the usings it lacks, as in Rider: those Roslyn names one namespace for.
+    editor.onDidPaste((e) => {
+      const model = editor.getModel();
+      if (!model || !isCs() || model.uri.scheme !== "file" || editor.getOption(monaco.editor.EditorOption.readOnly)) return;
+      void importsForPaste(model, e.range).then(({ namespaces, ambiguous }) => {
+        if (model.isDisposed() || editor.getModel() !== model) return;
+        const { inserts } = addUsings(model.getValue(), namespaces, model.getEOL());
+        if (inserts.length) {
+          editor.pushUndoStop();
+          editor.executeEdits(
+            "haze.pasteUsings",
+            inserts.map((i) => ({ range: monaco.Range.fromPositions(model.getPositionAt(i.offset)), text: i.text })),
+          );
+          editor.pushUndoStop();
+        }
+        const added = namespaces.length ? `Added ${namespaces.map((n) => `using ${n};`).join(" ")}` : "";
+        const pick = ambiguous.length ? `${ambiguous.slice(0, 3).join(", ")}${ambiguous.length > 3 ? "…" : ""}: several namespaces, Alt+Enter to pick` : "";
+        if (added || pick) toast([added, pick].filter(Boolean).join(". "));
+      });
+    });
+    // Move Statement, as Rider: whole members and blocks, never out of their block.
+    for (const up of [true, false]) {
+      const arrow = up ? K.UpArrow : K.DownArrow;
+      editor.addAction({
+        id: up ? "haze.moveStatementUp" : "haze.moveStatementDown",
+        label: up ? "Move Statement Up" : "Move Statement Down",
+        keybindings: [isMac ? M.WinCtrl | M.Alt | M.Shift | arrow : M.CtrlCmd | M.Alt | M.Shift | arrow],
+        precondition: "editorLangId == csharp && !editorReadonly",
+        run: () => {
+          const at = csharpCaret();
+          if (!at) return;
+          const edit = moveStatement(at.model.getValue(), at.offset, up);
+          // Statements sharing a line: the line moves instead.
+          if (edit === null) editor.trigger("keyboard", up ? "editor.action.moveLinesUpAction" : "editor.action.moveLinesDownAction", null);
+          else if (edit !== "edge") applyTyping(at.model, edit, "haze.moveStatement");
+        },
+      });
+    }
     // C# only: elsewhere Ctrl+Shift+Enter stays Monaco's Insert Line Above.
     editor.addAction({
       id: "haze.completeStatement",

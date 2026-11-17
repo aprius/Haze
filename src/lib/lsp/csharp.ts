@@ -27,6 +27,7 @@ import {
   type LspTextEdit,
 } from "./convert";
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
+import { importedNamespace } from "../csharpUsings";
 import { ensureBuffer, getModel, isVirtualPath, setVirtualSource } from "../buffers";
 import { MIN_PREFIX, pickInline, typedEdit, type LspCompletionItem } from "./inline";
 import { buildHover, declarationAt, type Declaration } from "./hoverDoc";
@@ -50,6 +51,7 @@ interface ServerCapabilities {
   codeLensProvider?: { resolveProvider?: boolean };
   diagnosticProvider?: { identifier?: string };
   documentOnTypeFormattingProvider?: { firstTriggerCharacter: string; moreTriggerCharacter?: string[] };
+  documentRangeFormattingProvider?: boolean | object;
   [k: string]: unknown;
 }
 
@@ -66,6 +68,8 @@ interface Pulled {
   shown: LspDiagnostic[];
   /** The build markers it was shown against. */
   build?: string;
+  /** The model version the shown diagnostics were pulled for. */
+  version?: number;
 }
 
 export class CsharpSession {
@@ -147,6 +151,7 @@ export class CsharpSession {
           },
           formatting: {},
           onTypeFormatting: {},
+          rangeFormatting: {},
           rename: { prepareSupport: true },
           semanticTokens: {
             requests: { full: true, range: true },
@@ -387,6 +392,7 @@ export class CsharpSession {
     );
     // Edited meanwhile: the next pull is on its way.
     if (model.isDisposed() || model.getVersionId() !== version || this.pulled.get(uri) !== state) return;
+    state.version = version;
     this.showDiagnostics(model, state);
   }
 
@@ -443,6 +449,16 @@ export class CsharpSession {
       const state = this.pulled.get(serverUri(model));
       if (state && state.results.size > 0) this.showDiagnostics(model, state);
     }
+  }
+
+  /** Waits until the shown diagnostics are those of the model as it is now; false on timeout. */
+  async freshDiagnostics(model: monaco.editor.ITextModel, timeout: number): Promise<boolean> {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline && !model.isDisposed()) {
+      if (this.pulled.get(serverUri(model))?.version === model.getVersionId()) return true;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    return false;
   }
 
   /** The live diagnostics shown in a range, for the code actions that fix them. */
@@ -837,6 +853,50 @@ let definitionFallback: DefinitionFallback | null = null;
 /** Asked when Roslyn finds no definition (lib/textNav.ts; set there to keep this module free of it). */
 export function setDefinitionFallback(f: DefinitionFallback): void {
   definitionFallback = f;
+}
+
+// Names Roslyn cannot find: a type, a name, an extension method (`.Where`), a query.
+const MISSING_NAME = new Set(["CS0246", "CS0103", "CS1061", "CS1935"]);
+
+/**
+ * After a paste: the namespaces to import for the names in `range` that
+ * Roslyn cannot find, when its "using" fix names just one; `ambiguous` counts
+ * the names it offers several for (left to Alt+Enter). Waits for the
+ * diagnostics of the pasted text.
+ */
+export async function importsForPaste(model: monaco.editor.ITextModel, range: monaco.IRange): Promise<{ namespaces: string[]; ambiguous: string[] }> {
+  const result = { namespaces: [] as string[], ambiguous: [] as string[] };
+  const s = ready(model);
+  if (!s?.ready || model.uri.scheme !== "file") return result;
+  // The pasted text, followed through the formatting that may come first.
+  const [tracked] = model.deltaDecorations([], [{ range, options: { stickiness: monaco.editor.TrackedRangeStickiness.AlwaysGrowsWhenTypingAtEdges } }]);
+  try {
+    if (!(await s.freshDiagnostics(model, 10000))) return result;
+    const r = model.getDecorationRange(tracked);
+    if (!r) return result;
+    const missing = s.diagnosticsAt(model, toLspRange(r)).filter((d) => MISSING_NAME.has(String(d.code ?? "")));
+    // One question per name.
+    const byName = new Map<string, LspDiagnostic>();
+    for (const d of missing) {
+      const name = model.getValueInRange(toMonacoRange(d.range));
+      if (!byName.has(name)) byName.set(name, d);
+    }
+    const version = model.getVersionId();
+    const found = new Set<string>();
+    for (const [name, d] of [...byName].slice(0, 30)) {
+      const actions = await s
+        .request<LspCodeAction[] | null>("textDocument/codeAction", { textDocument: { uri: serverUri(model) }, range: d.range, context: { diagnostics: [d] } })
+        .catch(() => null);
+      if (model.isDisposed() || model.getVersionId() !== version) return result;
+      const namespaces = new Set((actions ?? []).filter((a) => isImportFix(a.title)).map((a) => importedNamespace(a.title)).filter((n): n is string => !!n));
+      if (namespaces.size === 1) found.add([...namespaces][0]);
+      else if (namespaces.size > 1) result.ambiguous.push(name);
+    }
+    result.namespaces = [...found];
+    return result;
+  } finally {
+    if (!model.isDisposed()) model.deltaDecorations([tracked], []);
+  }
 }
 
 interface LspCodeAction {
@@ -1519,6 +1579,20 @@ export function registerProviders(): void {
           ch,
           options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces },
         },
+        token,
+      );
+      return (res ?? []).map((e) => ({ range: toMonacoRange(e.range), text: e.newText }));
+    },
+  });
+
+  // Format on paste (and Format Selection) through Roslyn.
+  L.registerDocumentRangeFormattingEditProvider("csharp", {
+    async provideDocumentRangeFormattingEdits(model, range, options, token) {
+      const s = ready(model);
+      if (!s?.caps.documentRangeFormattingProvider) return null;
+      const res = await s.request<LspTextEdit[] | null>(
+        "textDocument/rangeFormatting",
+        { textDocument: { uri: serverUri(model) }, range: toLspRange(range), options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces } },
         token,
       );
       return (res ?? []).map((e) => ({ range: toMonacoRange(e.range), text: e.newText }));
