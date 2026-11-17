@@ -13,6 +13,7 @@ import { clearUnusedMarks, csharpAnswers, findImplementations, findUsages, prepa
 import { lineChanges, lineMapper } from "../lib/lineChanges";
 import { withNested } from "../lib/treeRows";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
+import { expandExpressionBody } from "../lib/expressionBody";
 import { zedWheel } from "../lib/wheel";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
@@ -1455,6 +1456,25 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
     codeAction("haze.generate", "Generate Unity Event Function…", isMac ? [M.WinCtrl | K.Enter] : [M.Alt | K.Insert], () => {
       if (!generateUnityMember(editor)) toast("Generate works in the classes of Unity scripts (MonoBehaviour, ScriptableObject, Editor…).");
     }, "1_modification");
+    // `{` before or after the `=>` of an expression-bodied member makes it a block body, as in Rider.
+    editor.onKeyDown((e) => {
+      if (e.browserEvent.key !== "{" || e.browserEvent.isComposing || !isCs() || editor.getOption(monaco.editor.EditorOption.readOnly)) return;
+      const model = editor.getModel();
+      const sel = editor.getSelection();
+      if (!model || !sel || !sel.isEmpty() || editor.getSelections()!.length > 1) return;
+      const opts = model.getOptions();
+      const unit = opts.insertSpaces ? " ".repeat(opts.indentSize) : "\t";
+      const edit = expandExpressionBody(model.getValue(), model.getOffsetAt(sel.getPosition()), unit, model.getEOL());
+      if (!edit) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const range = monaco.Range.fromPositions(model.getPositionAt(edit.start), model.getPositionAt(edit.end));
+      editor.pushUndoStop();
+      editor.executeEdits("haze.expressionBody", [{ range, text: edit.text }]);
+      // The caret offset counts the new text, so it is resolved after the edit.
+      editor.setPosition(model.getPositionAt(edit.caret));
+      editor.pushUndoStop();
+    });
     const lineBlame = installLineBlame(project, editor);
     const changes = installLineChanges(project, editor);
     const unityPerf = installUnityPerf(editor);
