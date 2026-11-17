@@ -97,7 +97,7 @@ mod tests {
         assert_eq!(req.project.as_deref(), Some(root.to_str().unwrap()));
         assert_eq!(
             req.file.as_deref(),
-            Some(root.join("Assets/A.cs").to_str().unwrap())
+            Some(root.join("Assets").join("A.cs").to_str().unwrap())
         );
         assert_eq!((req.line, req.column), (Some(12), Some(3)));
         assert_eq!(parse(&["haze".into(), "-psn_0_1".into()], &root), None);
