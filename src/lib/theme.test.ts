@@ -6,7 +6,7 @@ vi.hoisted(() => {
   };
 });
 
-import { monacoTheme, TERMINAL_THEMES, terminalTheme, useGlass, useTheme } from "./theme";
+import { monacoTheme, TERMINAL_THEMES, terminalTheme, THEMES, useGlass, useTheme } from "./theme";
 
 /** WCAG relative luminance for a `#rrggbb` (or `#rrggbbaa`) hex colour. */
 function luminance(hex: string): number {
@@ -19,42 +19,44 @@ function luminance(hex: string): number {
 }
 
 describe("monacoTheme", () => {
-  it("maps all 4 (mode, glass) combinations to their Monaco theme names", () => {
-    expect(monacoTheme("dark", false)).toBe("haze-dark");
-    expect(monacoTheme("light", false)).toBe("haze-light");
-    expect(monacoTheme("dark", true)).toBe("haze-dark-glass");
-    expect(monacoTheme("light", true)).toBe("haze-light-glass");
+  it("maps every (theme, glass) combination to its Monaco theme name", () => {
+    expect(monacoTheme("monokai-pro", false)).toBe("haze-dark");
+    expect(monacoTheme("monokai-light", false)).toBe("haze-light");
+    expect(monacoTheme("monokai-pro", true)).toBe("haze-dark-glass");
+    expect(monacoTheme("monokai-light", true)).toBe("haze-light-glass");
+    expect(monacoTheme("dracula-blade", false)).toBe("haze-dracula-blade");
+    expect(monacoTheme("dracula-blade", true)).toBe("haze-dracula-blade-glass");
   });
 
   it("reads default arguments from useTheme and useGlass state", () => {
-    useTheme.setState({ mode: "light" });
+    useTheme.setState({ id: "monokai-light", mode: "light" });
     useGlass.setState({ on: true });
     expect(monacoTheme()).toBe("haze-light-glass");
     useGlass.setState({ on: false });
     expect(monacoTheme()).toBe("haze-light");
-    useTheme.setState({ mode: "dark" });
+    useTheme.setState({ id: "monokai-pro", mode: "dark" });
     expect(monacoTheme()).toBe("haze-dark");
   });
 });
 
 describe("terminalTheme", () => {
   it("returns the opaque palettes when glass is false", () => {
-    expect(terminalTheme("dark", false)).toBe(TERMINAL_THEMES.dark);
-    expect(terminalTheme("light", false)).toBe(TERMINAL_THEMES.light);
-    expect(terminalTheme("dark", false).background).toMatch(/^#[0-9a-f]{6}$/i);
-    expect(terminalTheme("light", false).background).toMatch(/^#[0-9a-f]{6}$/i);
+    for (const { id } of THEMES) {
+      expect(terminalTheme(id, false)).toBe(TERMINAL_THEMES[id]);
+      expect(terminalTheme(id, false).background).toMatch(/^#[0-9a-f]{6}$/i);
+    }
   });
 
   it("uses an 8-digit transparent background whose RGB prefix matches the dark/light base in glass mode", () => {
-    const darkGlass = terminalTheme("dark", true);
-    const lightGlass = terminalTheme("light", true);
+    const darkGlass = terminalTheme("monokai-pro", true);
+    const lightGlass = terminalTheme("monokai-light", true);
 
     expect(darkGlass.background).toMatch(/^#[0-9a-f]{6}00$/i);
     expect(lightGlass.background).toMatch(/^#[0-9a-f]{6}00$/i);
 
     // RGB prefix matches each theme's cursorAccent / base so xterm inverse-text
     // background extraction stays legible rather than collapsing to #000000.
-    expect(darkGlass.background?.slice(0, 7)).toBe(TERMINAL_THEMES.dark.background);
+    expect(darkGlass.background?.slice(0, 7)).toBe(TERMINAL_THEMES["monokai-pro"].background);
     expect(darkGlass.background?.slice(0, 7)).toBe(darkGlass.cursorAccent);
     expect(lightGlass.background?.slice(0, 7)).toBe(lightGlass.cursorAccent);
     expect(luminance(darkGlass.background!)).toBeLessThan(0.05);
@@ -62,8 +64,8 @@ describe("terminalTheme", () => {
   });
 
   it("returns a dedicated light-glass palette with translucent selection and darker inks/accents", () => {
-    const light = terminalTheme("light", false);
-    const lightGlass = terminalTheme("light", true);
+    const light = terminalTheme("monokai-light", false);
+    const lightGlass = terminalTheme("monokai-light", true);
 
     expect(lightGlass).not.toBe(light);
     expect(lightGlass.selectionBackground).toMatch(/^#[0-9a-f]{8}$/i);
@@ -92,5 +94,14 @@ describe("terminalTheme", () => {
     for (const key of darkerKeys) {
       expect(luminance(lightGlass[key]!), `${key} should be darker on light glass`).toBeLessThan(luminance(light[key]!));
     }
+  });
+});
+
+describe("dracula-blade", () => {
+  it("is a dark theme whose glass terminal keeps its own palette over a clear background", () => {
+    const glass = terminalTheme("dracula-blade", true);
+    expect(glass.background).toBe(TERMINAL_THEMES["dracula-blade"].background + "00");
+    expect(glass.foreground).toBe(TERMINAL_THEMES["dracula-blade"].foreground);
+    expect(luminance(glass.background!)).toBeLessThan(0.05);
   });
 });

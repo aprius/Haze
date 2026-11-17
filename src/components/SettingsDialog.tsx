@@ -53,7 +53,7 @@ import {
   setRecordingKeys,
   useKeymap,
 } from "../lib/keymap";
-import { setUiStyle, type UiStyle, useUiStyle } from "../lib/theme";
+import { setTheme, setUiStyle, THEMES, type UiStyle, useTheme, useUiStyle } from "../lib/theme";
 import { popupClosed } from "../store/ui";
 import { checkForUpdates, openRelease, updateLabel, updateNow, useUpdates } from "../store/updates";
 import { useWorkspace, type PerfContextMode } from "../store/workspace";
@@ -235,6 +235,7 @@ function FontSettingsSection() {
   const codeFont = useFonts((s) => s.codeFont);
   const webgl = useFonts((s) => s.terminalWebgl);
   const uiStyle = useUiStyle((s) => s.style);
+  const themeId = useTheme((s) => s.id);
   const isDefault = useFonts((s) => (Object.keys(DEFAULT_FONTS) as (keyof FontSettings)[]).every((k) => s[k] === DEFAULT_FONTS[k]));
   return (
     <>
@@ -264,6 +265,21 @@ function FontSettingsSection() {
           <span>Terminal line height</span>
           <span />
           <LineHeightInput />
+        </div>
+      </div>
+      <div className="settings-card">
+        <div className="settings-row static">
+          <div className="settings-row-text">
+            <div>Theme</div>
+            <div className="muted small">Colours of the interface, code editor and terminal.</div>
+          </div>
+          <div className="seg">
+            {THEMES.map(({ id, name }) => (
+              <button key={id} className={"seg-btn" + (themeId === id ? " on" : "")} onClick={() => setTheme(id)}>
+                {name}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="settings-card">

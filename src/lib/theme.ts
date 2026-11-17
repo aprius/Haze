@@ -1,22 +1,46 @@
-// Monokai Pro colour mode (dark = "Pro" filter, light = "Light" filter).
+// Colour theme. Each theme has a mode (dark or light) that the rest of the
+// app keys off (<html data-theme>, file icons, COLORFGBG); the theme itself
+// sets <html data-palette>, which src/styles.css overrides the colours by.
 // Kept in localStorage rather than the workspace state file: that loads
-// asynchronously, and the mode has to be known before the first paint.
+// asynchronously, and the theme has to be known before the first paint.
 import type { ITheme } from "@xterm/xterm";
 import { create } from "zustand";
 
 export type ThemeMode = "dark" | "light";
+export type ThemeId = "monokai-pro" | "monokai-light" | "dracula-blade";
+
+export const THEMES: { id: ThemeId; name: string; mode: ThemeMode }[] = [
+  { id: "monokai-pro", name: "Monokai Pro", mode: "dark" },
+  { id: "monokai-light", name: "Monokai Pro Light", mode: "light" },
+  { id: "dracula-blade", name: "Dracula Pro Blade", mode: "dark" },
+];
+
+export const themeMode = (id: ThemeId): ThemeMode => THEMES.find((t) => t.id === id)?.mode ?? "dark";
 
 const KEY = "haze.theme";
+// The dark theme the light/dark toggle goes back to.
+const DARK_KEY = "haze.theme.dark";
 
-function initial(): ThemeMode {
+const isThemeId = (v: unknown): v is ThemeId => THEMES.some((t) => t.id === v);
+
+function read(key: string): string | null {
   try {
-    const saved = localStorage.getItem(KEY);
-    if (saved === "dark" || saved === "light") return saved;
-  } catch {}
-  return "dark";
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
 }
 
-export const useTheme = create<{ mode: ThemeMode }>(() => ({ mode: initial() }));
+function initial(): ThemeId {
+  const saved = read(KEY);
+  if (isThemeId(saved)) return saved;
+  // Before themes, only the mode was saved.
+  if (saved === "light") return "monokai-light";
+  return "monokai-pro";
+}
+
+const first = initial();
+export const useTheme = create<{ id: ThemeId; mode: ThemeMode }>(() => ({ id: first, mode: themeMode(first) }));
 
 /**
  * Islands over a background image (src/lib/backdrop.ts): editors and terminals
@@ -24,14 +48,20 @@ export const useTheme = create<{ mode: ThemeMode }>(() => ({ mode: initial() }))
  */
 export const useGlass = create<{ on: boolean }>(() => ({ on: false }));
 
-export const monacoTheme = (mode: ThemeMode = useTheme.getState().mode, glass = useGlass.getState().on) =>
-  (mode === "dark" ? "haze-dark" : "haze-light") + (glass ? "-glass" : "");
+const MONACO_NAMES: Record<ThemeId, string> = {
+  "monokai-pro": "haze-dark",
+  "monokai-light": "haze-light",
+  "dracula-blade": "haze-dracula-blade",
+};
 
-export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
+export const monacoTheme = (id: ThemeId = useTheme.getState().id, glass = useGlass.getState().on) =>
+  MONACO_NAMES[id] + (glass ? "-glass" : "");
+
+export const TERMINAL_THEMES: Record<ThemeId, ITheme> = {
   // Monokai Pro (Filter: Pro), as its terminal themes ship it, but for the
   // default text (and plain white): #fcfcfa glares, as in the editor. The
   // background is the Project view's (--panel), not the editor's.
-  dark: {
+  "monokai-pro": {
     background: "#221f22",
     foreground: "#d3d1cf",
     cursor: "#d3d1cf",
@@ -55,7 +85,7 @@ export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
     brightWhite: "#fcfcfa",
   },
   // Monokai Pro (Filter: Light), on the Project view's background too.
-  light: {
+  "monokai-light": {
     background: "#ede7e5",
     foreground: "#29242a",
     cursor: "#29242a",
@@ -77,6 +107,33 @@ export const TERMINAL_THEMES: Record<ThemeMode, ITheme> = {
     brightMagenta: "#7058be",
     brightCyan: "#1c8ca8",
     brightWhite: "#29242a",
+  },
+  // Dracula Pro (Blade), on the Project view's background: the variant's
+  // green-tinted greys, the accents Dracula Pro's. Black is the selection
+  // grey, as the background itself would vanish; bright black (dim text and
+  // borders of CLI agents) the comment colour.
+  "dracula-blade": {
+    background: "#1b2422",
+    foreground: "#e8e8e2",
+    cursor: "#f8f8f2",
+    cursorAccent: "#1b2422",
+    selectionBackground: "#415854",
+    black: "#415854",
+    red: "#ff9580",
+    green: "#8aff80",
+    yellow: "#ffff80",
+    blue: "#9580ff",
+    magenta: "#ff80bf",
+    cyan: "#80ffea",
+    white: "#e8e8e2",
+    brightBlack: "#70a99f",
+    brightRed: "#ffaa99",
+    brightGreen: "#a2ff99",
+    brightYellow: "#ffff99",
+    brightBlue: "#aa99ff",
+    brightMagenta: "#ff99cc",
+    brightCyan: "#99ffee",
+    brightWhite: "#ffffff",
   },
 };
 
@@ -109,31 +166,41 @@ const TERMINAL_LIGHT_GLASS: ITheme = {
 
 // Glass: the background clear, but its colour kept, as xterm draws inverse
 // text in it made opaque (black, from #00000000: unreadable in the light theme).
-export const terminalTheme = (mode: ThemeMode = useTheme.getState().mode, glass = useGlass.getState().on): ITheme =>
-  !glass ? TERMINAL_THEMES[mode] : mode === "light" ? TERMINAL_LIGHT_GLASS : { ...TERMINAL_THEMES.dark, background: TERMINAL_THEMES.dark.background + "00" };
-
-function apply(mode: ThemeMode): void {
-  document.documentElement.dataset.theme = mode;
+export function terminalTheme(id: ThemeId = useTheme.getState().id, glass = useGlass.getState().on): ITheme {
+  const base = TERMINAL_THEMES[id];
+  if (!glass) return base;
+  return themeMode(id) === "light" ? TERMINAL_LIGHT_GLASS : { ...base, background: base.background + "00" };
 }
 
-apply(useTheme.getState().mode);
+function apply(id: ThemeId): void {
+  document.documentElement.dataset.theme = themeMode(id);
+  document.documentElement.dataset.palette = id;
+}
 
-export function setThemeMode(mode: ThemeMode): void {
+apply(first);
+
+export function setTheme(id: ThemeId): void {
+  const mode = themeMode(id);
   try {
-    localStorage.setItem(KEY, mode);
+    localStorage.setItem(KEY, id);
+    if (mode === "dark") localStorage.setItem(DARK_KEY, id);
   } catch {}
-  apply(mode);
-  useTheme.setState({ mode });
+  apply(id);
+  useTheme.setState({ id, mode });
 }
 
+/** Light goes to Monokai Pro Light, dark back to the last dark theme used. */
 export function toggleThemeMode(): void {
-  setThemeMode(useTheme.getState().mode === "dark" ? "light" : "dark");
+  if (useTheme.getState().mode === "light") {
+    const dark = read(DARK_KEY);
+    setTheme(isThemeId(dark) && themeMode(dark) === "dark" ? dark : "monokai-pro");
+  } else setTheme("monokai-light");
 }
 
 // Layout style: "classic" puts the panels edge to edge; "islands" draws each
 // one (Project, editor, terminal, Build/Git) as a rounded block with gaps
 // between them, and tabs as rounded chips. Only the
-// shapes change, the colours stay Monokai Pro's.
+// shapes change, the colours stay the theme's.
 export type UiStyle = "classic" | "islands";
 
 const UI_STYLE_KEY = "haze.uiStyle";

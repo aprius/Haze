@@ -23,7 +23,15 @@ import { useWorkspace } from "../store/workspace";
 
 // Monokai Pro (Filter: Pro for dark, Filter: Light for light). Monarch only
 // emits coarse token classes, so these map the filter's palette onto them.
-const MONOKAI = {
+type Palette = {
+  bg: string; fg: string; dim: string; comment: string; red: string; orange: string;
+  yellow: string; green: string; blue: string; purple: string;
+  gutter: string; gutterActive: string; widget: string; border: string;
+  /** Keywords, operators and tags: Monokai's red unless set. */
+  keyword?: string;
+};
+
+const MONOKAI: Record<"dark" | "light" | "lightGlass", Palette> = {
   dark: {
     // Text toned down from the filter's #fcfcfa, which glares.
     bg: "#2d2a2e", fg: "#d3d1cf", dim: "#939293", comment: "#727072", red: "#ff6188", orange: "#fc9867",
@@ -45,8 +53,17 @@ const MONOKAI = {
   },
 };
 
-function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)["dark"], glass = false) {
+// Dracula Pro (Blade): the variant's green-tinted background and comments,
+// Dracula Pro's accents; keywords pink, types cyan, as Dracula colours them.
+const DRACULA_BLADE: Palette = {
+  bg: "#212c2a", fg: "#f0f0ea", dim: "#b4c2bf", comment: "#70a99f", red: "#ff9580", orange: "#ffca80",
+  yellow: "#ffff80", green: "#8aff80", blue: "#80ffea", purple: "#9580ff", keyword: "#ff80bf",
+  gutter: "#4f6b66", gutterActive: "#b4c2bf", widget: "#2b3936", border: "#151d1b",
+};
+
+function defineMonokai(name: string, base: "vs" | "vs-dark", c: Palette, glass = false) {
   const strip = (hex: string) => hex.slice(1);
+  const keyword = c.keyword ?? c.red;
   const lightGlass = glass && base === "vs";
   // Rainbow Brackets: one colour per nesting depth, cycling after six. Each
   // pair's guide takes its brackets' colour, faint until the caret is inside.
@@ -64,8 +81,8 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
     rules: [
       { token: "", foreground: strip(c.fg) },
       { token: "comment", foreground: strip(c.comment), fontStyle: "italic" },
-      { token: "keyword", foreground: strip(c.red) },
-      { token: "operator", foreground: strip(c.red) },
+      { token: "keyword", foreground: strip(keyword) },
+      { token: "operator", foreground: strip(keyword) },
       { token: "delimiter", foreground: strip(c.dim) },
       { token: "string", foreground: strip(c.yellow) },
       { token: "string.escape", foreground: strip(c.purple) },
@@ -81,8 +98,8 @@ function defineMonokai(name: string, base: "vs" | "vs-dark", c: (typeof MONOKAI)
       { token: "variable.predefined", foreground: strip(c.purple) },
       { token: "predefined", foreground: strip(c.green) },
       { token: "annotation", foreground: strip(c.green) },
-      { token: "metatag", foreground: strip(c.red) },
-      { token: "tag", foreground: strip(c.red) },
+      { token: "metatag", foreground: strip(keyword) },
+      { token: "tag", foreground: strip(keyword) },
       { token: "attribute.name", foreground: strip(c.blue), fontStyle: "italic" },
       { token: "attribute.value", foreground: strip(c.yellow) },
       { token: "key", foreground: strip(c.fg) },
@@ -181,6 +198,8 @@ defineMonokai("haze-dark", "vs-dark", MONOKAI.dark);
 defineMonokai("haze-light", "vs", MONOKAI.light);
 defineMonokai("haze-dark-glass", "vs-dark", MONOKAI.dark, true);
 defineMonokai("haze-light-glass", "vs", MONOKAI.lightGlass, true);
+defineMonokai("haze-dracula-blade", "vs-dark", DRACULA_BLADE);
+defineMonokai("haze-dracula-blade-glass", "vs-dark", DRACULA_BLADE, true);
 
 // Replaces Monaco's grammar (registered tokenizers win over the lazy one;
 // the language configuration still comes from Monaco).

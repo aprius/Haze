@@ -1,5 +1,6 @@
 /* Palette from Monokai Pro for JetBrains: Filter "Light" and Filter "Pro".
-   The mode is set on <html data-theme> by src/lib/theme.ts. */
+   The mode is set on <html data-theme> by src/lib/theme.ts, the theme on
+   <html data-palette>; other themes override the mode's colours below. */
 :root[data-theme="light"] {
   --bg: #faf4f2;
   --panel: #ede7e5;
@@ -98,6 +99,53 @@
   --find-match: #ffd866;
   --popup-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04) inset, 0 4px 12px rgba(0, 0, 0, 0.25), 0 20px 48px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
+}
+
+/* Dracula Pro, Blade variant: green-tinted greys (background #212c2a,
+   selection #415854, comment #70a99f) under Dracula Pro's accents. */
+:root[data-theme="dark"][data-palette="dracula-blade"] {
+  --bg: #212c2a;
+  --panel: #1b2422;
+  --editor-bg: #212c2a;
+  --rail: #151d1b;
+  --border: #151d1b;
+  --fg: #e0e3df;
+  --muted: #8fa8a3;
+  --hover: #2b3936;
+  --selected: #415854;
+  --selected-inactive: #33443f;
+  --accent: #9580ff;
+  --accent-fg: #1b2422;
+  --danger: #ff9580;
+  --warn-bg: #3a3c2a;
+  --warn-fg: #ffff80;
+  --term-bg: #1b2422;
+  --term-fg: #e8e8e2;
+  --term-selection: #415854;
+  --git-modified: #80ffea;
+  --git-added: #8aff80;
+  --git-untracked: #ffca80;
+  --git-ignored: #5f817b;
+  --git-deleted: #8fa8a3;
+  --git-conflict: #ff9580;
+  --diff-added: #8aff80;
+  --diff-modified: #ffca80;
+  --diff-deleted: #ff9580;
+  --diff-tint: 13%;
+  --diff-word: 28%;
+  --diff-edge: 60%;
+  --diff-comment: #b4c2bf;
+  --line-number: #4f6b66;
+  --line-number-active: #b4c2bf;
+  --mk-red: #ff9580;
+  --mk-orange: #ffca80;
+  --mk-yellow: #ffff80;
+  --mk-green: #8aff80;
+  --mk-cyan: #80ffea;
+  --mk-purple: #9580ff;
+  --mk-grey: #8fa8a3;
+  --unused-symbol: #5f817b;
+  --find-match: #ffff80;
 }
 
 :root {
