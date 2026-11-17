@@ -199,7 +199,7 @@ fn start(args: &[String], agent: bool) -> Result<i32> {
             *t = format!("{t} · {branch}");
         }
     }
-    let dir = dir.canonicalize().unwrap_or(dir);
+    let dir = crate::cli_open::canonical(&dir);
 
     let (tx, rx) = mpsc::channel::<String>();
     let client = PtyClient::new(Arc::new(move |ev| match ev {

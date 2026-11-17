@@ -3,7 +3,7 @@
 //! integration; a second launch forwards its arguments to the running Haze.
 //! `--terminal <id>` shows a terminal `haze agent` / `haze run` started there.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -46,9 +46,24 @@ pub fn dropped(path: &Path) -> OpenRequest {
     req
 }
 
+/// `path` resolved, as the folder picker gives it. On Windows `canonicalize`
+/// returns `\\?\C:\…`, which the UI takes for another project and turns into
+/// file URIs the C# server does not match with its projects.
+pub fn canonical(path: &Path) -> PathBuf {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
 /// A folder is the project to open, anything else the file.
 fn set_path(req: &mut OpenRequest, path: &Path) {
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let path = canonical(path);
     let s = path.to_string_lossy().into_owned();
     if path.is_dir() {
         req.project = Some(s);
@@ -60,6 +75,13 @@ fn set_path(req: &mut OpenRequest, path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drops_the_windows_verbatim_prefix() {
+        let plain = |s: &str| canonical(Path::new(s)).to_string_lossy().into_owned();
+        assert_eq!(plain(r"\\?\C:\Game\Assets\A.cs"), r"C:\Game\Assets\A.cs");
+        assert_eq!(plain(r"\\?\UNC\server\share\Game"), r"\\server\share\Game");
+    }
 
     #[test]
     fn parses_project_file_and_position() {
