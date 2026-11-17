@@ -1,6 +1,6 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { AlertCircle, AlertTriangle, Check, ChevronDown, Lightbulb, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Component, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { DefinitionAction, SymbolNavigationAction } from "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js";
@@ -1614,7 +1614,10 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
   const ready = meta?.status === "text";
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor) return;
+    // In a detached window whose document WebKit swapped out (it loads the
+    // window's URL after we rendered): that document has no window any more and
+    // Monaco throws. The window renders the group again in the new document.
+    if (!editor || !editor.getContainerDomNode().ownerDocument.defaultView) return;
     const prev = shownPath.current;
     if (prev && prev !== active) viewStates.set(viewKey(group.id, prev), editor.saveViewState());
     const model = active && ready ? getModel(active) : null;
@@ -1829,6 +1832,23 @@ function EditorWindowView({ project, index, win }: { project: Project; index: nu
   );
 }
 
+/**
+ * Keeps an error in a detached editor window to that window: uncaught, React
+ * unmounts the whole app and Haze's main window shows nothing.
+ */
+class WindowBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: unknown) {
+    console.error("Editor window failed", error);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
 /** Detached editor windows of every open project. */
 export function EditorWindows() {
   const projects = useWorkspace((s) => s.projects);
@@ -1837,7 +1857,13 @@ export function EditorWindows() {
     <>
       {projects
         .filter((p) => p.open)
-        .flatMap((p) => (ui[p.id]?.windows ?? []).map((w, i) => <EditorWindowView key={w.id} project={p} index={i} win={w} />))}
+        .flatMap((p) =>
+          (ui[p.id]?.windows ?? []).map((w, i) => (
+            <WindowBoundary key={w.id}>
+              <EditorWindowView project={p} index={i} win={w} />
+            </WindowBoundary>
+          )),
+        )}
     </>
   );
 }
