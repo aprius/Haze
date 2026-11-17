@@ -51,9 +51,11 @@ Rider-style commit window, diffs, log graph, AI checkpoints and per-file "review
 <tr>
 <td width="50%" valign="middle">
 
-### C# navigation with Roslyn
+### C# with Roslyn, typed like Rider
 
 Go to Definition, Find Usages, Rename, quick fixes, Code Vision and inline completions through the Roslyn Language Server. Errors, warnings, suggestions and hints as you type, like Rider's, Unity's performance-critical context, and tags, layers, scenes and assembly references checked against the Unity project.
+
+Rider's editing on top: typing assists (`{` turns `=>` into a block, `///` doc comments, smart `;`, Complete Statement), live templates (`prop`, `sfield`, `fore`, `dl`…), postfix templates (`enemies.foreach`, `GetComponent<Rigidbody>().var`), Extend Selection by syntax, Move Statement, and missing `using`s added on paste.
 
 [Docs →](docs/FEATURES.md#c-and-net)
 
@@ -240,6 +242,10 @@ Haze is not a Rider replacement. It keeps the Rider workflow for reviewing and s
 | | Copy Context (`path:line` + code fence for agents) | ✅ | ❌ |
 | C# | Go to Definition, Find Usages, Rename, quick fixes | ✅ (Roslyn) | ✅ (ReSharper) |
 | | Code Vision, inline completion | ✅ | ✅ |
+| | Typing assists (`=>` to block, `///` docs, smart `;`, Complete Statement) | ✅ | ✅ |
+| | Live and postfix templates (Unity ones included) | ✅ | ✅ |
+| | Extend Selection by syntax, Move Statement | ✅ | ✅ |
+| | Format and add missing `using`s on paste | ✅ | ✅ |
 | | Live code inspections | ⚠️ (Roslyn's errors and analyzers, as you type) | ✅ |
 | | Advanced refactorings (Extract, Move, Change Signature…) | ⚠️ (what Roslyn offers) | ✅ |
 | | Decompiled DLL sources | ⚠️ (with `csharp-ls`) | ✅ |
