@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn parses_project_file_and_position() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = canonical(dir.path());
         std::fs::create_dir(root.join("Assets")).unwrap();
         std::fs::write(root.join("Assets/A.cs"), "").unwrap();
         let argv: Vec<String> = ["haze", ".", "Assets/A.cs", "--line", "12", "--column", "3"]
