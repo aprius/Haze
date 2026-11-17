@@ -117,6 +117,14 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
   // `selected` (the file whose diff is shown) is always the last one clicked.
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const anchor = useRef<string | null>(null);
+  // The message takes focus once, when the window opens, so typing starts right away.
+  const messageFocused = useRef(false);
+  const focusMessage = (el: HTMLTextAreaElement | null) => {
+    if (!el || messageFocused.current) return;
+    messageFocused.current = true;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  };
 
   useEffect(() => refreshRepo(project.id, project.path), [project.id, project.path]);
 
@@ -586,6 +594,7 @@ function CommitPanel({ project, selected, setSelected }: { project: Project; sel
       </div>
       <div className="commit-box">
         <textarea
+          ref={focusMessage}
           className="commit-message"
           placeholder="Commit message"
           value={r.message}
