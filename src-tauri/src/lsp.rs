@@ -61,21 +61,50 @@ fn exe(name: &str) -> String {
     }
 }
 
+/// `name` in `dir`. On Windows a .NET tool from a RID-specific package (like
+/// `roslyn-language-server.win-x64`) gets a `.cmd` shim instead of an `.exe`:
+/// the program is then the `.exe` the shim runs.
+fn program_in(dir: &Path, name: &str) -> Option<PathBuf> {
+    let p = dir.join(exe(name));
+    if p.is_file() {
+        return Some(p);
+    }
+    if cfg!(windows) {
+        return cmd_shim_target(&dir.join(format!("{name}.cmd")));
+    }
+    None
+}
+
+/// The `.exe` a .NET tool shim runs: `"%~dp0.store\…\name.exe" %*`.
+fn cmd_shim_target(shim: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(shim).ok()?;
+    let dir = shim.parent()?;
+    text.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix('"')?;
+        let target = &rest[..rest.find('"')?];
+        let target = match target.strip_prefix("%~dp0") {
+            Some(rel) => rel
+                .split(['\\', '/'])
+                .filter(|c| !c.is_empty())
+                .fold(dir.to_path_buf(), |p, c| p.join(c)),
+            None => PathBuf::from(target),
+        };
+        let is_exe = target
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
+        (is_exe && target.is_file()).then_some(target)
+    })
+}
+
 fn find_in_path(name: &str) -> Option<PathBuf> {
-    let file = exe(name);
     std::env::var_os("PATH")
         .into_iter()
         .flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
-        .map(|d| d.join(&file))
-        .find(|p| p.is_file())
+        .find_map(|d| program_in(&d, name))
 }
 
 fn dotnet_tool(name: &str) -> Option<PathBuf> {
-    let p = dirs::home_dir()?
-        .join(".dotnet")
-        .join("tools")
-        .join(exe(name));
-    p.is_file().then_some(p)
+    program_in(&dirs::home_dir()?.join(".dotnet").join("tools"), name)
 }
 
 /// Where Roslyn writes its logs (useful when it fails to load a project).
@@ -295,6 +324,28 @@ impl LspServers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_exe_behind_a_dotnet_tool_shim() {
+        let dir = std::env::temp_dir().join(format!("haze-shim-{}", std::process::id()));
+        let rel = ".store/roslyn-language-server/5.13.0/roslyn-language-server.win-x64/5.13.0/tools/net10.0/win-x64";
+        std::fs::create_dir_all(dir.join(rel)).unwrap();
+        let target = dir.join(rel).join("roslyn-language-server.exe");
+        std::fs::write(&target, b"").unwrap();
+        let shim = dir.join("roslyn-language-server.cmd");
+        std::fs::write(
+            &shim,
+            format!(
+                "@echo off\r\n\"%~dp0{}\\roslyn-language-server.exe\" %*\r\n",
+                rel.replace('/', "\\")
+            ),
+        )
+        .unwrap();
+        assert_eq!(cmd_shim_target(&shim), Some(target));
+        std::fs::write(&shim, "@echo off\r\n\"%~dp0.store\\missing.exe\" %*\r\n").unwrap();
+        assert_eq!(cmd_shim_target(&shim), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn keeps_the_end_of_stderr() {

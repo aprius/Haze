@@ -634,7 +634,7 @@ function requireSession(model: monaco.editor.ITextModel): CsharpSession {
   else if (project && !info[project.id]?.dotnetVersion && status?.state !== "ready")
     why += ": the .NET SDK is not installed. Install it with “Install .NET” in the run bar";
   else if (status?.state === "missing")
-    why += ": no C# language server was found. Install it with “dotnet tool install --global roslyn-language-server --prerelease”, then restart C# from the run bar";
+    why += ": no C# language server was found. Install it with “dotnet tool install --global roslyn-language-server --prerelease”, then restart C# from the run bar (or set HAZE_CSHARP_SERVER to the server's path)";
   else if (status?.message) why += `: ${status.message}`;
   throw new Error(why);
 }
