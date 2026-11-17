@@ -3,7 +3,7 @@
 // in completion, and Extend Selection's steps (csharpSelection.ts).
 import { monaco } from "./monaco";
 import { selectionRanges } from "./csharpSelection";
-import { blockContext, templateBody, templatesFor } from "./csharpTemplates";
+import { blockContext, templateBody, templateCandidates, templatesFor } from "./csharpTemplates";
 import { postfixExpression, postfixFor, postfixSnippet } from "./csharpPostfix";
 
 let registered = false;
@@ -16,7 +16,7 @@ export function registerCsharpProviders(): void {
       const word = model.getWordUntilPosition(position);
       const lineBefore = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
       // Not after a `.`: member access is not a statement (postfix templates live there).
-      if (!word.word || /\.\s*$/.test(lineBefore)) return { suggestions: [] };
+      if (!word.word || /\.\s*$/.test(lineBefore) || !templateCandidates(lineBefore, word.word).length) return { suggestions: [] };
       const context = blockContext(model.getValue(), model.getOffsetAt(position));
       const fileName = model.uri.path.split("/").pop()!.replace(/\.[^.]*$/, "");
       const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, position.column);

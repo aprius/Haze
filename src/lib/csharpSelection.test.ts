@@ -142,3 +142,28 @@ describe("moveStatement", () => {
     expect(move("void F()\n{\n    A(); |B();\n    C();\n}", false)).toBeNull();
   });
 });
+
+describe("regressions", () => {
+  const move = (src: string, up: boolean) => {
+    const o = src.indexOf("|");
+    const t = src.slice(0, o) + src.slice(o + 1);
+    const e = moveStatement(t, o, up);
+    return e === null || e === "edge" ? e : t.slice(0, e.start) + e.text + t.slice(e.end);
+  };
+  it("Move Statement keeps statements in their switch section", () => {
+    const sw = (body: string) => `void F()\n{\n    switch (x)\n    {\n${body}\n    }\n}`;
+    expect(move(sw("        case 1:\n            Foo();\n            |break;"), true)).toBe(sw("        case 1:\n            break;\n            Foo();"));
+    expect(move(sw("        case 1:\n            |Foo();\n            break;"), true)).toBe("edge");
+    expect(move(sw("        |case 1:\n            Foo();\n            break;"), false)).toBeNull();
+  });
+  it("Move Statement on a blank line moves the line", () => {
+    expect(move("class A\n{\n    void F()\n    {\n        A();\n|\n        B();\n    }\n}", true)).toBeNull();
+  });
+  it("delegates and new() constraints end statements where they should", () => {
+    const pick = (src: string, start: string) => steps(src).filter((x) => x.startsWith(start));
+    const del = pick("void F()\n{\n    Action a = delegate\n    {\n        Fo|o();\n    };\n    Bar();\n}", "Action");
+    expect(del).toContain("Action a = delegate\n    {\n        Foo();\n    };");
+    const gen = pick("class A\n{\n    void F<T>() where T : new()\n    {\n        Fo|o();\n    }\n    void G() { }\n}", "void F");
+    expect(gen).toContain("void F<T>() where T : new()\n    {\n        Foo();\n    }");
+  });
+});

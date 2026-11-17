@@ -871,9 +871,11 @@ export async function importsForPaste(model: monaco.editor.ITextModel, range: mo
   // The pasted text, followed through the formatting that may come first.
   const [tracked] = model.deltaDecorations([], [{ range, options: { stickiness: monaco.editor.TrackedRangeStickiness.AlwaysGrowsWhenTypingAtEdges } }]);
   try {
+    // Formatting the paste comes after it: wait until the text settles, then for its diagnostics.
+    await new Promise((r) => setTimeout(r, 300));
     if (!(await s.freshDiagnostics(model, 10000))) return result;
     const r = model.getDecorationRange(tracked);
-    if (!r) return result;
+    if (!r || model.isDisposed()) return result;
     const missing = s.diagnosticsAt(model, toLspRange(r)).filter((d) => MISSING_NAME.has(String(d.code ?? "")));
     // One question per name.
     const byName = new Map<string, LspDiagnostic>();

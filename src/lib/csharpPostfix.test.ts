@@ -82,3 +82,11 @@ describe("postfix templates", () => {
     expect(new Set(POSTFIX.map((p) => p.key)).size).toBe(POSTFIX.length);
   });
 });
+
+describe("postfix regressions", () => {
+  it("skips chains continued from the line above, and keeps ?[ in the expression", () => {
+    expect(expr("        .Where(x => x.Alive).")).toBeNull();
+    expect(expr("        ?.Name.")).toBeNull();
+    expect(expr("        list?[0].")).toBe("list?[0] (statement)");
+  });
+});

@@ -53,3 +53,13 @@ describe("templatesFor", () => {
     expect(new Set(TEMPLATES.map((t) => t.key)).size).toBe(TEMPLATES.length);
   });
 });
+
+describe("templates regressions", () => {
+  it("offers nothing in comments and strings", () => {
+    expect(at("class A\n{\n    void F()\n    {\n        // gc|\n")).toEqual({ kind: "text" });
+    expect(at("class A\n{\n    /* prop|\n */\n}")).toEqual({ kind: "text" });
+    expect(at('class A\n{\n    void F()\n    {\n        Log("dl|')).toEqual({ kind: "text" });
+    expect(templatesFor({ kind: "text" }, "        ", "dl")).toEqual([]);
+    expect(at("class A\n{\n    /* x */ |")).toEqual({ kind: "type", typeName: "A" });
+  });
+});

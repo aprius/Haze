@@ -140,6 +140,11 @@ function statements(t: string, s: Structure, from: number, to: number): Span[] {
         end = i + 1;
         break;
       }
+      // A switch section's label is a statement of its own.
+      if (c === ":" && t[i + 1] !== ":" && /^(case\b|default\s*$)/.test(t.slice(start, i))) {
+        end = i + 1;
+        break;
+      }
       if (c === "(" || c === "[") {
         i = (s.pair.get(i) ?? to - 1) + 1;
         continue;
@@ -152,7 +157,8 @@ function statements(t: string, s: Structure, from: number, to: number): Span[] {
         const rest = t.slice(next, next + 8);
         if (/^[;,).?=]/.test(rest) || /^(else|catch|finally)\b/.test(rest) || (/^while\b/.test(rest) && /^do\b/.test(t.slice(start, start + 3)))) continue;
         // An initializer, lambda or switch expression (`= new() { … }`, `=> {`, `x switch { … }`) goes on to its `;`.
-        if (/(=|=>|\breturn|\bnew\b[^;{]*|\bswitch|\bwith)\s*$/.test(t.slice(start, s.pair.get(close)!))) continue;
+        // (Not the `new()` of a `where T : new()` constraint.)
+        if (/(=|=>|\breturn|(?<![:,]\s*)\bnew\b[^;{]*|\bswitch|\bwith|\bdelegate(\s*\([^)]*\))?)\s*$/.test(t.slice(start, s.pair.get(close)!))) continue;
         end = close + 1;
         break;
       }
@@ -268,7 +274,8 @@ function commentsAbove(t: string, s: Structure, start: number) {
     const line = t.slice(prevStart, lineStart - 1);
     const code = line.search(/\S/);
     const r = code >= 0 ? regionAt(s, prevStart + code) : undefined;
-    if (!r || r.kind !== "comment" || r.end < lineStart - 2 - (t[lineStart - 2] === "\r" ? 1 : 0)) break;
+    // The comment must fill the rest of its line.
+    if (!r || r.kind !== "comment" || r.end < lineStart - 1 - (t[lineStart - 2] === "\r" ? 1 : 0)) break;
     first = r.start;
     lineStart = prevStart;
   }
@@ -375,6 +382,9 @@ export function moveStatement(t: string, offset: number, up: boolean): MoveEdit 
   const s = structure(t);
   // Judge by the line's first character: on a `}` line that is the block's end.
   const lineStart = t.lastIndexOf("\n", offset - 1) + 1;
+  const lineEnd = t.indexOf("\n", offset);
+  // A blank line moves as a line.
+  if (!t.slice(lineStart, lineEnd < 0 ? t.length : lineEnd).trim()) return null;
   const ref = skipTrivia(t, s, lineStart, t.length);
   const at = ref < t.length && t.slice(lineStart, ref).indexOf("\n") < 0 ? ref : offset;
 
@@ -388,6 +398,10 @@ export function moveStatement(t: string, offset: number, up: boolean): MoveEdit 
     if (i < 0) continue;
     const j = up ? i - 1 : i + 1;
     if (j < 0 || j >= stmts.length) return "edge";
+    // Not across a switch section's label, nor a label itself (the section moves as lines).
+    const isLabel = (k: number) => /^(case\b|default\s*:)/.test(t.slice(stmts[k][0], stmts[k][1]));
+    if (isLabel(i)) return null;
+    if (isLabel(j)) return "edge";
     const lines = t.split("\n");
     const lineOf = (pos: number) => {
       let n = 0;

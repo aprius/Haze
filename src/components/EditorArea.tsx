@@ -1540,11 +1540,13 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
         keybindings: [isMac ? M.WinCtrl | M.Alt | M.Shift | arrow : M.CtrlCmd | M.Alt | M.Shift | arrow],
         precondition: "editorLangId == csharp && !editorReadonly",
         run: () => {
+          const lines = up ? "editor.action.moveLinesUpAction" : "editor.action.moveLinesDownAction";
           const at = csharpCaret();
-          if (!at) return;
+          // A selection (or several carets) moves its lines.
+          if (!at) return void editor.trigger("keyboard", lines, null);
           const edit = moveStatement(at.model.getValue(), at.offset, up);
           // Statements sharing a line: the line moves instead.
-          if (edit === null) editor.trigger("keyboard", up ? "editor.action.moveLinesUpAction" : "editor.action.moveLinesDownAction", null);
+          if (edit === null) editor.trigger("keyboard", lines, null);
           else if (edit !== "edge") applyTyping(at.model, edit, "haze.moveStatement");
         },
       });

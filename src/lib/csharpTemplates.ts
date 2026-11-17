@@ -5,8 +5,11 @@ import { skipLiteral } from "./csharpTyping";
 
 export type BlockKind = "top" | "type" | "code";
 
+/** Where the caret is: a block, or a comment or string (no templates there). */
+export type CaretKind = BlockKind | "text";
+
 export interface BlockContext {
-  kind: BlockKind;
+  kind: CaretKind;
   /** The innermost enclosing type's name, for `ctor`. */
   typeName?: string;
 }
@@ -21,17 +24,19 @@ export function blockContext(t: string, offset: number): BlockContext {
     const c = t[i];
     if (c === "/" && t[i + 1] === "/") {
       const nl = t.indexOf("\n", i);
-      i = nl < 0 || nl >= offset ? offset : nl;
+      if (nl < 0 || nl >= offset) return { kind: "text" };
+      i = nl;
       continue;
     }
     if (c === "/" && t[i + 1] === "*") {
       const close = t.indexOf("*/", i + 2);
-      i = close < 0 ? offset : close + 1;
+      if (close < 0 || close + 2 > offset) return { kind: "text" };
+      i = close + 1;
       continue;
     }
     if (c === '"' || c === "'" || ((c === "$" || c === "@") && /^[$@]*"/.test(t.slice(i, i + 4)))) {
       const end = skipLiteral(t, i);
-      if (end < 0 || end > offset) return { kind: "code" };
+      if (end < 0 || end > offset) return { kind: "text" };
       i = end - 1;
       continue;
     }
@@ -125,11 +130,16 @@ export const TEMPLATES: Template[] = [
   { key: "tgc", description: "TryGetComponent (Unity)", in: ["code"], body: block("if (TryGetComponent(out ${1:Rigidbody} ${2:body}))") },
 ];
 
-/** The templates for `word` typed at a caret in `context`, `lineBefore` being the line up to the word. */
-export function templatesFor(context: BlockContext, lineBefore: string, word: string): Template[] {
+/** The templates `word` could be, before the context is known (cheap: no file scan when none). */
+export function templateCandidates(lineBefore: string, word: string): Template[] {
   if (!word) return [];
   const atLineStart = !lineBefore.trim();
-  return TEMPLATES.filter((t) => t.in.includes(context.kind) && (atLineStart || t.expression) && t.key.startsWith(word.toLowerCase()));
+  return TEMPLATES.filter((t) => (atLineStart || t.expression) && t.key.startsWith(word.toLowerCase()));
+}
+
+/** The templates for `word` typed at a caret in `context`, `lineBefore` being the line up to the word. */
+export function templatesFor(context: BlockContext, lineBefore: string, word: string): Template[] {
+  return templateCandidates(lineBefore, word).filter((t) => context.kind !== "text" && t.in.includes(context.kind));
 }
 
 /** Text for a snippet's placeholder or literal part: `$`, `}` and `\\` escaped. */

@@ -42,7 +42,7 @@ export function postfixExpression(line: string, dot: number): PostfixExpression 
       if (c === "}") starts[starts.length - 1] = i + 1;
     } else if (c === "," || c === ";" || c === "?" || c === ":") {
       // `?.` and `??` continue the expression; a ternary's `?` and `:` do not.
-      if (c === "?" && (line[i + 1] === "." || line[i + 1] === "?" || line[i - 1] === "?")) {
+      if (c === "?" && (line[i + 1] === "." || line[i + 1] === "[" || line[i + 1] === "?" || line[i - 1] === "?")) {
         i += line[i + 1] === "?" ? 2 : 1;
         continue;
       }
@@ -69,7 +69,8 @@ export function postfixExpression(line: string, dot: number): PostfixExpression 
   let start = starts[starts.length - 1];
   while (start < dot && (line[start] === " " || line[start] === "\t")) start++;
   const text = line.slice(start, dot);
-  if (!text || /\s$/.test(text) || !/[\w)\]"'>]$/.test(text) || /^\d+$/.test(text)) return null;
+  // Not a chain continued from the line above (`    .Where(…).`): its start is out of sight.
+  if (!text || /\s$/.test(text) || !/[\w)\]"'>]$/.test(text) || /^\d+$/.test(text) || /^\??\./.test(text)) return null;
   const firstCode = line.search(/\S/);
   return { start, text, statement: starts.length === 1 && start === firstCode };
 }
