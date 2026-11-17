@@ -13,7 +13,7 @@ import { clearUnusedMarks, csharpAnswers, findImplementations, findUsages, prepa
 import { lineChanges, lineMapper } from "../lib/lineChanges";
 import { withNested } from "../lib/treeRows";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
-import { expandExpressionBody, expandInlineMethod } from "../lib/expressionBody";
+import { completeStatement, mayApply, typingEdit, type BodyEdit, type TypingKey, type TypingOptions } from "../lib/csharpTyping";
 import { zedWheel } from "../lib/wheel";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
@@ -1379,6 +1379,8 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
       codeLens: useWorkspace.getState().codeVision,
       suggest: suggestOptions,
+      // C# statements and blocks are reformatted on `;` and `}` (lsp/csharp.ts).
+      formatOnType: true,
       // Roslyn's semantic tokens (lsp/csharp.ts); the theme alone would leave them off.
       "semanticHighlighting.enabled": true,
       // The context menu in our DOM, not a shadow root: glass like the other
@@ -1456,31 +1458,63 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
     codeAction("haze.generate", "Generate Unity Event Function…", isMac ? [M.WinCtrl | K.Enter] : [M.Alt | K.Insert], () => {
       if (!generateUnityMember(editor)) toast("Generate works in the classes of Unity scripts (MonoBehaviour, ScriptableObject, Editor…).");
     }, "1_modification");
-    // Rider's C# typing assists: `{` before or after the `=>` of an expression-bodied
-    // member makes it a block body; Enter at the braces of a one-line method lays it out.
-    editor.onKeyDown((e) => {
-      const ev = e.browserEvent;
-      const brace = ev.key === "{";
-      const enter = e.keyCode === monaco.KeyCode.Enter && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey;
-      if ((!brace && !enter) || ev.isComposing || !isCs() || editor.getOption(monaco.editor.EditorOption.readOnly)) return;
-      // Enter accepts a suggestion while the list is open.
-      if (enter && editor.getDomNode()?.querySelector(".suggest-widget.visible")) return;
-      const model = editor.getModel();
-      const sel = editor.getSelection();
-      if (!model || !sel || !sel.isEmpty() || editor.getSelections()!.length > 1) return;
-      const opts = model.getOptions();
-      const unit = opts.insertSpaces ? " ".repeat(opts.indentSize) : "\t";
-      const expand = brace ? expandExpressionBody : expandInlineMethod;
-      const edit = expand(model.getValue(), model.getOffsetAt(sel.getPosition()), unit, model.getEOL());
-      if (!edit) return;
-      e.preventDefault();
-      e.stopPropagation();
+    // Rider's C# typing assists (lib/csharpTyping.ts).
+    const typingOptions = (model: monaco.editor.ITextModel): TypingOptions => {
+      const o = model.getOptions();
+      return { indentUnit: o.insertSpaces ? " ".repeat(o.indentSize) : "\t", tabSize: o.tabSize, eol: model.getEOL() };
+    };
+    const applyTyping = (model: monaco.editor.ITextModel, edit: BodyEdit, source: string) => {
       const range = monaco.Range.fromPositions(model.getPositionAt(edit.start), model.getPositionAt(edit.end));
       editor.pushUndoStop();
-      editor.executeEdits(brace ? "haze.expressionBody" : "haze.inlineMethod", [{ range, text: edit.text }]);
+      editor.executeEdits(source, [{ range, text: edit.text }]);
       // The caret offset counts the new text, so it is resolved after the edit.
       editor.setPosition(model.getPositionAt(edit.caret));
       editor.pushUndoStop();
+    };
+    const csharpCaret = () => {
+      const model = editor.getModel();
+      const sel = editor.getSelection();
+      if (!model || !sel || !sel.isEmpty() || editor.getSelections()!.length > 1 || !isCs()) return null;
+      if (editor.getOption(monaco.editor.EditorOption.readOnly)) return null;
+      return { model, offset: model.getOffsetAt(sel.getPosition()) };
+    };
+    editor.onKeyDown((e) => {
+      const ev = e.browserEvent;
+      if (ev.isComposing || ev.metaKey) return;
+      // Characters by what they type: `{` is Option+8 on a German Mac and AltGr+7
+      // (Ctrl+Alt) on Windows, but Ctrl+/ or Alt+/ alone are shortcuts.
+      const typed = isMac ? !ev.ctrlKey : ev.ctrlKey === ev.altKey;
+      const bare = !ev.ctrlKey && !ev.altKey && !ev.shiftKey;
+      const key: TypingKey | null =
+        (ev.key === "{" || ev.key === "/" || ev.key === ";") && typed ? ev.key
+        : e.keyCode === monaco.KeyCode.Enter && bare ? "Enter"
+        : e.keyCode === monaco.KeyCode.Backspace && bare ? "Backspace"
+        : null;
+      if (!key) return;
+      // Keys pick a suggestion while the list is open.
+      if (editor.getDomNode()?.querySelector(".suggest-widget.visible")) return;
+      const at = csharpCaret();
+      if (!at) return;
+      const pos = at.model.getPositionAt(at.offset);
+      const line = at.model.getLineContent(pos.lineNumber);
+      if (!mayApply(key, line.slice(0, pos.column - 1), line.slice(pos.column - 1))) return;
+      const edit = typingEdit(key, at.model.getValue(), at.offset, typingOptions(at.model));
+      if (!edit) return;
+      e.preventDefault();
+      e.stopPropagation();
+      applyTyping(at.model, edit, "haze.typing");
+    });
+    // C# only: elsewhere Ctrl+Shift+Enter stays Monaco's Insert Line Above.
+    editor.addAction({
+      id: "haze.completeStatement",
+      label: "Complete Statement",
+      keybindings: [M.CtrlCmd | M.Shift | K.Enter],
+      precondition: "editorLangId == csharp && !editorReadonly",
+      run: () => {
+        const at = csharpCaret();
+        const edit = at && completeStatement(at.model.getValue(), at.offset, typingOptions(at.model).indentUnit, at.model.getEOL());
+        if (at && edit) applyTyping(at.model, edit, "haze.completeStatement");
+      },
     });
     const lineBlame = installLineBlame(project, editor);
     const changes = installLineChanges(project, editor);

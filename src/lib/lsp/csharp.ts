@@ -49,6 +49,7 @@ interface ServerCapabilities {
   semanticTokensProvider?: { legend: LspSemanticLegend; full?: boolean | object; range?: boolean };
   codeLensProvider?: { resolveProvider?: boolean };
   diagnosticProvider?: { identifier?: string };
+  documentOnTypeFormattingProvider?: { firstTriggerCharacter: string; moreTriggerCharacter?: string[] };
   [k: string]: unknown;
 }
 
@@ -145,6 +146,7 @@ export class CsharpSession {
             dataSupport: true,
           },
           formatting: {},
+          onTypeFormatting: {},
           rename: { prepareSupport: true },
           semanticTokens: {
             requests: { full: true, range: true },
@@ -1498,6 +1500,28 @@ export function registerProviders(): void {
         token,
       );
       return res ? { data: s.semanticTokens!(res.data) } : null;
+    },
+  });
+
+  // Rider reformats a statement on its `;` and a block on its `}`; Enter is left
+  // to Monaco and Haze's typing assists (csharpTyping.ts).
+  L.registerOnTypeFormattingEditProvider("csharp", {
+    autoFormatTriggerCharacters: [";", "}"],
+    async provideOnTypeFormattingEdits(model, position, ch, options, token) {
+      const s = ready(model);
+      const p = s?.caps.documentOnTypeFormattingProvider;
+      if (!s || !p || (p.firstTriggerCharacter !== ch && !p.moreTriggerCharacter?.includes(ch))) return null;
+      const res = await s.request<LspTextEdit[] | null>(
+        "textDocument/onTypeFormatting",
+        {
+          textDocument: { uri: serverUri(model) },
+          position: { line: position.lineNumber - 1, character: position.column - 1 },
+          ch,
+          options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces },
+        },
+        token,
+      );
+      return (res ?? []).map((e) => ({ range: toMonacoRange(e.range), text: e.newText }));
     },
   });
 
