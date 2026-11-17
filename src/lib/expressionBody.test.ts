@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { expandExpressionBody } from "./expressionBody";
+import { expandExpressionBody, expandInlineMethod } from "./expressionBody";
 
 /** Types `{` at `|` and returns the text with the caret marked, or null when nothing changes. */
-function type(src: string) {
+function type(src: string, expand = expandExpressionBody) {
   const offset = src.indexOf("|");
   const t = src.slice(0, offset) + src.slice(offset + 1);
-  const e = expandExpressionBody(t, offset, "    ");
+  const e = expand(t, offset, "    ");
   if (!e) return null;
   const out = t.slice(0, e.start) + e.text + t.slice(e.end);
   return out.slice(0, e.caret) + "|" + out.slice(e.caret);
@@ -58,5 +58,34 @@ describe("expandExpressionBody", () => {
     expect(type("return x => |x;")).toBeNull();
     expect(type("void Start() => Foo(|);")).toBeNull();
     expect(type("void Start() => Foo()|")).toBeNull();
+  });
+});
+
+describe("expandInlineMethod", () => {
+  const enter = (src: string) => type(src, expandInlineMethod);
+
+  it("lays out a one-line method when Enter is pressed at its braces", () => {
+    const src = "    private void OnActiveSceneChanged() { Refresh(); }";
+    expect(enter(src.replace("{ ", "{| "))).toBe("    private void OnActiveSceneChanged()\n    {\n        |Refresh();\n    }");
+    expect(enter(src.replace("{ ", "{ |"))).toBe("    private void OnActiveSceneChanged()\n    {\n        |Refresh();\n    }");
+    expect(enter(src.replace("() {", "()| {"))).toBe("    private void OnActiveSceneChanged()\n    {\n        |Refresh();\n    }");
+    expect(enter(src.replace(" }", "| }"))).toBe("    private void OnActiveSceneChanged()\n    {\n        Refresh();|\n    }");
+    expect(enter(src.replace(" }", " |}"))).toBe("    private void OnActiveSceneChanged()\n    {\n        Refresh();|\n    }");
+  });
+
+  it("puts each statement on its own line, and an empty body on an empty line", () => {
+    expect(enter("int F(int x) { var y = x * 2; return y; |}")).toBe("int F(int x)\n{\n    var y = x * 2;\n    return y;|\n}");
+    expect(enter("void F() {| }")).toBe("void F()\n{\n    |\n}");
+    expect(enter('void F() {| Log("a; }"); } // note')).toBe('void F()\n{\n    |Log("a; }");\n} // note');
+  });
+
+  it("leaves everything else to Enter", () => {
+    expect(enter("void F() { Refresh(); }|")).toBeNull();
+    expect(enter("void F() { Re|fresh(); }")).toBeNull();
+    expect(enter("if (x) {| Refresh(); }")).toBeNull();
+    expect(enter("var p = new Point() {| X = 1 };")).toBeNull();
+    expect(enter("Action a = () => {| Refresh(); };")).toBeNull();
+    expect(enter("public int X { get; |}")).toBeNull();
+    expect(enter("void F() {|\n    Refresh(); }")).toBeNull();
   });
 });

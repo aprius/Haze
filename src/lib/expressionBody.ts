@@ -1,3 +1,5 @@
+// Enter next to the braces of a one-line method lays the body out on its own
+// lines: `void F() { Foo(); }` → `void F()\n{\n    Foo();\n}`.
 // Typing `{` next to the `=>` of an expression-bodied C# member turns it into a
 // block body, as in Rider:
 //   void Start() => Foo();      →  void Start() { Foo(); }
@@ -119,7 +121,7 @@ function skipLiteral(t: string, i: number): number {
  * From `i`, the offset of the first `stop` outside brackets, strings and
  * comments, or -1 when a bracket closes first or the text ends.
  */
-function scanCode(t: string, i: number, stop: string): number {
+function scanCode(t: string, i: number, stop: string, abort = ",;"): number {
   const stack: string[] = [];
   const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
   while (i < t.length) {
@@ -145,7 +147,7 @@ function scanCode(t: string, i: number, stop: string): number {
     if (c === "(" || c === "[" || c === "{") stack.push(c);
     else if (c in pairs) {
       if (stack.pop() !== pairs[c]) return -1;
-    } else if (stack.length === 0 && (c === "," || c === ";")) return -1;
+    } else if (stack.length === 0 && abort.includes(c)) return -1;
     i++;
   }
   return -1;
@@ -269,4 +271,57 @@ export function expandExpressionBody(t: string, offset: number, indentUnit: stri
     caretInText = head.length + stmt.length;
   }
   return { start: headerEnd, end: semi + 1, text, caret: headerEnd + caretInText };
+}
+
+/** Statements of a block body, split on top-level `;`, or the whole body when that fails. */
+function statements(t: string, start: number, end: number) {
+  const out: string[] = [];
+  let i = skipWsFwd(t, start);
+  while (i < end) {
+    const semi = scanCode(t, i, ";", "");
+    if (semi < 0 || semi >= end) return [t.slice(skipWsFwd(t, start), end).trim()];
+    out.push(t.slice(i, semi + 1).trim());
+    i = skipWsFwd(t, semi + 1);
+  }
+  return out;
+}
+
+/**
+ * The edit that lays out a one-line method body `{ ... }` on its own lines,
+ * when Enter is pressed just before or after its `{`, or just before its `}`.
+ */
+export function expandInlineMethod(t: string, offset: number, indentUnit: string, eol = "\n"): BodyEdit | null {
+  const lineStart = t.lastIndexOf("\n", offset - 1) + 1;
+  const nl = t.indexOf("\n", offset);
+  const lineEnd = nl < 0 ? t.length : nl;
+  // The method's `{`: the first one on the line that follows a `)`.
+  let open = -1;
+  for (let i = t.indexOf("{", lineStart); i >= 0 && i < lineEnd; i = t.indexOf("{", i + 1)) {
+    const h = skipWsBack(t, i);
+    if (t[h - 1] === ")") {
+      open = i;
+      break;
+    }
+  }
+  if (open < 0) return null;
+  const headerEnd = skipWsBack(t, open);
+  const member = memberKind(t, headerEnd);
+  if (!member || member.kind === "property" || member.headerStart < lineStart) return null;
+  const close = scanCode(t, open + 1, "}", "");
+  if (close < 0 || close >= lineEnd) return null;
+  // Only a comment may follow the method on its line.
+  const rest = t.slice(close + 1, lineEnd).trim();
+  if (rest && !rest.startsWith("//") && !rest.startsWith("/*")) return null;
+  const atOpen = skipWsBack(t, offset) === open + 1 || skipWsFwd(t, offset) === open;
+  const atClose = skipWsFwd(t, offset) === close && offset > open;
+  if (!atOpen && !atClose) return null;
+
+  const indent = indentAt(t, member.headerStart);
+  const inner = indent + indentUnit;
+  const stmts = statements(t, open + 1, close).filter(Boolean);
+  const head = `${eol}${indent}{${eol}${inner}`;
+  const body = stmts.join(eol + inner);
+  const text = `${head}${body}${eol}${indent}}`;
+  const caret = headerEnd + head.length + (atOpen && !atClose ? 0 : body.length);
+  return { start: headerEnd, end: close + 1, text, caret };
 }
