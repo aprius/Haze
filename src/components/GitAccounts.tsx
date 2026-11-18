@@ -1,23 +1,39 @@
 // GitHub / GitLab accounts in Settings › Version Control.
 // Git commands Haze runs (push, pull, fetch…) use them for their servers; tokens stay in the OS keychain.
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, errorMessage, type DeviceCode, type GitAccount, type GitProvider } from "../lib/ipc";
 import { toast } from "./Overlays";
 import { PageHeader } from "./SettingsDialog";
 
-const PROVIDERS: Record<GitProvider, { name: string; server: string; tokenHelp: string; tokenUrl: (server: string) => string }> = {
+const PROVIDERS: Record<
+  GitProvider,
+  { name: string; server: string; tokenHelp: string; tokenUrl: (server: string) => string; appIdLabel: string; appHelp: ReactNode }
+> = {
   github: {
     name: "GitHub",
     server: "https://github.com",
     tokenHelp: "Scopes: repo, workflow, read:org, gist. Fine-grained tokens need Contents read/write.",
     tokenUrl: (s) => `${s}/settings/tokens/new?description=Haze&scopes=repo,workflow,read:org,gist`,
+    appIdLabel: "Client ID",
+    appHelp: (
+      <>
+        Create it on the server under Settings › Developer settings › OAuth Apps: tick <i>Enable Device Flow</i>, any callback URL.
+      </>
+    ),
   },
   gitlab: {
     name: "GitLab",
     server: "https://gitlab.com",
     tokenHelp: "Scopes: api, read_user.",
     tokenUrl: (s) => `${s}/-/user_settings/personal_access_tokens?name=Haze&scopes=api,read_user`,
+    appIdLabel: "Application ID",
+    appHelp: (
+      <>
+        Create it in GitLab under User Settings › Applications: enable the <i>device authorization grant</i>, untick <i>Confidential</i>, scopes{" "}
+        <code>api</code> and <code>read_user</code>, any redirect URI (GitLab 17.9 or later).
+      </>
+    ),
   },
 };
 
@@ -36,13 +52,12 @@ export function isAuthFailure(output: string): boolean {
 
 function LoginForm({
   provider,
-  githubOauth,
-  gitlabClientId,
+  builtInId,
   onDone,
 }: {
   provider: GitProvider;
-  githubOauth: boolean;
-  gitlabClientId: string | null;
+  /** The OAuth app built in for github.com / gitlab.com, if any. */
+  builtInId: string | null;
   onDone: () => void;
 }) {
   const p = PROVIDERS[provider];
@@ -55,11 +70,9 @@ function LoginForm({
   // Cancel can be clicked before polling starts, which a backend cancel would miss.
   const cancelled = useRef(false);
   const isDotCom = normalizeServer(server) === p.server;
-  // GitHub: the built-in app, github.com only. GitLab: the built-in app on
-  // gitlab.com, or an Application ID the user registered on their server.
-  const builtInGitlab = provider === "gitlab" && isDotCom && !!gitlabClientId;
-  const browserLogin = provider === "github" ? githubOauth : true;
-  const needsAppId = provider === "gitlab" && !builtInGitlab;
+  // The app built in on github.com / gitlab.com; elsewhere (GitHub
+  // Enterprise, self-hosted GitLab) an OAuth app the user registered there.
+  const needsAppId = !(isDotCom && builtInId);
 
   // Stop waiting for the browser when the form goes away.
   useEffect(
@@ -143,39 +156,31 @@ function LoginForm({
         <span>Server</span>
         <input className="modal-input" value={server} spellCheck={false} onChange={(e) => setServer(e.target.value)} />
       </div>
-      {browserLogin && (provider === "gitlab" || isDotCom) && (
+      {needsAppId && (
         <>
-          {needsAppId && (
-            <>
-              <div className="git-login-grid">
-                <span>Application ID</span>
-                <input
-                  className="modal-input"
-                  value={appId}
-                  spellCheck={false}
-                  placeholder="OAuth application on this server"
-                  onChange={(e) => setAppId(e.target.value)}
-                />
-              </div>
-              <div className="muted small">
-                Create it in GitLab under User Settings › Applications: enable the <i>device authorization grant</i>, untick{" "}
-                <i>Confidential</i>, scopes <code>api</code> and <code>read_user</code>, any redirect URI (GitLab 17.9 or later).
-              </div>
-            </>
-          )}
-          <button className="btn primary" disabled={busy || (needsAppId && !appId.trim())} onClick={() => void loginViaBrowser()}>
-            Log In via {p.name}…
-          </button>
-          <div className="muted small">Or use a token{provider === "github" ? " (also for GitHub Enterprise)" : ""}:</div>
+          <div className="git-login-grid">
+            <span>{p.appIdLabel}</span>
+            <input
+              className="modal-input"
+              value={appId}
+              spellCheck={false}
+              placeholder="OAuth application on this server"
+              onChange={(e) => setAppId(e.target.value)}
+            />
+          </div>
+          <div className="muted small">{p.appHelp}</div>
         </>
       )}
+      <button className="btn primary" disabled={busy || (needsAppId && !appId.trim())} onClick={() => void loginViaBrowser()}>
+        Log In via {p.name}…
+      </button>
+      <div className="muted small">Or use a token:</div>
       <div className="git-login-grid">
         <span>Token</span>
         <div className="git-login-token">
           <input
             className="modal-input"
             type="password"
-            autoFocus={!browserLogin}
             value={token}
             spellCheck={false}
             placeholder={provider === "github" ? "ghp_… or github_pat_…" : "glpat-…"}
@@ -204,16 +209,14 @@ function LoginForm({
 
 export function GitAccountsSection() {
   const [accounts, setAccounts] = useState<GitAccount[] | null>(null);
-  const [githubOauth, setGithubOauth] = useState(false);
-  const [gitlabClientId, setGitlabClientId] = useState<string | null>(null);
+  const [builtInIds, setBuiltInIds] = useState<Record<GitProvider, string | null>>({ github: null, gitlab: null });
   const [adding, setAdding] = useState<GitProvider | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reload = () =>
     api.gitAccounts().then(
       (i) => {
         setAccounts(i.accounts);
-        setGithubOauth(i.githubOauth);
-        setGitlabClientId(i.gitlabClientId);
+        setBuiltInIds({ github: i.githubClientId, gitlab: i.gitlabClientId });
       },
       (e) => setError(errorMessage(e)),
     );
@@ -257,8 +260,7 @@ export function GitAccountsSection() {
         <LoginForm
           key={adding}
           provider={adding}
-          githubOauth={githubOauth}
-          gitlabClientId={gitlabClientId}
+          builtInId={builtInIds[adding]}
           onDone={() => {
             setAdding(null);
             void reload();

@@ -26,7 +26,7 @@ npm run tauri dev        # run in development mode
 npm run tauri build      # build installers for the current platform
 ```
 
-*Log In via GitHub…* needs a GitHub OAuth App with Device Flow enabled: build with `HAZE_GITHUB_CLIENT_ID=<client id>`. Without it, Settings offers token login only.
+*Log In via GitHub…* on github.com uses Haze's GitHub OAuth App (Device Flow enabled), whose client ID is in `src-tauri/src/git_auth.rs`; build with `HAZE_GITHUB_CLIENT_ID=<client id>` to use another. GitHub Enterprise needs an OAuth App of its own, whose client ID the user enters.
 *Log In via GitLab…* on gitlab.com uses Haze's GitLab OAuth application (non-confidential, device authorization grant enabled, scopes `api`, `read_user`), whose ID is in `src-tauri/src/git_auth.rs`; build with `HAZE_GITLAB_CLIENT_ID=<application id>` to use another. A self-hosted GitLab needs an application of its own, whose ID the user enters.
 
 ### Tests

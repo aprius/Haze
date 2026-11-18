@@ -23,9 +23,14 @@ pub const CREDENTIAL_FLAG: &str = "--haze-git-credential";
 const ACCOUNTS_ENV: &str = "HAZE_GIT_ACCOUNTS";
 const KEYCHAIN_SERVICE: &str = "dev.haze.app.git";
 
-/// OAuth app for "Log In via GitHub…" (device flow, no client secret). Set
-/// at build time; without it only token login is offered.
-const GITHUB_CLIENT_ID: Option<&str> = option_env!("HAZE_GITHUB_CLIENT_ID");
+/// OAuth app on github.com for "Log In via GitHub…" (device flow, which
+/// needs no client secret, so its ID is no secret); a build can name another
+/// with `HAZE_GITHUB_CLIENT_ID`. GitHub Enterprise needs an app of its own,
+/// whose client ID the user enters.
+const GITHUB_CLIENT_ID: Option<&str> = match option_env!("HAZE_GITHUB_CLIENT_ID") {
+    Some(id) => Some(id),
+    None => Some("Ov23lio4MCxgMt3usQHp"),
+};
 /// Scopes requested: push/pull private repos, Actions workflows, orgs, gists.
 const GITHUB_SCOPES: &str = "repo workflow read:org gist";
 /// OAuth application on gitlab.com for "Log In via GitLab…" (device flow,
@@ -62,8 +67,8 @@ pub struct Account {
 #[serde(rename_all = "camelCase")]
 pub struct AccountsInfo {
     pub accounts: Vec<Account>,
-    /// "Log In via GitHub…" is available (an OAuth app was built in).
-    pub github_oauth: bool,
+    /// The github.com OAuth app built in, if any (GitHub Enterprise needs its own).
+    pub github_client_id: Option<String>,
     /// The gitlab.com application built in, if any (self-hosted servers need their own).
     pub gitlab_client_id: Option<String>,
 }
@@ -81,7 +86,9 @@ pub fn init(path: PathBuf) {
 pub fn info() -> AccountsInfo {
     AccountsInfo {
         accounts: accounts(),
-        github_oauth: GITHUB_CLIENT_ID.is_some_and(|id| !id.is_empty()),
+        github_client_id: GITHUB_CLIENT_ID
+            .filter(|id| !id.is_empty())
+            .map(str::to_string),
         gitlab_client_id: GITLAB_CLIENT_ID
             .filter(|id| !id.is_empty())
             .map(str::to_string),
@@ -368,33 +375,25 @@ static DEVICE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Starts "Log In via GitHub…" / "Log In via GitLab…": returns the code the
 /// user types at `verification_uri`, which the frontend opens in the browser.
-/// `client_id` is the self-hosted GitLab's application; empty for the one built in.
+/// `client_id` is the OAuth app on a GitHub Enterprise or self-hosted
+/// GitLab server; empty for the one built in for github.com / gitlab.com.
 pub fn device_start(provider: Provider, server: &str, client_id: &str) -> Result<DeviceCode> {
     let server = normalize_server(server);
-    let (url, client_id, scopes) = match provider {
-        Provider::Github => (
-            "https://github.com/login/device/code".to_string(),
-            GITHUB_CLIENT_ID
-                .filter(|id| !id.is_empty())
-                .context("browser login is not configured in this build")?
-                .to_string(),
-            GITHUB_SCOPES,
-        ),
-        Provider::Gitlab => {
-            let id = match client_id.trim() {
-                "" if server == "https://gitlab.com" => GITLAB_CLIENT_ID
-                    .filter(|id| !id.is_empty())
-                    .context("enter the Application ID of a GitLab OAuth application")?
-                    .to_string(),
-                "" => bail!("enter the Application ID of an OAuth application on {server}"),
-                id => id.to_string(),
-            };
-            (
-                format!("{server}/oauth/authorize_device"),
-                id,
-                GITLAB_SCOPES,
-            )
-        }
+    let (built_in, dot_com, what) = match provider {
+        Provider::Github => (GITHUB_CLIENT_ID, "https://github.com", "Client ID"),
+        Provider::Gitlab => (GITLAB_CLIENT_ID, "https://gitlab.com", "Application ID"),
+    };
+    let client_id = match client_id.trim() {
+        "" if server == dot_com => built_in
+            .filter(|id| !id.is_empty())
+            .with_context(|| format!("enter the {what} of an OAuth application"))?
+            .to_string(),
+        "" => bail!("enter the {what} of an OAuth application on {server}"),
+        id => id.to_string(),
+    };
+    let (url, scopes) = match provider {
+        Provider::Github => (format!("{server}/login/device/code"), GITHUB_SCOPES),
+        Provider::Gitlab => (format!("{server}/oauth/authorize_device"), GITLAB_SCOPES),
     };
     let mut resp = agent()
         .post(&url)
@@ -426,15 +425,23 @@ pub fn device_start(provider: Provider, server: &str, client_id: &str) -> Result
                 ),
             }
         }
-        s => bail!("{server} answered HTTP {s}"),
+        404 => bail!("{server} does not know this {what}, or does not offer browser login: use a token"),
+        s if provider == Provider::Gitlab => bail!("{server} answered HTTP {s}"),
+        _ => {}
     }
-    let mut code: DeviceCode = resp.body_mut().read_json().context("unexpected answer")?;
+    // GitHub answers some refusals with an `error` field, whatever the status.
+    let body: serde_json::Value = resp.body_mut().read_json().context("unexpected answer")?;
+    match body.get("error").and_then(|e| e.as_str()) {
+        None => {}
+        Some("device_flow_disabled") => bail!(
+            "Device Flow is off for this OAuth app: tick Enable Device Flow in its settings on {server}"
+        ),
+        Some("incorrect_client_credentials") => bail!("{server} does not know this {what}"),
+        Some(e) => bail!("{server} refused: {e}"),
+    }
+    let mut code: DeviceCode = serde_json::from_value(body).context("unexpected answer")?;
     code.provider = provider;
-    code.server = if provider == Provider::Github {
-        "https://github.com".into()
-    } else {
-        server
-    };
+    code.server = server;
     code.client_id = client_id;
     Ok(code)
 }
@@ -446,7 +453,7 @@ pub fn device_poll(code: &DeviceCode) -> Result<Account> {
     let mut interval = code.interval.max(1);
     let (url, name) = match code.provider {
         Provider::Github => (
-            "https://github.com/login/oauth/access_token".to_string(),
+            format!("{}/login/oauth/access_token", code.server),
             "GitHub",
         ),
         Provider::Gitlab => (format!("{}/oauth/token", code.server), "GitLab"),

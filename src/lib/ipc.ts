@@ -126,8 +126,8 @@ export interface GitAccount {
 
 export interface GitAccountsInfo {
   accounts: GitAccount[];
-  /** "Log In via GitHub…" (browser) is available in this build. */
-  githubOauth: boolean;
+  /** The github.com OAuth app built in; GitHub Enterprise needs its own. */
+  githubClientId: string | null;
   /** The gitlab.com OAuth application built in; self-hosted GitLab needs its own. */
   gitlabClientId: string | null;
 }
