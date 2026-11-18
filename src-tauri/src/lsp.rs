@@ -119,7 +119,8 @@ pub fn roslyn_log_dir() -> Option<PathBuf> {
 /// default install location, which a Homebrew or user-local .NET is not in.
 /// Homebrew's `bin/dotnet` is a script that runs `../libexec/dotnet`.
 fn dotnet_root() -> Option<PathBuf> {
-    let dotnet = find_in_path("dotnet")?.canonicalize().ok()?;
+    // Verbatim `\\?\` paths break MSBuild's wildcard imports (issue #42).
+    let dotnet = crate::paths::canonicalize(&find_in_path("dotnet")?).ok()?;
     let dir = dotnet.parent()?;
     [dir.to_path_buf(), dir.parent()?.join("libexec")]
         .into_iter()
@@ -324,6 +325,14 @@ impl LspServers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn dotnet_root_is_not_a_verbatim_path() {
+        if let Some(root) = dotnet_root() {
+            assert!(!root.to_string_lossy().starts_with(r"\\?\"), "{root:?}");
+        }
+    }
 
     #[test]
     fn finds_the_exe_behind_a_dotnet_tool_shim() {
