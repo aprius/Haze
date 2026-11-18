@@ -660,6 +660,7 @@ export const api = {
   listBackdropFolder: (folder: string) =>
     invoke<{ root: string[]; day: string[]; night: string[] }>("list_backdrop_folder", { folder }),
   clipboardFilePaths: () => invoke<string[]>("clipboard_file_paths"),
+  clipboardWriteText: (text: string) => invoke<void>("clipboard_write_text", { text }),
 
   readLines: (requests: { path: string; lines: number[] }[]) => invoke<string[][]>("read_lines", { requests }),
 

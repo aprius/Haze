@@ -672,6 +672,26 @@ function dismiss(id: number) {
   useToasts.setState((s) => ({ items: s.items.filter((t) => t.id !== id) }));
 }
 
+/**
+ * Copies `text` and says so. Through the focused window's clipboard, then the
+ * native one: WebKit refuses `navigator.clipboard` once the click that asked
+ * is no longer the current gesture (a menu that closed first, another window).
+ */
+export async function copyText(text: string, done = "Copied to clipboard"): Promise<void> {
+  try {
+    const nav = (hostDocument().defaultView ?? window).navigator;
+    await nav.clipboard.writeText(text);
+  } catch {
+    try {
+      const { api } = await import("../lib/ipc");
+      await api.clipboardWriteText(text);
+    } catch (e) {
+      return toast(`Could not copy: ${e instanceof Error ? e.message : String(e)}`, "error");
+    }
+  }
+  toast(done);
+}
+
 export function toast(text: string, kind: "error" | "info" = "info", action?: ToastAction): void {
   const id = Date.now() + Math.random();
   useToasts.setState((s) => ({ items: [...s.items, { id, text, kind, action }] }));

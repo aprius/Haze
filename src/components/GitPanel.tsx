@@ -10,7 +10,7 @@ import { repo, runGit, useGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openDiff } from "./DiffView";
 import { branchMenu, checkout, listWorktrees, newBranch, newWorktree, onLogFilter, openWorktree, setLogFilter, takeLogFilter, type Worktree } from "./GitDialogs";
-import { choose, confirmAction, openMenu, prompt, toast } from "./Overlays";
+import { choose, confirmAction, copyText, openMenu, prompt, toast } from "./Overlays";
 import { openRebaseDialog } from "./RebaseDialog";
 import { ToolTabs } from "./BuildPanel";
 import { Splitter } from "./Shell";
@@ -180,7 +180,7 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
         {d.committer !== d.author && <div className="muted small">committed by {d.committer}</div>}
         <div className="small">
           <span className="hash">{d.hash.slice(0, 12)}</span>
-          <button className="icon-btn" title="Copy revision number" onClick={() => void navigator.clipboard.writeText(d.hash).then(() => toast("Copied"))}>
+          <button className="icon-btn" title="Copy revision number" onClick={() => void copyText(d.hash, "Copied revision number")}>
             <Copy size={14} />
           </button>
         </div>
@@ -519,7 +519,7 @@ export function GitPanel({ project }: { project: Project }) {
     const short = c.hash.slice(0, 8);
     const isHead = c.hash === head;
     return [
-      { label: "Copy Revision Number", action: () => void navigator.clipboard.writeText(c.hash) },
+      { label: "Copy Revision Number", action: () => void copyText(c.hash, "Copied revision number") },
       { separator: true },
       { label: "Checkout Revision", action: () => void checkout(project, c.hash) },
       { label: "New Branch…", action: () => void newBranch(project, c.hash) },

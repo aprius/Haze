@@ -291,6 +291,40 @@ async fn find_files(
     blocking(move || Ok(index.find(&root, &query, limit.unwrap_or(50), include_ignored))).await
 }
 
+/// Text onto the system clipboard, for when the webview refuses
+/// `navigator.clipboard` (WebKit wants a focused document and a fresh click).
+#[tauri::command]
+async fn clipboard_write_text(text: String) -> CmdResult<()> {
+    blocking(move || {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let candidates: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
+            &[("pbcopy", &[])]
+        } else if cfg!(windows) {
+            &[("clip", &[])]
+        } else {
+            &[("wl-copy", &[]), ("xclip", &["-selection", "clipboard"]), ("xsel", &["--clipboard", "--input"])]
+        };
+        let mut last = anyhow::anyhow!("no clipboard tool found");
+        for (cmd, args) in candidates {
+            let mut child = match Command::new(cmd).args(*args).stdin(Stdio::piped()).spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    last = e.into();
+                    continue;
+                }
+            };
+            child.stdin.take().expect("piped stdin").write_all(text.as_bytes())?;
+            if child.wait()?.success() {
+                return Ok(());
+            }
+            last = anyhow::anyhow!("{cmd} failed");
+        }
+        Err(last)
+    })
+    .await
+}
+
 /// Files copied in Finder: the webview hides their paths from a paste, and
 /// a terminal pastes them as paths.
 #[tauri::command]
@@ -1291,6 +1325,7 @@ pub fn run() {
             media_url,
             list_backdrop_folder,
             clipboard_file_paths,
+            clipboard_write_text,
             git_log,
             git_toplevel,
             git_commit,
