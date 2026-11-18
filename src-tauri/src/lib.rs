@@ -10,6 +10,8 @@ pub mod git_auth;
 mod git_log;
 mod git_ops;
 mod lsp;
+#[cfg(test)]
+mod lsp_unity_e2e;
 mod media;
 mod nesting;
 mod opencode_config;
