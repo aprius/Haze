@@ -4851,9 +4851,144 @@ html:has(.float-external) body {
 }
 .git-login-grid {
   display: grid;
-  grid-template-columns: 104px 1fr;
+  grid-template-columns: auto 1fr;
   align-items: center;
   gap: 6px 10px;
+}
+.git-login {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  background: var(--editor-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-width: 520px;
+}
+.git-login-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px -6px 0 0;
+}
+.git-login-head b {
+  font-size: calc(var(--ui-font-size) * 14 / 13);
+}
+.git-mark {
+  flex: none;
+}
+.git-login-seg {
+  align-self: flex-start;
+}
+.git-login-seg .seg-btn {
+  padding: 3px 12px;
+}
+.git-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.git-field > span {
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+  color: var(--muted);
+}
+.git-login-method {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.git-login-browser {
+  justify-content: center;
+  padding: 6px 14px;
+  font-weight: 600;
+}
+.git-login-note {
+  text-align: center;
+}
+.git-steps {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.git-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+.git-link:hover {
+  text-decoration: underline;
+}
+.git-login-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: calc(var(--ui-font-size) * 11 / 13);
+}
+.git-login-or::before,
+.git-login-or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+.git-disclosure {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+}
+.git-disclosure .chev {
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+.git-disclosure[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+.git-scope {
+  font-family: var(--font-mono);
+  padding: 0 4px;
+  margin-right: 3px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.git-login-error {
+  margin: 0;
+}
+.git-login-lead {
+  color: var(--muted);
+}
+.git-device {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+.git-login-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.git-account-host {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .git-login-token {
   display: flex;
@@ -4919,10 +5054,9 @@ html:has(.float-external) body {
 }
 .git-device-code {
   font-family: var(--font-mono);
-  font-size: 22px;
-  letter-spacing: 3px;
-  text-align: center;
-  padding: 6px;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 4px;
   user-select: text;
 }
 
