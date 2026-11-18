@@ -34,7 +34,8 @@ export const parseDiffPath = (path: string) => parse<DiffSpec>(DIFF, path);
 export const mergePath = (spec: MergeSpec) => MERGE + JSON.stringify(spec);
 export const parseMergePath = (path: string) => parse<MergeSpec>(MERGE, path);
 
-const short = (rev: string) => (/^[0-9a-f]{40}/.test(rev) ? rev.slice(0, 8) + rev.slice(40) : rev);
+/** Shortens a leading full object id (40 hex digits, or 64 in a SHA-256 repository) to 8. */
+const short = (rev: string) => rev.replace(/^([0-9a-f]{8})(?:[0-9a-f]{56}|[0-9a-f]{32})(?![0-9a-f])/, "$1");
 
 export function diffTitle(spec: DiffSpec): string {
   const left = spec.left ? short(spec.left) : "∅";

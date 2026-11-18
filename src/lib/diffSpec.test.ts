@@ -21,6 +21,8 @@ describe("diff and merge tab paths", () => {
     expect(diffTitle({ root: "/r", rel: "src/a.cs", left: "HEAD", right: "working" })).toBe("a.cs (HEAD ↔ Local)");
     expect(diffTitle({ root: "/r", rel: "a.cs", left: null, right: hash })).toBe("a.cs (∅ ↔ 01234567)");
     expect(diffTitle({ root: "/r", rel: "a.cs", left: hash + "^", right: hash })).toBe("a.cs (01234567^ ↔ 01234567)");
+    const sha256 = hash + "89abcdef0123456789abcdef";
+    expect(diffTitle({ root: "/r", rel: "a.cs", left: sha256 + "^", right: sha256 })).toBe("a.cs (01234567^ ↔ 01234567)");
     expect(mergeTitle({ root: "/r", rel: "dir/x.cs" })).toBe("Merge x.cs");
   });
 });

@@ -297,6 +297,8 @@ async function renameAt(editor: monaco.editor.ICodeEditor) {
 // Keyed by model: a file closed and opened again gets a new one without them.
 const blameDecorations = new WeakMap<monaco.editor.ITextModel, string[]>();
 const UNCOMMITTED = "0".repeat(40);
+/** Git blames lines not committed yet to the all-zero id: 40 zeros, or 64 in a SHA-256 repository. */
+const isUncommitted = (hash: string) => /^0+$/.test(hash);
 
 /** Blames the model's text: unsaved edits as they are, so the lines match the editor. */
 function blameModel(root: string, model: monaco.editor.ITextModel): Promise<BlameLine[]> {
@@ -307,7 +309,7 @@ function blameModel(root: string, model: monaco.editor.ITextModel): Promise<Blam
 
 /** A blamed line's commit, shown on hover; nothing for lines not committed yet. */
 function blameHover(b: BlameLine): monaco.IMarkdownString | undefined {
-  if (b.hash === UNCOMMITTED) return undefined;
+  if (isUncommitted(b.hash)) return undefined;
   return { value: `**${b.summary}**\n\n${b.author} · ${new Date(b.time * 1000).toLocaleString()} · \`${b.hash.slice(0, 12)}\`` };
 }
 
@@ -330,7 +332,7 @@ async function toggleBlame(project: Project, editor: monaco.editor.ICodeEditor) 
         .filter((l) => l.line >= 1 && l.line <= model.getLineCount())
         .map((l) => {
           const date = new Date(l.time * 1000).toISOString().slice(0, 10);
-          const label = l.hash === UNCOMMITTED ? "Not committed yet".padEnd(31) : `${l.hash.slice(0, 7)} ${date} ${l.author.slice(0, 12).padEnd(12)}`;
+          const label = isUncommitted(l.hash) ? "Not committed yet".padEnd(31) : `${l.hash.slice(0, 7)} ${date} ${l.author.slice(0, 12).padEnd(12)}`;
           return {
             range: new monaco.Range(l.line, 1, l.line, 1),
             options: {
@@ -439,7 +441,7 @@ setCodeVisionAuthor(async (model, from, to) => {
   for (let l = from; l <= to; l++) {
     const b = lines.get(l);
     if (!b) continue;
-    const who = b.hash === UNCOMMITTED ? "You" : b.author;
+    const who = isUncommitted(b.hash) ? "You" : b.author;
     count.set(who, (count.get(who) ?? 0) + 1);
   }
   const ranked = [...count].sort((a, b) => b[1] - a[1]);
@@ -515,7 +517,7 @@ function installLineBlame(project: Project, editor: monaco.editor.ICodeEditor): 
       if (editor.getModel() !== model || editor.getSelection()?.positionLineNumber !== line || line > model.getLineCount()) return;
       if (keyOf(model, line) !== key) return;
       const summary = b.summary.length > 60 ? b.summary.slice(0, 59) + "…" : b.summary;
-      const label = b.hash === UNCOMMITTED ? "You, uncommitted changes" : `${b.author}, ${timeAgo(b.time)} • ${summary}`;
+      const label = isUncommitted(b.hash) ? "You, uncommitted changes" : `${b.author}, ${timeAgo(b.time)} • ${summary}`;
       const end = model.getLineMaxColumn(line);
       shown.set([
         {

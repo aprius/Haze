@@ -227,9 +227,10 @@ pub fn layout_from(
 
 const FORMAT: &str = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
 
-/// The commit a "Text or hash" filter names, when it is a hash (prefix).
+/// The commit a "Text or hash" filter names, when it is a hash (prefix): up to
+/// 64 digits, for SHA-256 repositories.
 fn commit_named_by(root: &Path, text: &str) -> Option<Commit> {
-    if !(4..=40).contains(&text.len()) || !text.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !(4..=64).contains(&text.len()) || !text.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
     let out = git_command()

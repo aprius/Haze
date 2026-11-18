@@ -610,6 +610,11 @@ pub struct BlameLine {
     pub summary: String,
 }
 
+/// Whether `s` is a full object id: 40 hex digits (SHA-1) or 64 (SHA-256 repositories).
+pub fn is_object_id(s: &str) -> bool {
+    matches!(s.len(), 40 | 64) && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// Parses `git blame --line-porcelain` output.
 pub fn parse_blame(out: &str) -> Vec<BlameLine> {
     let mut lines = Vec::new();
@@ -625,7 +630,7 @@ pub fn parse_blame(out: &str) -> Vec<BlameLine> {
         let mut words = l.splitn(2, ' ');
         let key = words.next().unwrap_or("");
         let val = words.next().unwrap_or("");
-        if key.len() == 40 && key.chars().all(|c| c.is_ascii_hexdigit()) {
+        if is_object_id(key) {
             let final_line = val
                 .split(' ')
                 .nth(1)
@@ -1227,6 +1232,20 @@ mod tests {
         assert_eq!(at_head.len(), 2);
         assert!(at_head.iter().all(|b| b.summary == "init"));
         assert!(super::blame(r.path(), "a.cs", None, Some("--contents")).is_err());
+    }
+
+    #[test]
+    fn blame_in_sha256_repository() {
+        let r = Repo(tempfile::tempdir().unwrap());
+        r.git(&["init", "-q", "-b", "main", "--object-format=sha256"]);
+        r.write("a.cs", "line1\nline2\n");
+        r.git(&["add", "."]);
+        r.git(&["commit", "-q", "-m", "init"]);
+        let blame = blame(r.path(), "a.cs", Some(b"line1\nline2\nnew\n"), None).unwrap();
+        assert_eq!(blame.len(), 3);
+        assert_eq!(blame[0].hash.len(), 64);
+        assert_eq!(blame[0].summary, "init");
+        assert_eq!(blame[2].hash, "0".repeat(64));
     }
 
     #[test]
