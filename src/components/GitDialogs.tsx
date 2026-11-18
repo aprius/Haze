@@ -547,6 +547,7 @@ export function PullDialog({ project }: { project: Project | null }) {
   const [mode, setMode] = useState<PullMode>(pullMode);
   const [fetching, setFetching] = useState(false);
   const [commits, setCommits] = useState<Outgoing[] | null>(null);
+  const pullBtn = useRef<HTMLButtonElement>(null);
 
   const current = r?.branches?.current ?? null;
   const cur = r?.branches?.branches.find((b) => b.kind === "local" && b.current);
@@ -609,10 +610,21 @@ export function PullDialog({ project }: { project: Project | null }) {
     };
   }, [open, r?.root, ref, known, fetching, r?.branches?.head]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!open || !project || project.id !== projectId) return null;
   const canPull = remotes.length > 0 && !!current && !!target.trim();
+  const enabled = canPull && known;
+  // The button starts disabled while fetching (so autoFocus misses it) and a disabled button drops
+  // focus to <body>: once it is enabled, focus it unless the user is in one of the dialog's selects.
+  useEffect(() => {
+    const btn = pullBtn.current;
+    if (!open || !enabled || !btn) return;
+    const active = btn.ownerDocument.activeElement;
+    if (active instanceof HTMLSelectElement && btn.closest(".modal")?.contains(active)) return;
+    btn.focus();
+  }, [open, enabled, commits]);
+
+  if (!open || !project || project.id !== projectId) return null;
   const run = () => {
-    if (!canPull) return;
+    if (!canPull || !known) return;
     closePull();
     void pull(project, remote, target.trim(), mode);
   };
@@ -623,7 +635,11 @@ export function PullDialog({ project }: { project: Project | null }) {
         tabIndex={-1}
         onKeyDown={(e) => {
           if (e.key === "Escape") closePull();
-          if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run();
+          // Enter pulls from anywhere in the dialog (e.g. right after picking a branch); a focused button handles it itself.
+          else if (e.key === "Enter" && !(e.target instanceof HTMLButtonElement)) {
+            e.preventDefault();
+            run();
+          }
           e.stopPropagation();
         }}
       >
@@ -671,7 +687,7 @@ export function PullDialog({ project }: { project: Project | null }) {
           <button className="btn" onClick={closePull}>
             Cancel
           </button>
-          <button autoFocus className="btn primary" disabled={!canPull || !known} onClick={run}>
+          <button ref={pullBtn} autoFocus className="btn primary" disabled={!enabled} onClick={run}>
             Pull
           </button>
         </div>
