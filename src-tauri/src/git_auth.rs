@@ -28,6 +28,16 @@ const KEYCHAIN_SERVICE: &str = "dev.haze.app.git";
 const GITHUB_CLIENT_ID: Option<&str> = option_env!("HAZE_GITHUB_CLIENT_ID");
 /// Scopes requested: push/pull private repos, Actions workflows, orgs, gists.
 const GITHUB_SCOPES: &str = "repo workflow read:org gist";
+/// OAuth application on gitlab.com for "Log In via GitLab…" (device flow,
+/// not confidential, so its ID is no secret); a build can name another with
+/// `HAZE_GITLAB_CLIENT_ID`. A self-hosted GitLab needs its own application,
+/// whose ID the user enters.
+const GITLAB_CLIENT_ID: Option<&str> = match option_env!("HAZE_GITLAB_CLIENT_ID") {
+    Some(id) => Some(id),
+    None => Some("8c47cd58d3590e268b19cb88c0d70e91c9164d9ca5e03a199f9da3e1279ad0a8"),
+};
+/// The API (merge requests), the profile, and git over HTTPS.
+const GITLAB_SCOPES: &str = "api read_user";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -54,6 +64,8 @@ pub struct AccountsInfo {
     pub accounts: Vec<Account>,
     /// "Log In via GitHub…" is available (an OAuth app was built in).
     pub github_oauth: bool,
+    /// The gitlab.com application built in, if any (self-hosted servers need their own).
+    pub gitlab_client_id: Option<String>,
 }
 
 static ACCOUNTS: RwLock<Option<(PathBuf, Vec<Account>)>> = RwLock::new(None);
@@ -70,6 +82,9 @@ pub fn info() -> AccountsInfo {
     AccountsInfo {
         accounts: accounts(),
         github_oauth: GITHUB_CLIENT_ID.is_some_and(|id| !id.is_empty()),
+        gitlab_client_id: GITLAB_CLIENT_ID
+            .filter(|id| !id.is_empty())
+            .map(str::to_string),
     }
 }
 
@@ -177,14 +192,20 @@ fn keychain(id: &str) -> Result<keyring::Entry> {
 /// Validates the token and saves the account. One account per host (git asks
 /// for credentials per host): a new login replaces the previous one.
 pub fn login_with_token(provider: Provider, server: &str, token: &str) -> Result<Account> {
-    let server = normalize_server(server);
     let token = token.trim();
     if token.is_empty() {
         bail!("enter a token");
     }
+    save_account(provider, server, token, token)
+}
+
+/// Saves the account `token` belongs to, with `secret` (the token itself, or
+/// an OAuth grant as JSON) in the keychain.
+fn save_account(provider: Provider, server: &str, token: &str, secret: &str) -> Result<Account> {
+    let server = normalize_server(server);
     let account = whoami(provider, &server, token)?;
     keychain(&account.id)?
-        .set_password(token)
+        .set_password(secret)
         .context("cannot save the token in the system keychain")?;
     let mut replaced = Vec::new();
     update(|list| {
@@ -220,44 +241,216 @@ pub struct DeviceCode {
     pub device_code: String,
     #[serde(alias = "user_code")]
     pub user_code: String,
+    /// The page to open: with the code filled in when the server offers it
+    /// (GitLab's `verification_uri_complete`).
     #[serde(alias = "verification_uri")]
     pub verification_uri: String,
+    #[serde(default, alias = "verification_uri_complete")]
+    pub verification_uri_complete: Option<String>,
+    #[serde(default = "five")]
     pub interval: u64,
     #[serde(alias = "expires_in")]
     pub expires_in: u64,
+    /// Filled in by `device_start`, handed back to `device_poll`.
+    #[serde(default = "github")]
+    pub provider: Provider,
+    #[serde(default)]
+    pub server: String,
+    #[serde(default)]
+    pub client_id: String,
+}
+
+fn five() -> u64 {
+    5
+}
+fn github() -> Provider {
+    Provider::Github
+}
+
+/// An OAuth grant that expires (GitLab's last two hours), kept in the
+/// keychain as JSON in place of a plain token.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct OAuthGrant {
+    access: String,
+    refresh: String,
+    /// Unix seconds.
+    expires_at: u64,
+    client_id: String,
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+#[derive(Deserialize)]
+struct GrantJson {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_in: Option<u64>,
+    error: Option<String>,
+    error_description: Option<String>,
+    interval: Option<u64>,
+}
+
+impl GrantJson {
+    /// The grant to keep: an OAuth grant when it can be refreshed, else the bare token.
+    fn into_secret(self, client_id: &str) -> Option<(String, String)> {
+        let access = self.access_token?;
+        let secret = match (self.refresh_token, self.expires_in) {
+            (Some(refresh), Some(expires_in)) => serde_json::to_string(&OAuthGrant {
+                access: access.clone(),
+                refresh,
+                expires_at: now() + expires_in,
+                client_id: client_id.to_string(),
+            })
+            .ok()?,
+            _ => access.clone(),
+        };
+        Some((access, secret))
+    }
+}
+
+/// The token stored for an account, refreshed first when it is an OAuth
+/// grant about to expire. Also called by the credential helper (its own
+/// process): a refresh token works once, so a refresh that fails reads the
+/// keychain again, in case another process has just refreshed it.
+fn token_of(id: &str, server: &str) -> Result<String> {
+    let entry = keychain(id)?;
+    let stored = entry.get_password()?;
+    let Ok(grant) = serde_json::from_str::<OAuthGrant>(&stored) else {
+        return Ok(stored);
+    };
+    if grant.expires_at > now() + 60 {
+        return Ok(grant.access);
+    }
+    match refresh(server, &grant) {
+        Ok(fresh) => {
+            entry.set_password(&serde_json::to_string(&fresh)?)?;
+            Ok(fresh.access)
+        }
+        Err(e) => match serde_json::from_str::<OAuthGrant>(&entry.get_password()?) {
+            Ok(other) if other != grant && other.expires_at > now() => Ok(other.access),
+            _ => Err(e.context(format!(
+                "log in to {server} again in Settings › Version Control"
+            ))),
+        },
+    }
+}
+
+fn refresh(server: &str, grant: &OAuthGrant) -> Result<OAuthGrant> {
+    let mut resp = agent()
+        .post(&format!("{server}/oauth/token"))
+        .header("Accept", "application/json")
+        .send_form([
+            ("grant_type", "refresh_token"),
+            ("refresh_token", grant.refresh.as_str()),
+            ("client_id", grant.client_id.as_str()),
+        ])
+        .with_context(|| format!("cannot reach {server}"))?;
+    let answer: GrantJson = resp.body_mut().read_json().context("unexpected answer")?;
+    if let Some(e) = &answer.error {
+        bail!(
+            "{server} did not renew the login: {}",
+            answer.error_description.as_deref().unwrap_or(e)
+        );
+    }
+    let (_, secret) = answer
+        .into_secret(&grant.client_id)
+        .context("unexpected answer")?;
+    serde_json::from_str(&secret).context("the renewed login does not expire")
 }
 
 /// Bumped to stop a pending `device_poll` (dialog closed, new attempt).
 static DEVICE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Starts "Log In via GitHub…": returns the code the user types at
-/// `verification_uri`, which the frontend opens in the browser.
-pub fn device_start() -> Result<DeviceCode> {
-    let client_id = GITHUB_CLIENT_ID.context("browser login is not configured in this build")?;
+/// Starts "Log In via GitHub…" / "Log In via GitLab…": returns the code the
+/// user types at `verification_uri`, which the frontend opens in the browser.
+/// `client_id` is the self-hosted GitLab's application; empty for the one built in.
+pub fn device_start(provider: Provider, server: &str, client_id: &str) -> Result<DeviceCode> {
+    let server = normalize_server(server);
+    let (url, client_id, scopes) = match provider {
+        Provider::Github => (
+            "https://github.com/login/device/code".to_string(),
+            GITHUB_CLIENT_ID
+                .filter(|id| !id.is_empty())
+                .context("browser login is not configured in this build")?
+                .to_string(),
+            GITHUB_SCOPES,
+        ),
+        Provider::Gitlab => {
+            let id = match client_id.trim() {
+                "" if server == "https://gitlab.com" => GITLAB_CLIENT_ID
+                    .filter(|id| !id.is_empty())
+                    .context("enter the Application ID of a GitLab OAuth application")?
+                    .to_string(),
+                "" => bail!("enter the Application ID of an OAuth application on {server}"),
+                id => id.to_string(),
+            };
+            (
+                format!("{server}/oauth/authorize_device"),
+                id,
+                GITLAB_SCOPES,
+            )
+        }
+    };
     let mut resp = agent()
-        .post("https://github.com/login/device/code")
+        .post(&url)
         .header("Accept", "application/json")
-        .send_form([("client_id", client_id), ("scope", GITHUB_SCOPES)])
-        .context("cannot reach github.com")?;
-    if resp.status() != 200 {
-        bail!("github.com answered HTTP {}", resp.status());
+        .send_form([("client_id", client_id.as_str()), ("scope", scopes)])
+        .with_context(|| format!("cannot reach {server}"))?;
+    match resp.status().as_u16() {
+        200 => {}
+        401 if provider == Provider::Gitlab => bail!(
+            "{server} does not know this Application ID (or the application is confidential: untick Confidential)"
+        ),
+        404 if provider == Provider::Gitlab => {
+            bail!("{server} does not offer browser login (GitLab 17.9 or later is needed): use a token")
+        }
+        400 if provider == Provider::Gitlab => {
+            let e: GrantJson = resp.body_mut().read_json().context("unexpected answer")?;
+            match e.error.as_deref() {
+                // Whatever the scopes: the application itself is refused.
+                Some("access_denied") => bail!(
+                    "{server} refused this application: edit it in GitLab (User Settings › Applications), enable the device authorization grant and untick Confidential"
+                ),
+                Some("invalid_scope") => bail!(
+                    "the application on {server} lacks scopes: tick {} in its settings",
+                    GITLAB_SCOPES.replace(' ', " and ")
+                ),
+                _ => bail!(
+                    "{server} refused: {}",
+                    e.error_description.or(e.error).unwrap_or_default()
+                ),
+            }
+        }
+        s => bail!("{server} answered HTTP {s}"),
     }
-    Ok(resp.body_mut().read_json()?)
-}
-
-#[derive(Deserialize)]
-struct TokenJson {
-    access_token: Option<String>,
-    error: Option<String>,
-    interval: Option<u64>,
+    let mut code: DeviceCode = resp.body_mut().read_json().context("unexpected answer")?;
+    code.provider = provider;
+    code.server = if provider == Provider::Github {
+        "https://github.com".into()
+    } else {
+        server
+    };
+    code.client_id = client_id;
+    Ok(code)
 }
 
 /// Waits until the user approves the code in the browser, then saves the account.
 pub fn device_poll(code: &DeviceCode) -> Result<Account> {
-    let client_id = GITHUB_CLIENT_ID.context("browser login is not configured in this build")?;
     let generation = DEVICE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let deadline = Instant::now() + Duration::from_secs(code.expires_in);
     let mut interval = code.interval.max(1);
+    let (url, name) = match code.provider {
+        Provider::Github => (
+            "https://github.com/login/oauth/access_token".to_string(),
+            "GitHub",
+        ),
+        Provider::Gitlab => (format!("{}/oauth/token", code.server), "GitLab"),
+    };
     loop {
         // Sleep in small steps so a cancel is noticed quickly.
         let wake = Instant::now() + Duration::from_secs(interval);
@@ -271,25 +464,27 @@ pub fn device_poll(code: &DeviceCode) -> Result<Account> {
             bail!("the code expired, try again");
         }
         let mut resp = agent()
-            .post("https://github.com/login/oauth/access_token")
+            .post(&url)
             .header("Accept", "application/json")
             .send_form([
-                ("client_id", client_id),
+                ("client_id", code.client_id.as_str()),
                 ("device_code", code.device_code.as_str()),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])
-            .context("cannot reach github.com")?;
-        let answer: TokenJson = resp.body_mut().read_json()?;
-        if let Some(token) = answer.access_token {
-            return login_with_token(Provider::Github, "https://github.com", &token);
+            .with_context(|| format!("cannot reach {}", code.server))?;
+        let answer: GrantJson = resp.body_mut().read_json().context("unexpected answer")?;
+        let error = answer.error.clone();
+        let next = answer.interval;
+        if let Some((token, secret)) = answer.into_secret(&code.client_id) {
+            return save_account(code.provider, &code.server, &token, &secret);
         }
-        match answer.error.as_deref() {
+        match error.as_deref() {
             Some("authorization_pending") => {}
-            Some("slow_down") => interval = answer.interval.unwrap_or(interval + 5),
+            Some("slow_down") => interval = next.unwrap_or(interval + 5),
             Some("expired_token") => bail!("the code expired, try again"),
             Some("access_denied") => bail!("the login was cancelled in the browser"),
-            Some(e) => bail!("GitHub refused the login: {e}"),
-            None => bail!("unexpected answer from github.com"),
+            Some(e) => bail!("{name} refused the login: {e}"),
+            None => bail!("unexpected answer from {}", code.server),
         }
     }
 }
@@ -395,10 +590,16 @@ pub fn run_credential_helper(action: Option<&str>) -> i32 {
     let Some(account) = account_for(&list, &url) else {
         return 0;
     };
-    match keychain(&account.id).and_then(|e| Ok(e.get_password()?)) {
+    let oauth = keychain(&account.id)
+        .and_then(|e| Ok(e.get_password()?))
+        .is_ok_and(|s| serde_json::from_str::<OAuthGrant>(&s).is_ok());
+    match token_of(&account.id, &account.server) {
         Ok(token) => {
-            // A user name already in the remote URL stays; tokens ignore it.
-            if field("username").is_empty() {
+            // GitLab takes an OAuth token only with the user name oauth2;
+            // otherwise a user name already in the remote URL stays (tokens ignore it).
+            if oauth {
+                println!("username=oauth2");
+            } else if field("username").is_empty() {
                 println!("username={}", account.login);
             }
             println!("password={token}");
@@ -415,7 +616,7 @@ pub fn run_credential_helper(action: Option<&str>) -> i32 {
 pub(crate) fn account_with_token(url: &str) -> Option<(Account, Option<String>)> {
     let host = origin(url);
     let account = accounts().into_iter().find(|a| origin(&a.server) == host)?;
-    let token = keychain(&account.id).and_then(|e| Ok(e.get_password()?)).ok();
+    let token = token_of(&account.id, &account.server).ok();
     Some((account, token))
 }
 
@@ -471,6 +672,42 @@ mod tests {
             origin("https://Example.com:8443/gitlab"),
             "https://example.com:8443"
         );
+    }
+
+    #[test]
+    fn keeps_refreshable_grants() {
+        let grant = |refresh: Option<&str>, expires_in: Option<u64>| GrantJson {
+            access_token: Some("a".into()),
+            refresh_token: refresh.map(str::to_string),
+            expires_in,
+            error: None,
+            error_description: None,
+            interval: None,
+        };
+        let (token, secret) = grant(Some("r"), Some(7200)).into_secret("cid").unwrap();
+        assert_eq!(token, "a");
+        let g: OAuthGrant = serde_json::from_str(&secret).unwrap();
+        assert_eq!((g.refresh.as_str(), g.client_id.as_str()), ("r", "cid"));
+        assert!(g.expires_at >= now() + 7199);
+        // GitHub's device tokens do not expire: kept as the bare token.
+        assert_eq!(grant(None, None).into_secret("cid").unwrap().1, "a");
+        // A plain token is not mistaken for a grant.
+        assert!(serde_json::from_str::<OAuthGrant>("glpat-xyz").is_err());
+    }
+
+    #[test]
+    fn reads_gitlab_device_code() {
+        let c: DeviceCode = serde_json::from_str(
+            r#"{"device_code":"d","user_code":"U","verification_uri":"https://gitlab.com/oauth/device","verification_uri_complete":"https://gitlab.com/oauth/device?user_code=U","expires_in":300,"interval":5}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            c.verification_uri_complete.as_deref(),
+            Some("https://gitlab.com/oauth/device?user_code=U")
+        );
+        // Handed back by the frontend in camelCase.
+        let back: DeviceCode = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back.device_code, "d");
     }
 
     #[test]

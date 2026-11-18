@@ -34,9 +34,20 @@ export function isAuthFailure(output: string): boolean {
   return AUTH_FAILURE.test(output);
 }
 
-function LoginForm({ provider, githubOauth, onDone }: { provider: GitProvider; githubOauth: boolean; onDone: () => void }) {
+function LoginForm({
+  provider,
+  githubOauth,
+  gitlabClientId,
+  onDone,
+}: {
+  provider: GitProvider;
+  githubOauth: boolean;
+  gitlabClientId: string | null;
+  onDone: () => void;
+}) {
   const p = PROVIDERS[provider];
   const [server, setServer] = useState(p.server);
+  const [appId, setAppId] = useState("");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +55,11 @@ function LoginForm({ provider, githubOauth, onDone }: { provider: GitProvider; g
   // Cancel can be clicked before polling starts, which a backend cancel would miss.
   const cancelled = useRef(false);
   const isDotCom = normalizeServer(server) === p.server;
+  // GitHub: the built-in app, github.com only. GitLab: the built-in app on
+  // gitlab.com, or an Application ID the user registered on their server.
+  const builtInGitlab = provider === "gitlab" && isDotCom && !!gitlabClientId;
+  const browserLogin = provider === "github" ? githubOauth : true;
+  const needsAppId = provider === "gitlab" && !builtInGitlab;
 
   // Stop waiting for the browser when the form goes away.
   useEffect(
@@ -79,11 +95,11 @@ function LoginForm({ provider, githubOauth, onDone }: { provider: GitProvider; g
     setError(null);
     cancelled.current = false;
     try {
-      const code = await api.gitDeviceStart();
+      const code = await api.gitDeviceStart(provider, server, needsAppId ? appId : "");
       if (cancelled.current) return;
       setDevice(code);
       await navigator.clipboard.writeText(code.userCode).catch(() => {});
-      await openUrl(code.verificationUri);
+      await openUrl(code.verificationUriComplete ?? code.verificationUri);
       if (cancelled.current) return;
       done(await api.gitDevicePoll(code));
     } catch (e) {
@@ -98,13 +114,13 @@ function LoginForm({ provider, githubOauth, onDone }: { provider: GitProvider; g
     return (
       <div className="settings-agent">
         <div>
-          Enter this code on the GitHub page that opened in your browser (it is copied to the clipboard):
+          Enter this code on the {p.name} page that opened in your browser (it is copied to the clipboard):
         </div>
         <div className="git-device-code">{device.userCode}</div>
         <div className="settings-agent-head">
           <span className="muted small">Waiting for you to authorize Haze…</span>
           <span className="run-spacer" />
-          <button className="btn small" onClick={() => void openUrl(device.verificationUri)}>
+          <button className="btn small" onClick={() => void openUrl(device.verificationUriComplete ?? device.verificationUri)}>
             Open Page Again
           </button>
           <button className="btn small" onClick={cancelDevice}>
@@ -123,23 +139,43 @@ function LoginForm({ provider, githubOauth, onDone }: { provider: GitProvider; g
           Cancel
         </button>
       </div>
-      {provider === "github" && githubOauth && (
-        <>
-          <button className="btn primary" disabled={busy} onClick={() => void loginViaBrowser()}>
-            Log In via GitHub…
-          </button>
-          <div className="muted small">Or use a token (also for GitHub Enterprise):</div>
-        </>
-      )}
       <div className="git-login-grid">
         <span>Server</span>
         <input className="modal-input" value={server} spellCheck={false} onChange={(e) => setServer(e.target.value)} />
+      </div>
+      {browserLogin && (provider === "gitlab" || isDotCom) && (
+        <>
+          {needsAppId && (
+            <>
+              <div className="git-login-grid">
+                <span>Application ID</span>
+                <input
+                  className="modal-input"
+                  value={appId}
+                  spellCheck={false}
+                  placeholder="OAuth application on this server"
+                  onChange={(e) => setAppId(e.target.value)}
+                />
+              </div>
+              <div className="muted small">
+                Create it in GitLab under User Settings › Applications: enable the <i>device authorization grant</i>, untick{" "}
+                <i>Confidential</i>, scopes <code>api</code> and <code>read_user</code>, any redirect URI (GitLab 17.9 or later).
+              </div>
+            </>
+          )}
+          <button className="btn primary" disabled={busy || (needsAppId && !appId.trim())} onClick={() => void loginViaBrowser()}>
+            Log In via {p.name}…
+          </button>
+          <div className="muted small">Or use a token{provider === "github" ? " (also for GitHub Enterprise)" : ""}:</div>
+        </>
+      )}
+      <div className="git-login-grid">
         <span>Token</span>
         <div className="git-login-token">
           <input
             className="modal-input"
             type="password"
-            autoFocus={!(provider === "github" && githubOauth)}
+            autoFocus={!browserLogin}
             value={token}
             spellCheck={false}
             placeholder={provider === "github" ? "ghp_… or github_pat_…" : "glpat-…"}
@@ -169,6 +205,7 @@ function LoginForm({ provider, githubOauth, onDone }: { provider: GitProvider; g
 export function GitAccountsSection() {
   const [accounts, setAccounts] = useState<GitAccount[] | null>(null);
   const [githubOauth, setGithubOauth] = useState(false);
+  const [gitlabClientId, setGitlabClientId] = useState<string | null>(null);
   const [adding, setAdding] = useState<GitProvider | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reload = () =>
@@ -176,6 +213,7 @@ export function GitAccountsSection() {
       (i) => {
         setAccounts(i.accounts);
         setGithubOauth(i.githubOauth);
+        setGitlabClientId(i.gitlabClientId);
       },
       (e) => setError(errorMessage(e)),
     );
@@ -220,6 +258,7 @@ export function GitAccountsSection() {
           key={adding}
           provider={adding}
           githubOauth={githubOauth}
+          gitlabClientId={gitlabClientId}
           onDone={() => {
             setAdding(null);
             void reload();

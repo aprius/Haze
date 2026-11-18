@@ -10,7 +10,7 @@ import { repo, runGit, useGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
 import { openDiff } from "./DiffView";
 import { branchMenu, checkout, listWorktrees, newBranch, newWorktree, onLogFilter, openWorktree, setLogFilter, takeLogFilter, type Worktree } from "./GitDialogs";
-import { choose, confirmAction, copyText, openMenu, prompt, toast } from "./Overlays";
+import { choose, confirmAction, copyText, openMenu, prompt, promptWithChecks, toast } from "./Overlays";
 import { openRebaseDialog } from "./RebaseDialog";
 import { ToolTabs } from "./BuildPanel";
 import { Splitter } from "./Shell";
@@ -336,8 +336,11 @@ function StashView({ project, root }: { project: Project; root: string }) {
           <button
             className="btn small"
             onClick={async () => {
-              const msg = await prompt("Stash Changes", "", { okLabel: "Stash" });
-              if (msg !== null) await runGit(project.id, ["stash", "push", "--include-untracked", ...(msg.trim() ? ["-m", msg.trim()] : [])], { label: "Stash" });
+              const r = await promptWithChecks("Stash Changes", "", [{ id: "ignored", label: "Include ignored files (also bin/, obj/, a Unity Library: can be large and slow)", value: false }], "Stash");
+              if (!r) return;
+              // --all: untracked and ignored files; --include-untracked: untracked only.
+              const which = r.checked.ignored ? "--all" : "--include-untracked";
+              await runGit(project.id, ["stash", "push", which, ...(r.value.trim() ? ["-m", r.value.trim()] : [])], { label: "Stash" });
             }}
           >
             Stash Changes…

@@ -4851,7 +4851,7 @@ html:has(.float-external) body {
 }
 .git-login-grid {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: 104px 1fr;
   align-items: center;
   gap: 6px 10px;
 }

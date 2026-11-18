@@ -67,7 +67,10 @@ pub fn parse_remote(url: &str) -> Option<(String, String)> {
     if host.is_empty() || !path.contains('/') {
         return None;
     }
-    Some((format!("{scheme}://{}", host.to_ascii_lowercase()), path.to_string()))
+    Some((
+        format!("{scheme}://{}", host.to_ascii_lowercase()),
+        path.to_string(),
+    ))
 }
 
 /// `upstream` first (a fork's pull requests are on the repository it was
@@ -90,7 +93,10 @@ fn pick_remote(root: &Path) -> Result<(String, String)> {
         .arg(root)
         .args(["remote", "get-url", &name])
         .output()?;
-    Ok((name, String::from_utf8_lossy(&out.stdout).trim().to_string()))
+    Ok((
+        name,
+        String::from_utf8_lossy(&out.stdout).trim().to_string(),
+    ))
 }
 
 /// GitLab's `:id` for a project path: `g/s/p` → `g%2Fs%2Fp`.
@@ -170,11 +176,15 @@ pub fn list(root: &Path) -> Result<ReviewList> {
             encode_path(&repo)
         ),
     };
-    let mut req = git_auth::agent().get(&url).header("Accept", "application/json");
+    let mut req = git_auth::agent()
+        .get(&url)
+        .header("Accept", "application/json");
     if let Some(t) = &token {
         req = req.header("Authorization", &format!("Bearer {t}"));
     }
-    let mut resp = req.call().with_context(|| format!("cannot reach {server}"))?;
+    let mut resp = req
+        .call()
+        .with_context(|| format!("cannot reach {server}"))?;
     let login_hint = if token.is_some() {
         ""
     } else {
@@ -275,8 +285,14 @@ mod tests {
 
     #[test]
     fn strips_gitlab_sub_path() {
-        assert_eq!(strip_server_path("https://h.com/gitlab", "gitlab/g/p"), "g/p");
-        assert_eq!(strip_server_path("https://h.com/gitlab", "gitlabx/p"), "gitlabx/p");
+        assert_eq!(
+            strip_server_path("https://h.com/gitlab", "gitlab/g/p"),
+            "g/p"
+        );
+        assert_eq!(
+            strip_server_path("https://h.com/gitlab", "gitlabx/p"),
+            "gitlabx/p"
+        );
         assert_eq!(strip_server_path("https://github.com", "o/r"), "o/r");
         assert_eq!(encode_path("g/s/p.x"), "g%2Fs%2Fp.x");
     }

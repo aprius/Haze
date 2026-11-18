@@ -611,8 +611,12 @@ async fn git_account_remove(id: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
-async fn git_device_start() -> CmdResult<git_auth::DeviceCode> {
-    blocking(git_auth::device_start).await
+async fn git_device_start(
+    provider: git_auth::Provider,
+    server: String,
+    client_id: String,
+) -> CmdResult<git_auth::DeviceCode> {
+    blocking(move || git_auth::device_start(provider, &server, &client_id)).await
 }
 
 #[tauri::command]

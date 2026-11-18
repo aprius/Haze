@@ -128,6 +128,8 @@ export interface GitAccountsInfo {
   accounts: GitAccount[];
   /** "Log In via GitHub…" (browser) is available in this build. */
   githubOauth: boolean;
+  /** The gitlab.com OAuth application built in; self-hosted GitLab needs its own. */
+  gitlabClientId: string | null;
 }
 
 /** Open pull requests (GitHub) or merge requests (GitLab) of the repository's remote (see git_review.rs). */
@@ -156,8 +158,13 @@ export interface DeviceCode {
   deviceCode: string;
   userCode: string;
   verificationUri: string;
+  /** The page with the code filled in, when the server offers it (GitLab). */
+  verificationUriComplete: string | null;
   interval: number;
   expiresIn: number;
+  provider: GitProvider;
+  server: string;
+  clientId: string;
 }
 
 export interface HookStatus {
@@ -720,7 +727,9 @@ export const api = {
   gitAccountLogin: (provider: GitProvider, server: string, token: string) =>
     invoke<GitAccount>("git_account_login", { provider, server, token }),
   gitAccountRemove: (id: string) => invoke<void>("git_account_remove", { id }),
-  gitDeviceStart: () => invoke<DeviceCode>("git_device_start"),
+  /** `clientId`: a self-hosted GitLab's OAuth application; empty for the one built in. */
+  gitDeviceStart: (provider: GitProvider, server: string, clientId: string) =>
+    invoke<DeviceCode>("git_device_start", { provider, server, clientId }),
   gitDevicePoll: (code: DeviceCode) => invoke<GitAccount>("git_device_poll", { code }),
   gitDeviceCancel: () => invoke<void>("git_device_cancel"),
   gitRebaseInteractive: (root: string, base: string | null, steps: RebaseStep[]) =>

@@ -105,15 +105,17 @@ interface DialogRequest {
   title: string;
   message?: string;
   input?: { value: string; selectStem?: boolean; validate?: (v: string) => string | null };
+  /** Checkboxes under the input, by id. */
+  checks?: { id: string; label: string; value: boolean }[];
   buttons: DialogButton[];
-  resolve: (r: { button: string | null; value: string }) => void;
+  resolve: (r: { button: string | null; value: string; checked: Record<string, boolean> }) => void;
   /** Shown in the window that asked. */
   doc: Document;
 }
 
 const useDialog = create<{ current: DialogRequest | null }>(() => ({ current: null }));
 
-function show(req: Omit<DialogRequest, "resolve" | "doc">): Promise<{ button: string | null; value: string }> {
+function show(req: Omit<DialogRequest, "resolve" | "doc">): Promise<{ button: string | null; value: string; checked: Record<string, boolean> }> {
   return new Promise((resolve) => useDialog.setState({ current: { ...req, resolve, doc: useHost.getState().doc } }));
 }
 
@@ -134,6 +136,25 @@ export async function prompt(
   return r.button === "ok" ? r.value : null;
 }
 
+/** Text input dialog with checkboxes; resolves to `null` when cancelled. */
+export async function promptWithChecks(
+  title: string,
+  value: string,
+  checks: { id: string; label: string; value: boolean }[],
+  okLabel = "OK",
+): Promise<{ value: string; checked: Record<string, boolean> } | null> {
+  const r = await show({
+    title,
+    input: { value },
+    checks,
+    buttons: [
+      { label: "Cancel", value: "cancel" },
+      { label: okLabel, value: "ok", primary: true },
+    ],
+  });
+  return r.button === "ok" ? { value: r.value, checked: r.checked } : null;
+}
+
 /** Message with custom buttons; resolves to the chosen button value or `null`. */
 export async function choose(title: string, message: string, buttons: DialogButton[]): Promise<string | null> {
   return (await show({ title, message, buttons })).button;
@@ -151,11 +172,13 @@ export async function confirmAction(title: string, message: string, okLabel = "O
 export function Dialogs() {
   const req = useDialog((s) => s.current);
   const [value, setValue] = useState("");
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!req) return;
     setValue(req.input?.value ?? "");
+    setChecked(Object.fromEntries((req.checks ?? []).map((c) => [c.id, c.value])));
     requestAnimationFrame(() => {
       const el = inputRef.current;
       if (!el) return;
@@ -172,7 +195,7 @@ export function Dialogs() {
   const finish = (button: string | null) => {
     if (button && button !== "cancel" && req.input && error) return;
     useDialog.setState({ current: null });
-    req.resolve({ button: button === "cancel" ? null : button, value });
+    req.resolve({ button: button === "cancel" ? null : button, value, checked });
   };
   // Enter picks the primary button ("Save", not "Don't Save"); a lone danger
   // button (Delete…) is the default only when nothing is marked primary.
@@ -211,6 +234,12 @@ export function Dialogs() {
             {error && <div className="modal-error">{error}</div>}
           </>
         )}
+        {req.checks?.map((c) => (
+          <label key={c.id} className="find-check">
+            <input type="checkbox" checked={!!checked[c.id]} onChange={(e) => setChecked((s) => ({ ...s, [c.id]: e.target.checked }))} />
+            {c.label}
+          </label>
+        ))}
         <div className="modal-buttons">
           {req.buttons.map((b) => (
             <button
