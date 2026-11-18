@@ -9,6 +9,7 @@ mod git;
 pub mod git_auth;
 mod git_log;
 mod git_ops;
+mod git_review;
 mod lsp;
 #[cfg(test)]
 mod lsp_unity_e2e;
@@ -617,6 +618,11 @@ async fn git_device_start() -> CmdResult<git_auth::DeviceCode> {
 #[tauri::command]
 async fn git_device_poll(code: git_auth::DeviceCode) -> CmdResult<git_auth::Account> {
     blocking(move || git_auth::device_poll(&code)).await
+}
+
+#[tauri::command]
+async fn git_review_requests(root: String) -> CmdResult<git_review::ReviewList> {
+    blocking(move || git_review::list(root.as_ref())).await
 }
 
 #[tauri::command]
@@ -1340,6 +1346,7 @@ pub fn run() {
             git_blame,
             git_run,
             git_accounts,
+            git_review_requests,
             git_account_login,
             git_account_remove,
             git_device_start,

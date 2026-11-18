@@ -130,6 +130,28 @@ export interface GitAccountsInfo {
   githubOauth: boolean;
 }
 
+/** Open pull requests (GitHub) or merge requests (GitLab) of the repository's remote (see git_review.rs). */
+export interface ReviewList {
+  provider: GitProvider;
+  /** The remote they are on, fetched from. */
+  remote: string;
+  repo: string;
+  requests: ReviewRequest[];
+}
+
+export interface ReviewRequest {
+  number: number;
+  title: string;
+  author: string;
+  sourceBranch: string;
+  targetBranch: string;
+  draft: boolean;
+  url: string;
+  updatedAt: string;
+  /** The ref on the remote holding the head commit (`refs/pull/12/head`). */
+  headRef: string;
+}
+
 export interface DeviceCode {
   deviceCode: string;
   userCode: string;
@@ -694,6 +716,7 @@ export const api = {
     invoke<BlameLine[]>("git_blame", { root, rel, contents, encoding, rev }),
   gitRun: (root: string, args: string[]) => invoke<GitOutput>("git_run", { root, args }),
   gitAccounts: () => invoke<GitAccountsInfo>("git_accounts"),
+  gitReviewRequests: (root: string) => invoke<ReviewList>("git_review_requests", { root }),
   gitAccountLogin: (provider: GitProvider, server: string, token: string) =>
     invoke<GitAccount>("git_account_login", { provider, server, token }),
   gitAccountRemove: (id: string) => invoke<void>("git_account_remove", { id }),

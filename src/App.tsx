@@ -15,7 +15,7 @@ import { BuildPanel } from "./components/BuildPanel";
 import { EditorsPanel, TestsPanel, UnityPanel } from "./components/UnityPanel";
 import { CommitWindow } from "./components/CommitPanel";
 import { DiffWindow } from "./components/DiffView";
-import { BranchesPopup, openBranchesPopup, openPullDialog, openPushDialog, PullDialog, PushDialog, updateProject } from "./components/GitDialogs";
+import { BranchesPopup, openBranchesPopup, openPullDialog, openPushDialog, openReviewPopup, PullDialog, PushDialog, ReviewPopup, updateProject } from "./components/GitDialogs";
 import { FindPanel } from "./components/FindPanel";
 import { GitPanel } from "./components/GitPanel";
 import { ConflictsDialog } from "./components/ConflictsDialog";
@@ -154,6 +154,7 @@ function installShortcuts(win: Window, projectOf: () => Project | null): () => v
     else if (is("commit") && project) openCommitWindow(project.id);
     else if (is("updateProject") && project) void updateProject(project);
     else if (is("branches") && project) openBranchesPopup(project);
+    else if (is("reviewRequest") && project) openReviewPopup(project);
     else if (is("commitView") && project) toggleCommitWindow(project.id);
     else if (is("gitView") && project) toggleBottom(project.id, "git");
     else if (is("build") && project) void buildProject(project.id, project.path);
@@ -413,6 +414,7 @@ export default function App() {
           <BranchesPopup project={hostProject} />
           <PushDialog project={hostProject} />
           <PullDialog project={hostProject} />
+          <ReviewPopup project={hostProject} />
           <RebaseDialog project={hostProject} />
           <ConflictsDialog project={hostProject} />
         </>,

@@ -1,9 +1,10 @@
 // Git popups: Branches (status bar / Ctrl+Shift+`), Push (Ctrl+Shift+K),
 // Pull ("Pull to <branch>"), Update Project (Ctrl+T), plus branch actions shared with the Log.
-import { GitBranch, Tag } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { GitBranch, GitPullRequest, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
-import { api, errorMessage, type Branch } from "../lib/ipc";
+import { api, errorMessage, type Branch, type ReviewList, type ReviewRequest } from "../lib/ipc";
 import { validBranch } from "../lib/gitView";
 import { parseWorktrees, type Worktree } from "../lib/worktrees";
 
@@ -13,6 +14,7 @@ import { withTask } from "../store/tasks";
 import { hostPopupHere, openCommitWindow, popupClosed } from "../store/ui";
 import { useWorkspace, type Project } from "../store/workspace";
 import { choose, confirmAction, openMenu, prompt, toast, windowOf, type MenuItem } from "./Overlays";
+import { openSettings } from "./SettingsDialog";
 import { shortcutLabel } from "../lib/keymap";
 
 
@@ -52,13 +54,14 @@ export async function listWorktrees(projectId: string): Promise<Worktree[]> {
 }
 
 /** Opens a worktree as its own project (own terminals, tabs and drafts). */
-export function openWorktree(w: Worktree): void {
+export function openWorktree(w: Worktree): string {
   const ws = useWorkspace.getState();
   const id = ws.addProject(w.path);
   const base = w.path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? w.path;
   useWorkspace.setState((s) => ({
     projects: s.projects.map((p) => (p.id === id ? { ...p, name: w.branch ? `${base} [${w.branch}]` : base } : p)),
   }));
+  return id;
 }
 
 /** Creates a worktree with a new branch next to the repository and opens it — one per agent task. */
@@ -73,6 +76,46 @@ export async function newWorktree(project: Project, from: string | null = null):
   if (!out?.ok) return;
   const unityRoot = await seedUnityWorktree(project, root, dir);
   openWorktree({ path: unityRoot ?? dir, branch, head: "", main: false });
+}
+
+/**
+ * Checks a pull/merge request out into a worktree of its own (`pr/12` or
+ * `mr/12`, next to the repository) and opens it with the Log showing its
+ * commits on top of the target branch: no stash, the current checkout stays
+ * as it is. Picked again later, the worktree is fast-forwarded to the
+ * request's new commits.
+ */
+export async function reviewInWorktree(project: Project, list: ReviewList, req: ReviewRequest): Promise<void> {
+  const root = repo(project.id).root;
+  if (!root) return;
+  const kind = list.provider === "github" ? "pr" : "mr";
+  const name = `${list.provider === "github" ? "PR" : "MR"} #${req.number}`;
+  const branch = `${kind}/${req.number}`;
+  // A hidden ref: the Branches list and `fetch --prune` leave it alone.
+  const ref = `refs/haze/reviews/${list.remote}/${req.number}`;
+  const fetched = await runGit(project.id, ["fetch", list.remote, `+${req.headRef}:${ref}`, req.targetBranch], { label: `Fetch ${name}`, quiet: true });
+  if (!fetched?.ok) return;
+  const fastForward = async (dir: string) => {
+    const out = await api.gitRun(dir, ["merge", "--ff-only", ref]).catch(() => null);
+    if (!out?.ok) toast(`${branch} has commits or changes of its own: not updated to ${name}'s latest commits.`, "error");
+  };
+  const existing = (await listWorktrees(project.id)).find((w) => w.branch === branch);
+  let dir = existing?.path;
+  if (existing) {
+    await fastForward(existing.path);
+  } else {
+    dir = `${root.replace(/[\\/]+$/, "")}-${kind}-${req.number}`;
+    const hasBranch = repo(project.id).branches?.branches.some((b) => b.kind === "local" && b.name === branch);
+    const args = hasBranch ? ["worktree", "add", dir, branch] : ["worktree", "add", "--no-track", "-b", branch, dir, ref];
+    const out = await runGit(project.id, args, { label: `Create worktree for ${name}`, quiet: true });
+    if (!out?.ok) return;
+    if (hasBranch) await fastForward(dir);
+    dir = (await seedUnityWorktree(project, root, dir)) ?? dir;
+  }
+  const id = openWorktree({ path: dir!, branch, head: "", main: false });
+  useWorkspace.getState().updateUi(id, { bottomVisible: true, bottomTab: "git" });
+  setLogFilter(id, { refs: [`${list.remote}/${req.targetBranch}..${branch}`] });
+  toast(`Reviewing ${name}: ${req.title}. The Log lists its commits on top of ${list.remote}/${req.targetBranch}.`);
 }
 
 /** A Unity project's new worktree gets the main checkout's Library, so Unity does not import everything again. */
@@ -193,13 +236,25 @@ interface DialogState {
   branches: { open: boolean; projectId: string | null };
   push: { open: boolean; projectId: string | null; branch: string | null };
   pull: { open: boolean; projectId: string | null };
+  review: { open: boolean; projectId: string | null };
 }
 
 const useGitDialogs = create<DialogState>(() => ({
   branches: { open: false, projectId: null },
   push: { open: false, projectId: null, branch: null },
   pull: { open: false, projectId: null },
+  review: { open: false, projectId: null },
 }));
+
+export function openReviewPopup(project: Project): void {
+  hostPopupHere();
+  useGitDialogs.setState({ review: { open: true, projectId: project.id } });
+}
+
+function closeReview() {
+  useGitDialogs.setState({ review: { open: false, projectId: null } });
+  popupClosed();
+}
 
 export function openBranchesPopup(project: Project): void {
   hostPopupHere();
@@ -278,6 +333,7 @@ export function BranchesPopup({ project }: { project: Project | null }) {
     { label: "Push…", key: shortcutLabel("push"), run: () => openPushDialog(project) },
     { label: "New Branch…", run: () => void newBranch(project, null) },
     { label: "New Worktree… (separate folder for a parallel task)", run: () => void newWorktree(project) },
+    { label: "Review Pull Request in Worktree…", run: () => openReviewPopup(project) },
     { label: "Fetch", run: () => void runGit(project.id, ["fetch", "--all", "--prune"], { label: "Fetch" }) },
   ].filter((a) => !q || a.label.toLowerCase().includes(q.toLowerCase()));
   const total = actions.length + rows.length;
@@ -346,6 +402,123 @@ export function BranchesPopup({ project }: { project: Project | null }) {
               </div>
             );
           })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Review popup
+
+/** *Review Pull Request in Worktree*: the remote's open pull/merge requests; Enter checks one out into a worktree. */
+export function ReviewPopup({ project }: { project: Project | null }) {
+  const { open, projectId } = useGitDialogs((s) => s.review);
+  const root = useGit((s) => (projectId ? s.repos[projectId]?.root : undefined));
+  const [list, setList] = useState<ReviewList | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open || !root) return;
+    let live = true;
+    setList(null);
+    setError(null);
+    setQ("");
+    setSel(0);
+    windowOf(input.current).requestAnimationFrame(() => input.current?.focus());
+    api.gitReviewRequests(root).then(
+      (l) => live && setList(l),
+      (e) => live && setError(errorMessage(e)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, root]);
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase().replace(/^[#!]/, "");
+    return (list?.requests ?? []).filter((r) =>
+      [String(r.number), r.title, r.author, r.sourceBranch, r.targetBranch].some((t) => t.toLowerCase().includes(needle)),
+    );
+  }, [list, q]);
+
+  if (!open || !project || project.id !== projectId) return null;
+  const sign = list?.provider === "gitlab" ? "!" : "#";
+  const pick = (r: ReviewRequest | undefined) => {
+    if (!r || !list) return;
+    closeReview();
+    void reviewInWorktree(project, list, r);
+  };
+  const menu = (r: ReviewRequest, e: { clientX: number; clientY: number }) =>
+    openMenu(e, [
+      { label: "Review in Worktree", action: () => pick(r) },
+      { label: "Open in Browser", action: () => void openUrl(r.url) },
+    ]);
+
+  return (
+    <div className="modal-backdrop se-backdrop" onMouseDown={(e) => e.target === e.currentTarget && closeReview()}>
+      <div
+        className="se-popup branches-popup"
+        tabIndex={-1}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") closeReview();
+          else if (e.key === "ArrowDown") setSel((s) => Math.min(rows.length - 1, s + 1));
+          else if (e.key === "ArrowUp") setSel((s) => Math.max(0, s - 1));
+          else if (e.key === "Enter") pick(rows[sel]);
+          else return;
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      >
+        <input
+          ref={input}
+          className="se-input"
+          placeholder={list ? `Search ${list.provider === "gitlab" ? "merge" : "pull"} requests of ${list.repo}` : "Search pull requests"}
+          value={q}
+          onChange={(e) => (setQ(e.target.value), setSel(0))}
+        />
+        <div className="se-list">
+          {!root && <div className="se-group">This project is not a Git repository.</div>}
+          {root && !list && !error && <div className="se-group">Loading…</div>}
+          {error && (
+            <div className="se-group">
+              {error}
+              {/Settings/.test(error) && (
+                <>
+                  {" "}
+                  <button className="btn small" onClick={() => (closeReview(), openSettings("vcs"))}>
+                    Log In…
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {list && !rows.length && <div className="se-group">{list.requests.length ? "No match" : `No open ${list.provider === "gitlab" ? "merge" : "pull"} requests on ${list.remote}`}</div>}
+          {rows.map((r, i) => (
+            <div
+              key={r.number}
+              className={"se-item" + (sel === i ? " selected" : "")}
+              title={`${r.sourceBranch} → ${r.targetBranch}\n${r.url}`}
+              onMouseMove={() => setSel(i)}
+              onClick={() => pick(r)}
+              onContextMenu={(e) => (e.preventDefault(), menu(r, e))}
+            >
+              <GitPullRequest size={13} className={r.draft ? "ico" : "sev-ok"} />
+              <span className="se-detail">
+                {sign}
+                {r.number}
+              </span>
+              <span className="se-name">
+                {r.draft && "[Draft] "}
+                {r.title}
+              </span>
+              <span className="se-detail">
+                {r.author} · {r.sourceBranch} → {r.targetBranch}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

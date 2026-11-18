@@ -107,7 +107,7 @@ pub fn normalize_server(server: &str) -> String {
     format!("{}{path}", origin(&s))
 }
 
-fn api_base(provider: Provider, server: &str) -> String {
+pub(crate) fn api_base(provider: Provider, server: &str) -> String {
     match provider {
         Provider::Github if server == "https://github.com" => "https://api.github.com".into(),
         Provider::Github => format!("{server}/api/v3"),
@@ -115,7 +115,7 @@ fn api_base(provider: Provider, server: &str) -> String {
     }
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .tls_config(
             ureq::tls::TlsConfig::builder()
@@ -356,7 +356,7 @@ pub fn configure(cmd: &mut Command) {
 
 /// `https://example.com/gitlab` → `https://example.com`: git asks for
 /// credentials per host (the path is left out unless credential.useHttpPath).
-fn origin(url: &str) -> String {
+pub(crate) fn origin(url: &str) -> String {
     let Some((scheme, rest)) = url.split_once("://") else {
         return url.to_string();
     };
@@ -409,6 +409,14 @@ pub fn run_credential_helper(action: Option<&str>) -> i32 {
             0
         }
     }
+}
+
+/// The saved account for `url`'s host, with its token from the keychain.
+pub(crate) fn account_with_token(url: &str) -> Option<(Account, Option<String>)> {
+    let host = origin(url);
+    let account = accounts().into_iter().find(|a| origin(&a.server) == host)?;
+    let token = keychain(&account.id).and_then(|e| Ok(e.get_password()?)).ok();
+    Some((account, token))
 }
 
 pub fn accounts_path(config_dir: &Path) -> PathBuf {
