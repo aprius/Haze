@@ -2,6 +2,7 @@
 // asmdef.ts) as markers like the language server's, with a quick fix for a
 // parent set after Instantiate, and completes the names a string can take:
 // the project's tags in CompareTag(""), its scenes in LoadScene("")…
+import { filePath } from "../buffers";
 import { api, type ParentAfterInstantiate, type UnityCode } from "../ipc";
 import { monaco } from "../monaco";
 import { toMonacoRange } from "../lsp/convert";
@@ -28,7 +29,7 @@ type Kind = "csharp" | "asmdef";
 
 function kindOf(model: monaco.editor.ITextModel | null): { kind: Kind; root: string; path: string } | null {
   if (!model || model.uri.scheme !== "file") return null;
-  const path = model.uri.fsPath;
+  const path = filePath(model.uri);
   const root = unityRootFor(path);
   if (!root) return null;
   if (model.getLanguageId() === "csharp") return { kind: "csharp", root, path };

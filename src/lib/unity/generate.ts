@@ -2,6 +2,7 @@
 // of a MonoBehaviour offers OnTriggerEnter(Collider other) and the rest, with
 // the right signature; Generate (Alt+Insert, Ctrl+Enter on macOS) lists all of the
 // class's event functions not declared yet.
+import { filePath } from "../buffers";
 import { monaco } from "../monaco";
 import { sessionForPath } from "../lsp/csharp";
 import { toMonacoRange, type LspRange } from "../lsp/convert";
@@ -39,13 +40,13 @@ export function registerUnityCompletion(): void {
   monaco.languages.registerCompletionItemProvider("csharp", {
     async provideCompletionItems(model, position, _context, token) {
       const none = { suggestions: [] };
-      const root = unityRootFor(model.uri.fsPath);
+      const root = unityRootFor(filePath(model.uri));
       if (!root) return none;
       const before = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
       const m = MEMBER_START.exec(before);
       // On an empty line, only when asked for (Generate): not on every Ctrl+Space.
       if (!m || (!m[2] && !m[3] && !unityGenerateActive())) return none;
-      const session = sessionForPath(model.uri.fsPath);
+      const session = sessionForPath(filePath(model.uri));
       if (!session?.usable) return none;
       const symbols = await session
         .request<DocSymbol[] | null>("textDocument/documentSymbol", { textDocument: { uri: model.uri.toString() } }, token)
@@ -85,7 +86,7 @@ export function registerUnityCompletion(): void {
 export function generateUnityMember(editor: monaco.editor.ICodeEditor): boolean {
   const model = editor.getModel();
   const pos = editor.getPosition();
-  if (!model || !pos || model.getLanguageId() !== "csharp" || !unityRootFor(model.uri.fsPath)) return false;
+  if (!model || !pos || model.getLanguageId() !== "csharp" || !unityRootFor(filePath(model.uri))) return false;
   if (model.getLineContent(pos.lineNumber).trim()) {
     editor.setPosition({ lineNumber: pos.lineNumber, column: model.getLineMaxColumn(pos.lineNumber) });
     editor.trigger("haze.generate", "type", { text: "\n" });

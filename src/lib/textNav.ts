@@ -2,6 +2,7 @@
 // Roslyn has not loaded the projects or knows nothing of a name (a script
 // Unity has not added to its .csproj yet): declarations are guessed from text
 // (see declarations.ts), the current file first, then the project.
+import { filePath } from "./buffers";
 import { api, type SearchMatch, type SearchResults } from "./ipc";
 import { monaco } from "./monaco";
 import { extname, isWithin } from "./path";
@@ -33,11 +34,11 @@ interface Target {
 function target(model: monaco.editor.ITextModel, position: monaco.IPosition, force = false): Target | null {
   if (model.uri.scheme !== "file") return null;
   if (!force && model.getLanguageId() === "csharp" && csharpAnswers(model)) return null;
-  const ext = extname(model.uri.fsPath);
+  const ext = extname(filePath(model.uri));
   const family = familyOf(ext);
   const word = family && model.getWordAtPosition(position);
   if (!word || !isSearchableName(word.word)) return null;
-  const project = projectForPath(model.uri.fsPath);
+  const project = projectForPath(filePath(model.uri));
   if (!project) return null;
   return { word, ext, root: project.path, mask: family.map((e) => `*.${e}`).join(", ") };
 }
@@ -139,12 +140,12 @@ async function provideDefinition(
   // result is where the cursor is, so Monaco shows the usages instead.
   const local = localDeclarations(model, name, t.ext);
   const here = local.find((d) => d.line === position.lineNumber && d.start + 1 === t.word.startColumn);
-  if (here) return [location(model.uri.fsPath, here.line, here.start, here.end)];
+  if (here) return [location(filePath(model.uri), here.line, here.start, here.end)];
   if (local.length) {
     // A local variable is declared above its use: the nearest one wins.
     const above = local.filter((d) => d.line <= position.lineNumber).pop();
     const best = above ?? [...local].sort((a, b) => a.kind - b.kind)[0];
-    return [location(model.uri.fsPath, best.line, best.start, best.end)];
+    return [location(filePath(model.uri), best.line, best.start, best.end)];
   }
 
   const res = await search(`def|${t.root}|${t.mask}|${name}`, t.root, token, (id) =>
@@ -156,7 +157,7 @@ async function provideDefinition(
     ),
   );
   if (!res) return null;
-  const self = norm(model.uri.fsPath);
+  const self = norm(filePath(model.uri));
   const found: { path: string; line: number; start: number; end: number; kind: DeclKind }[] = [];
   for (const f of res.files) {
     if (norm(f.path) === self) continue;
@@ -182,7 +183,7 @@ async function provideReferences(model: monaco.editor.ITextModel, position: mona
   const t = target(model, position);
   if (!t) return null;
   const name = t.word.word;
-  const path = model.uri.fsPath;
+  const path = filePath(model.uri);
   const res = await search(`ref|${path}|${model.getVersionId()}|${t.mask}|${name}`, t.root, token, (id) =>
     api.searchNav(
       id,
@@ -202,7 +203,7 @@ async function provideReferences(model: monaco.editor.ITextModel, position: mona
 export async function findTextUsages(model: monaco.editor.ITextModel, position: monaco.IPosition): Promise<FoundLocation[]> {
   const refs = (await provideReferences(model, position)) ?? [];
   return refs.map((r) => ({
-    path: r.uri.fsPath,
+    path: filePath(r.uri),
     line: r.range.startLineNumber,
     column: r.range.startColumn,
     endLine: r.range.endLineNumber,

@@ -28,7 +28,7 @@ import {
 } from "./convert";
 import { applyWorkspaceEdit, type WorkspaceEdit } from "../workspaceEdit";
 import { importedNamespace } from "../csharpUsings";
-import { ensureBuffer, getModel, isVirtualPath, setVirtualSource } from "../buffers";
+import { ensureBuffer, filePath, getModel, isVirtualPath, setVirtualSource } from "../buffers";
 import { MIN_PREFIX, pickInline, typedEdit, type LspCompletionItem } from "./inline";
 import { buildHover, declarationAt, type Declaration } from "./hoverDoc";
 import { SEMANTIC_LEGEND, semanticTranslator, type LspSemanticLegend } from "./semantic";
@@ -412,7 +412,7 @@ export class CsharpSession {
         });
       }
     }
-    if (model.uri.scheme === "file" && unityRootFor(model.uri.fsPath)) {
+    if (model.uri.scheme === "file" && unityRootFor(filePath(model.uri))) {
       const src = { line: (n: number) => (n >= 1 && n <= model.getLineCount() ? model.getLineContent(n) : ""), isMessage: (n: string) => UNITY_MESSAGES.has(n) };
       items = items.filter((d) => !unitySuppressed(d, src));
     }
@@ -617,10 +617,10 @@ function serverUri(model: monaco.editor.ITextModel): string {
 }
 
 /** The file a csharp: URI belongs to (`csharp:/…/Game.csproj/decompiled/…`), to find its session. */
-const virtualOwner = (uri: monaco.Uri) => monaco.Uri.file(uri.path).fsPath;
+const virtualOwner = (uri: monaco.Uri) => filePath(monaco.Uri.file(uri.path));
 
 function modelPath(model: monaco.editor.ITextModel): string | null {
-  if (model.uri.scheme === "file") return model.uri.fsPath;
+  if (model.uri.scheme === "file") return filePath(model.uri);
   return model.uri.scheme === "csharp" ? virtualOwner(model.uri) : null;
 }
 
@@ -638,7 +638,7 @@ export function csharpAnswers(model: monaco.editor.ITextModel): boolean {
 
 /** Session for a model's file, or an error saying why there is none. */
 function requireSession(model: monaco.editor.ITextModel): CsharpSession {
-  const path = modelPath(model) ?? model.uri.fsPath;
+  const path = modelPath(model) ?? filePath(model.uri);
   const s = sessionForPath(path);
   if (s) return s;
   const project = useWorkspace
@@ -668,7 +668,7 @@ async function hoverDeclaration(loc: LspLocation | undefined): Promise<Declarati
   const uri = locationUri(loc.uri);
   let text = monaco.editor.getModel(uri)?.getValue();
   if (text === undefined && uri.scheme === "file") {
-    const file = await api.readFile(uri.fsPath);
+    const file = await api.readFile(filePath(uri));
     if (file.kind === "text") text = file.content;
   }
   return text === undefined ? null : declarationAt(text.split(/\r?\n/), loc.range.start.line);
@@ -1184,8 +1184,8 @@ export function registerProviders(): void {
     async provideCodeLenses(model, token) {
       if (model.uri.scheme !== "file") return null;
       // Usage counts once C# starts for the project (until the server answers, those from before).
-      const counts = !!sessionForPath(model.uri.fsPath);
-      if (!counts && !unityRootFor(model.uri.fsPath)) return null;
+      const counts = !!sessionForPath(filePath(model.uri));
+      if (!counts && !unityRootFor(filePath(model.uri))) return null;
       const version = model.getVersionId();
       const res = await outline(model);
       if (token.isCancellationRequested || model.isDisposed() || model.getVersionId() !== version) return null;
@@ -1222,7 +1222,7 @@ export function registerProviders(): void {
     async resolveCodeLens(model, lens) {
       const { vision: v } = lens as VisionLens;
       if (v.kind === "unity") return lens;
-      const key = `${model.uri.fsPath}\n${v.stable}\n${v.kind}`;
+      const key = `${filePath(model.uri)}\n${v.stable}\n${v.kind}`;
       const empty = { ...lens, command: { id: "", title: "" } };
       if (v.kind === "author") {
         const from = lens.range.startLineNumber;
@@ -1261,7 +1261,7 @@ export function registerProviders(): void {
       // Only a real answer from loaded projects may grey a name.
       if (a.real && !model.isDisposed())
         markUnused(model, v.key, a.n === 0 && deadWhenUnused(model, v.symbol, v.name, lens.range.startLineNumber, at.lineNumber, at.column) ? v.nameRange : null);
-      return { ...lens, command: { id: "haze.codeVisionUsages", title: a.title, arguments: [model.uri.fsPath, at.lineNumber, at.column, v.name] } };
+      return { ...lens, command: { id: "haze.codeVisionUsages", title: a.title, arguments: [filePath(model.uri), at.lineNumber, at.column, v.name] } };
     },
   };
   L.registerCodeLensProvider("csharp", codeVisionProvider);
@@ -1277,7 +1277,7 @@ export function registerProviders(): void {
   }
 
   function unityContext(model: monaco.editor.ITextModel, symbols: OutlineSymbol[]): UnityContext | null {
-    const path = model.uri.fsPath;
+    const path = filePath(model.uri);
     const root = unityRootFor(path);
     if (!root) return null;
     const classes: string[] = [];
@@ -1393,7 +1393,7 @@ export function registerProviders(): void {
           range: editRange ? toMonacoRange(editRange) : fallback,
           additionalTextEdits: it.additionalTextEdits?.map((e) => ({ range: toMonacoRange(e.range), text: e.newText })),
           lsp: it,
-          path: model.uri.fsPath,
+          path: filePath(model.uri),
         };
       });
       return { suggestions, incomplete: !Array.isArray(res) && !!res?.isIncomplete };
@@ -1494,7 +1494,7 @@ export function registerProviders(): void {
         kind: "quickfix",
         // "using UnityEngine;" first for a missing namespace, as in Rider.
         isPreferred: a.isPreferred || isImportFix(a.title),
-        command: { id: "haze.applyCodeAction", title: a.title, arguments: [model.uri.fsPath, a] },
+        command: { id: "haze.applyCodeAction", title: a.title, arguments: [filePath(model.uri), a] },
       }));
       // Ignoring a rule here, in the project or in every project, as Rider's
       // "Suppress" and "Configure severity". Build warnings too (their live
@@ -1520,7 +1520,7 @@ export function registerProviders(): void {
           {
             title: `Disable ${code} in .editorconfig`,
             kind: "quickfix",
-            command: { id: "haze.disableRule", title: `Disable ${code}`, arguments: [model.uri.fsPath, code] },
+            command: { id: "haze.disableRule", title: `Disable ${code}`, arguments: [filePath(model.uri), code] },
           },
           {
             title: `Ignore ${code} in all projects`,

@@ -4,7 +4,7 @@ import { Component, useEffect, useLayoutEffect, useMemo, useReducer, useRef, use
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { DefinitionAction, SymbolNavigationAction } from "monaco-editor/editor/contrib/gotoSymbol/browser/goToCommands.js";
-import { disposeBuffer, ensureBuffer, getModel, isVirtualPath, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
+import { disposeBuffer, ensureBuffer, filePath, getModel, isVirtualPath, metaDirty, reloadBuffer, reloadingFromDisk, saveBuffer, useBuffers } from "../lib/buffers";
 import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
@@ -221,7 +221,7 @@ function installIdeKeymap() {
 
 /** The tab showing a URI: a file, or decompiled and generated code (`csharp:`, lib/buffers.ts). */
 function tabPath(uri: monaco.Uri): string | null {
-  if (uri.scheme === "file") return uri.fsPath;
+  if (uri.scheme === "file") return filePath(uri);
   return uri.scheme === "csharp" ? uri.toString(true) : null;
 }
 
@@ -300,7 +300,7 @@ const UNCOMMITTED = "0".repeat(40);
 
 /** Blames the model's text: unsaved edits as they are, so the lines match the editor. */
 function blameModel(root: string, model: monaco.editor.ITextModel): Promise<BlameLine[]> {
-  const path = model.uri.fsPath;
+  const path = filePath(model.uri);
   const meta = useBuffers.getState().meta[path];
   return api.gitBlame(root, relative(root, path), metaDirty(meta) ? model.getValue() : null, meta?.status === "text" ? meta.encoding : null);
 }
@@ -360,8 +360,8 @@ const lineBlames = new WeakMap<monaco.editor.ITextModel, { key: string; lines: P
 /** What a model's line blames depend on: the file, HEAD and the text. */
 function lineBlameKey(project: Project, model: monaco.editor.ITextModel): string | null {
   const r = repo(project.id);
-  if (!r.root || !r.branches?.head || !isWithin(model.uri.fsPath, r.root)) return null;
-  return `${r.branches.head}:${r.root}:${model.uri.fsPath}:${model.getAlternativeVersionId()}`;
+  if (!r.root || !r.branches?.head || !isWithin(filePath(model.uri), r.root)) return null;
+  return `${r.branches.head}:${r.root}:${filePath(model.uri)}:${model.getAlternativeVersionId()}`;
 }
 
 function caretLineBlames(project: Project, model: monaco.editor.ITextModel): Promise<LineBlames> {
@@ -372,7 +372,7 @@ function caretLineBlames(project: Project, model: monaco.editor.ITextModel): Pro
   const r = repo(project.id);
   const root = r.root!;
   const head = r.branches!.head!;
-  const rel = relative(root, model.uri.fsPath);
+  const rel = relative(root, filePath(model.uri));
   const blameKey = `${head}:${root}:${rel}`;
   let blamed = headBlames.get(blameKey);
   if (!blamed) {
@@ -432,7 +432,7 @@ function timeAgo(t: number): string {
 
 // Code Vision's author ("aprius +2"): who wrote most of the declaration's lines.
 setCodeVisionAuthor(async (model, from, to) => {
-  const project = projectForPath(model.uri.fsPath);
+  const project = projectForPath(filePath(model.uri));
   const lines = project && (await caretLineBlames(project, model));
   if (!lines) return null;
   const count = new Map<string, number>();
@@ -587,8 +587,8 @@ function installLineChanges(project: Project, editor: monaco.editor.ICodeEditor)
     timer = setTimeout(async () => {
       const model = editor.getModel();
       const r = repo(project.id);
-      if (!model || model.uri.scheme !== "file" || !r.root || !isWithin(model.uri.fsPath, r.root)) return shown.clear();
-      const rel = relative(r.root, model.uri.fsPath);
+      if (!model || model.uri.scheme !== "file" || !r.root || !isWithin(filePath(model.uri), r.root)) return shown.clear();
+      const rel = relative(r.root, filePath(model.uri));
       const version = model.getVersionId();
       let text = await headText(r.root, rel, r.branches?.head ?? "");
       // Not in HEAD: a new file added to git is all new; an unversioned one gets no markers.
@@ -1450,12 +1450,12 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
     codeAction("haze.annotate", "Annotate with Git Blame", [], () => void toggleBlame(project, editor), "9_git");
     codeAction("haze.fileHistory", "Show History for File", [], () => {
       const model = editor.getModel();
-      if (model?.uri.scheme === "file") showHistory(project, model.uri.fsPath);
+      if (model?.uri.scheme === "file") showHistory(project, filePath(model.uri));
     }, "9_git");
     codeAction("haze.compareHead", "Compare with HEAD", [], () => {
       const model = editor.getModel();
       const root = repo(project.id).root;
-      if (model?.uri.scheme === "file" && root) openDiff(project.id, { root, rel: relative(root, model.uri.fsPath), left: "HEAD", right: "working" });
+      if (model?.uri.scheme === "file" && root) openDiff(project.id, { root, rel: relative(root, filePath(model.uri)), left: "HEAD", right: "working" });
     }, "9_git");
     codeAction("haze.rename", "Rename Symbol…", [M.Shift | K.F6, K.F2], () => {
       if (isCs()) void renameAt(editor);

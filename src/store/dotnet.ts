@@ -1,6 +1,7 @@
 // .NET state per project: discovered solutions/projects, the C# language
 // server status, and the last build with its diagnostics (shown as editor
 // markers; Roslyn's live diagnostics, lsp/csharp.ts, give way to them).
+import { filePath } from "../lib/buffers";
 import { create } from "zustand";
 import { api, errorMessage, onBuildEvent, type BuildDiagnostic, type BuildEvent, type BuildVerb, type DotnetInfo, type UnityDiagnostic } from "../lib/ipc";
 import { monaco } from "../lib/monaco";
@@ -106,7 +107,7 @@ function applyMarkers() {
   const all = Object.values(useDotnet.getState().builds).flatMap((b) => b.diagnostics);
   for (const model of monaco.editor.getModels()) {
     if (model.uri.scheme !== "file") continue;
-    const path = model.uri.fsPath;
+    const path = filePath(model.uri);
     const ignored = new Set(useWorkspace.getState().ignoredRules);
     // Warnings of rules turned off in Settings; errors always show.
     const diags = editedSinceBuild.has(path) ? [] : all.filter((d) => d.file && samePath(d.file, path) && !(d.severity !== "error" && d.code && ignored.has(d.code)));
@@ -131,7 +132,7 @@ function listen() {
   listening = true;
   const track = (model: monaco.editor.ITextModel) =>
     model.onDidChangeContent(() => {
-      const path = model.uri.fsPath;
+      const path = filePath(model.uri);
       if (editedSinceBuild.has(path)) return;
       editedSinceBuild.add(path);
       monaco.editor.setModelMarkers(model, "build", []);

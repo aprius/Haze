@@ -3,7 +3,7 @@
 // where it was left.
 import { create } from "zustand";
 import * as L from "../lib/editorLayout";
-import { basename } from "../lib/path";
+import { basename, isWithin } from "../lib/path";
 
 export type { EditorTab } from "../lib/editorLayout";
 
@@ -320,12 +320,9 @@ export function activeProject(): Project | null {
 }
 
 export function projectForPath(path: string): Project | null {
-  const norm = (p: string) => p.replace(/\\/g, "/");
-  const n = norm(path);
   let best: Project | null = null;
   for (const p of useWorkspace.getState().projects) {
-    const root = norm(p.path);
-    if ((n === root || n.startsWith(root + "/")) && (!best || root.length > norm(best.path).length)) best = p;
+    if (isWithin(path, p.path) && (!best || p.path.length > best.path.length)) best = p;
   }
   return best;
 }

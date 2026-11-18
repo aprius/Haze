@@ -1,6 +1,7 @@
 // Shows Unity's performance-critical context in an editor (lib/unity/perf.ts):
 // a bar in the gutter beside the methods called every frame, and a dotted
 // underline under the expensive calls in them, explained on hover.
+import { filePath } from "../buffers";
 import { api, type PerfMethod } from "../ipc";
 import { monaco } from "../monaco";
 import { toMonacoRange } from "../lsp/convert";
@@ -39,7 +40,7 @@ export function installUnityPerf(editor: monaco.editor.ICodeEditor): monaco.IDis
     clearTimeout(timer);
     timer = setTimeout(async () => {
       const model = editor.getModel();
-      const root = model?.uri.scheme === "file" && model.getLanguageId() === "csharp" ? unityRootFor(model.uri.fsPath) : null;
+      const root = model?.uri.scheme === "file" && model.getLanguageId() === "csharp" ? unityRootFor(filePath(model.uri)) : null;
       const { unityPerfContext, unityPerfHints } = useWorkspace.getState();
       if (!model || !root || (unityPerfContext === "never" && !unityPerfHints)) {
         report = null;

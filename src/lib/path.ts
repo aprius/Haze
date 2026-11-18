@@ -24,8 +24,14 @@ export function join(dir: string, name: string): string {
   return dir.endsWith("/") || dir.endsWith("\\") ? dir + name : dir + sep + name;
 }
 
+/**
+ * `/` separators, no trailing one, and an upper-case drive letter: Monaco's
+ * `Uri.fsPath` spells `C:\x` as `c:\x`, so a model's path would not match a
+ * project root read from the OS.
+ */
 function norm(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const n = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  return /^[a-z]:/.test(n) ? n[0].toUpperCase() + n.slice(1) : n;
 }
 
 /** True when `path` is `ancestor` or lies below it. */

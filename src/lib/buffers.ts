@@ -79,10 +79,31 @@ function uriFor(path: string): monaco.Uri {
   return isVirtualPath(path) ? monaco.Uri.parse(path) : monaco.Uri.file(path);
 }
 
+/** The path each buffer's model was made for, as Haze keys it. */
+const modelPaths = new WeakMap<monaco.editor.ITextModel, string>();
+
+function createBufferModel(content: string, path: string): monaco.editor.ITextModel {
+  const model = monaco.editor.createModel(content, languageFor(path), uriFor(path));
+  modelPaths.set(model, path);
+  return model;
+}
+
+/**
+ * The path a file URI stands for, spelled as buffers, tabs and projects key it.
+ * Use it instead of `uri.fsPath`, which on Windows writes `C:\x` as `c:\x`.
+ */
+export function filePath(uri: monaco.Uri): string {
+  const model = monaco.editor.getModel(uri);
+  const known = model && modelPaths.get(model);
+  if (known) return known;
+  const p = uri.fsPath;
+  return /^[a-z]:/.test(p) ? p[0].toUpperCase() + p.slice(1) : p;
+}
+
 async function loadVirtual(path: string): Promise<void> {
   if (!virtualSource) throw new Error("Nothing can show this code");
   const content = await virtualSource(path);
-  const model = monaco.editor.createModel(content, languageFor(path), uriFor(path));
+  const model = createBufferModel(content, path);
   models.set(path, { model, savedVersion: model.getAlternativeVersionId() });
   setMeta(path, { status: "text", encoding: "utf8", eol: "lf", mtime: 0, dirty: false, diskChanged: false, saving: false });
 }
@@ -122,7 +143,7 @@ export function ensureBuffer(path: string, draft?: { content: string; baseMtime:
       const file = await api.readFile(path);
       if (file.kind === "binary") return setMeta(path, { status: "binary", size: file.size });
       if (file.kind === "tooLarge") return setMeta(path, { status: "tooLarge", size: file.size });
-      const model = monaco.editor.createModel(file.content, languageFor(path), uriFor(path));
+      const model = createBufferModel(file.content, path);
       model.setEOL(file.eol === "crlf" ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF);
       const entry: Entry = { model, savedVersion: model.getAlternativeVersionId() };
       models.set(path, entry);
@@ -144,7 +165,7 @@ export function ensureBuffer(path: string, draft?: { content: string; baseMtime:
     } catch (e) {
       if (draft && !monaco.editor.getModel(uriFor(path))) {
         // The file is gone (an agent moved or deleted it): keep the unsaved text; saving recreates the file.
-        const model = monaco.editor.createModel(draft.content, languageFor(path), uriFor(path));
+        const model = createBufferModel(draft.content, path);
         models.set(path, { model, savedVersion: -1 });
         trackDirty(path, model);
         const eol = model.getEOL() === "\r\n" ? "crlf" : "lf";
@@ -266,7 +287,7 @@ export function renameBuffer(from: string, to: string): void {
           : null;
     if (!target) continue;
     const meta = useBuffers.getState().meta[path];
-    const model = monaco.editor.createModel(entry.model.getValue(), languageFor(target), uriFor(target));
+    const model = createBufferModel(entry.model.getValue(), target);
     model.setEOL(entry.model.getEndOfLineSequence());
     const dirty = isDirty(path);
     entry.model.dispose();
