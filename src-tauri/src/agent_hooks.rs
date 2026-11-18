@@ -343,27 +343,27 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 const AUTO_CHECKPOINTS: usize = 10;
 
 /// The hook runs in its own process, so the setting is a marker file (present
-/// = off) rather than UI state.
-fn auto_checkpoint_off_marker() -> Result<PathBuf> {
-    Ok(home()?.join(".haze").join("no-auto-checkpoint"))
+/// = on) rather than UI state. Off by default.
+fn auto_checkpoint_on_marker() -> Result<PathBuf> {
+    Ok(home()?.join(".haze").join("auto-checkpoint"))
 }
 
 pub fn auto_checkpoints_enabled() -> bool {
-    auto_checkpoint_off_marker().map_or(true, |m| !m.exists())
+    auto_checkpoint_on_marker().is_ok_and(|m| m.exists())
 }
 
 pub fn set_auto_checkpoints(on: bool) -> Result<()> {
-    let marker = auto_checkpoint_off_marker()?;
+    let marker = auto_checkpoint_on_marker()?;
     if on {
-        match std::fs::remove_file(&marker) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-            _ => {}
-        }
-    } else {
         if let Some(dir) = marker.parent() {
             std::fs::create_dir_all(dir)?;
         }
         std::fs::write(&marker, b"")?;
+    } else {
+        match std::fs::remove_file(&marker) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => {}
+        }
     }
     Ok(())
 }

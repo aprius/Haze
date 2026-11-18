@@ -777,7 +777,7 @@ function KeymapSection() {
 function AgentsSection() {
   const notifyAgents = useWorkspace((s) => s.notifyAgents);
   const showAgentLimits = useWorkspace((s) => s.showAgentLimits);
-  const [autoCheckpoints, setAutoCheckpoints] = useState(true);
+  const [autoCheckpoints, setAutoCheckpoints] = useState(false);
   useEffect(() => {
     api.autoCheckpointsGet().then(setAutoCheckpoints, () => {});
   }, []);
