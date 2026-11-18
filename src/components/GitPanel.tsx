@@ -1,6 +1,7 @@
 // Git tool window (Alt+9): branches, log with commit graph, commit details,
 // and a console of the git commands Haze ran.
-import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Folder, FolderGit2, FolderTree, GitBranch, RefreshCw, Tag, X } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Copy, Folder, FolderGit2, FolderTree, GitBranch, GitMerge, RefreshCw, Tag, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, type Branch, type Commit, type CommitDetails, type GraphRow, type LogPage, type LogQuery } from "../lib/ipc";
 import { branchTree, changeRows, type BranchFolder } from "../lib/gitView";
@@ -173,17 +174,141 @@ function Details({ project, root, hash }: { project: Project; root: string; hash
       </div>
       <Splitter vertical={false} value={metaHeight} min={40} max={800} invert onChange={setMetaHeight} />
       <div className="commit-meta" style={{ height: metaHeight }}>
-        <pre className="commit-msg">{d.message}</pre>
-        <div className="muted small">
-          {d.author} &lt;{d.email}&gt; · {new Date(d.time * 1000).toLocaleString()}
+        <CommitInfo project={project} root={root} d={d} />
+      </div>
+    </div>
+  );
+}
+
+/** `18/11/2026 at 21:55`, as Rider writes it. */
+function when(time: number): string {
+  const t = new Date(time * 1000);
+  return `${t.toLocaleDateString()} at ${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+/** Text with its http(s) links clickable. */
+function Linkified({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g);
+  return (
+    <>
+      {parts.map((p, i) =>
+        i % 2 ? (
+          <a key={i} className="commit-link" href={p} onClick={(e) => (e.preventDefault(), void openUrl(p))}>
+            {p}
+          </a>
+        ) : (
+          p
+        ),
+      )}
+    </>
+  );
+}
+
+const BRANCHES_SHOWN = 6;
+
+/**
+ * The selected commit, as Rider's details pane shows it: the subject, the
+ * body, then hash, author and date, the committer when another, the
+ * branches containing the commit, its tags and, for a merge, its parents.
+ */
+function CommitInfo({ project, root, d }: { project: Project; root: string; d: CommitDetails }) {
+  const branchList = useGit((s) => s.repos[project.id]?.branches?.branches);
+  const remotes = useMemo(() => new Set((branchList ?? []).filter((b) => b.kind === "remote").map((b) => b.name)), [branchList]);
+  const [refs, setRefs] = useState<{ branches: string[]; tags: string[] } | null>(null);
+  const [allBranches, setAllBranches] = useState(false);
+  useEffect(() => {
+    let stale = false;
+    setRefs(null);
+    setAllBranches(false);
+    const lines = (o: { ok: boolean; stdout: string } | null) => (o?.ok ? o.stdout.split("\n").map((l) => l.trim()).filter(Boolean) : []);
+    void Promise.all([
+      api.gitRun(root, ["branch", "-a", "--contains", d.hash, "--format=%(refname:short)"]).catch(() => null),
+      api.gitRun(root, ["tag", "--points-at", d.hash]).catch(() => null),
+    ]).then(([b, t]) => {
+      if (stale) return;
+      // origin/HEAD only repeats origin's default branch.
+      const branches = lines(b).filter((n) => !/^[^/]+\/HEAD$/.test(n) && n !== "origin" && !n.startsWith("(HEAD detached"));
+      setRefs({ branches, tags: lines(t) });
+    });
+    return () => {
+      stale = true;
+    };
+  }, [root, d.hash]);
+
+  const [subject, ...rest] = d.message.replace(/\s+$/, "").split("\n");
+  const body = rest.join("\n").replace(/^\s*\n/, "");
+  const otherCommitter = d.committer !== d.author || Math.abs(d.commitTime - d.time) > 60;
+  const shown = refs && (allBranches ? refs.branches : refs.branches.slice(0, BRANCHES_SHOWN));
+  return (
+    <div className="commit-info">
+      <div className="commit-subject">
+        <Linkified text={subject} />
+      </div>
+      {body && (
+        <pre className="commit-body">
+          <Linkified text={body} />
+        </pre>
+      )}
+      <div className="commit-line">
+        <button className="commit-hash" title="Copy revision number" onClick={() => void copyText(d.hash, "Copied revision number")}>
+          {d.hash.slice(0, 8)}
+          <Copy size={11} />
+        </button>
+        <span className="commit-author" title={d.email}>
+          {d.author}
+        </span>
+        <span className="muted">&lt;{d.email}&gt;</span>
+        <span className="muted">on {when(d.time)}</span>
+      </div>
+      {otherCommitter && (
+        <div className="commit-line muted">
+          committed by <span className="commit-author">{d.committer}</span> on {when(d.commitTime)}
         </div>
-        {d.committer !== d.author && <div className="muted small">committed by {d.committer}</div>}
-        <div className="small">
-          <span className="hash">{d.hash.slice(0, 12)}</span>
-          <button className="icon-btn" title="Copy revision number" onClick={() => void copyText(d.hash, "Copied revision number")}>
-            <Copy size={14} />
-          </button>
+      )}
+      {d.parents.length > 1 && (
+        <div className="commit-line muted">
+          <GitMerge size={12} />
+          Merge of
+          {d.parents.map((p) => (
+            <button key={p} className="commit-hash" title="Copy revision number" onClick={() => void copyText(p, "Copied revision number")}>
+              {p.slice(0, 8)}
+            </button>
+          ))}
         </div>
+      )}
+      {refs && refs.tags.length > 0 && (
+        <div className="commit-refs">
+          {refs.tags.map((t) => (
+            <span key={t} className="ref-badge tag">
+              <Tag size={10} />
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="commit-refs muted">
+        {!refs ? (
+          "Looking for branches…"
+        ) : refs.branches.length === 0 ? (
+          "In no branch"
+        ) : (
+          <>
+            <span>
+              In {refs.branches.length === 1 ? "1 branch" : `${refs.branches.length} branches`}:
+            </span>
+            {shown!.map((b) => (
+              <span key={b} className={"ref-badge" + (remotes.has(b) ? " remote" : "")}>
+                <GitBranch size={10} />
+                {b}
+              </span>
+            ))}
+            {refs.branches.length > BRANCHES_SHOWN && (
+              <button className="git-link small" onClick={() => setAllBranches((a) => !a)}>
+                {allBranches ? "Show less" : `and ${refs.branches.length - BRANCHES_SHOWN} more`}
+              </button>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
