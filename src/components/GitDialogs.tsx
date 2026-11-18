@@ -53,14 +53,20 @@ export async function listWorktrees(projectId: string): Promise<Worktree[]> {
   return out?.ok ? parseWorktrees(out.stdout) : [];
 }
 
-/** Opens a worktree as its own project (own terminals, tabs and drafts). */
+/**
+ * Opens a worktree as its own project (own terminals, tabs and drafts). A
+ * linked worktree is named after its branch (`WorldEngine-pr-1 [pr/1]`); the
+ * main checkout keeps its plain name, and a project already open keeps
+ * whatever name it has.
+ */
 export function openWorktree(w: Worktree): string {
   const ws = useWorkspace.getState();
+  const existed = ws.projects.some((p) => p.path === w.path);
   const id = ws.addProject(w.path);
   const base = w.path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? w.path;
-  useWorkspace.setState((s) => ({
-    projects: s.projects.map((p) => (p.id === id ? { ...p, name: w.branch ? `${base} [${w.branch}]` : base } : p)),
-  }));
+  // The main checkout named "<base> [<branch>]" by an earlier version gets its name back.
+  const name = w.main || !w.branch ? base : existed ? null : `${base} [${w.branch}]`;
+  if (name) useWorkspace.setState((s) => ({ projects: s.projects.map((p) => (p.id === id ? { ...p, name } : p)) }));
   return id;
 }
 

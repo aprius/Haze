@@ -39,10 +39,12 @@ function hue(s: string): number {
 
 const AVATAR_COLORS = ["cyan", "orange", "green", "purple", "red", "yellow"].map((c) => `var(--mk-${c})`);
 
+/** `my-app` → MA, `WorldEngine [pr/1]` → WO: the branch suffix of a worktree and punctuation are left out. */
 function initials(name: string): string {
-  const words = name.split(/[\s._-]+/).filter(Boolean);
+  const plain = name.replace(/\s*\[[^\]]*\]\s*$/, "") || name;
+  const words = plain.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-  return name.slice(0, 2).toUpperCase();
+  return (words[0] ?? plain).slice(0, 2).toUpperCase();
 }
 
 export function ProjectAvatar({ project, size = 30 }: { project: Project; size?: number }) {
