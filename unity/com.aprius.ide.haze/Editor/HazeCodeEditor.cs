@@ -100,10 +100,17 @@ namespace Haze.Ide.Editor
 
         public void SyncAll() => ProjectGeneration.Sync();
 
-        /// <summary>Haze picked as External Script Editor: listen for it right away, not after the next reload.</summary>
+        /// <summary>
+        /// Haze picked as External Script Editor: listen for it right away, not after the next reload,
+        /// and write Haze's projects over those the previous editor left (Rider's are not SDK-style,
+        /// which Roslyn cannot load on Windows without Visual Studio).
+        /// </summary>
         public void Initialize(string editorInstallationPath)
         {
-            if (Discovery.IsHaze(editorInstallationPath)) HazeLink.Start();
+            if (!Discovery.IsHaze(editorInstallationPath)) return;
+            HazeLink.Start();
+            if (!Application.isBatchMode && !AssetDatabase.IsAssetImportWorkerProcess())
+                EditorApplication.delayCall += ProjectGeneration.Sync;
         }
 
         public bool OpenProject(string filePath = "", int line = -1, int column = -1)

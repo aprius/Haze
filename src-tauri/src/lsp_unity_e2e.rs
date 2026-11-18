@@ -320,7 +320,7 @@ fn unity_completion_through_roslyn() {
     .unwrap();
     std::fs::write(root.join("My project (2).sln"), SLN).unwrap();
     // The path as the OS gives it, like the project root Haze opens.
-    let root = root.canonicalize().map(|p| dunce(&p)).unwrap();
+    let root = crate::paths::canonicalize(&root).unwrap();
     let script = root.join("Assets").join("Scripts").join("Player.cs");
 
     let (tx, rx) = mpsc::channel();
@@ -404,15 +404,6 @@ fn unity_completion_through_roslyn() {
         "Rigidbody was not completed; {} items, first ones: {sample:?}",
         last.len()
     ));
-}
-
-/// `canonicalize` gives `\\?\C:\...` on Windows; the OS's usual spelling is `C:\...`.
-fn dunce(p: &Path) -> PathBuf {
-    let s = p.to_string_lossy();
-    match s.strip_prefix(r"\\?\") {
-        Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
-        _ => p.to_path_buf(),
-    }
 }
 
 #[test]

@@ -50,15 +50,7 @@ pub fn dropped(path: &Path) -> OpenRequest {
 /// returns `\\?\C:\…`, which the UI takes for another project and turns into
 /// file URIs the C# server does not match with its projects.
 pub fn canonical(path: &Path) -> PathBuf {
-    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let s = path.to_string_lossy();
-    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{rest}"));
-    }
-    match s.strip_prefix(r"\\?\") {
-        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
-        _ => path,
-    }
+    crate::paths::canonicalize(path).unwrap_or_else(|_| crate::paths::plain(path))
 }
 
 /// A folder is the project to open, anything else the file.

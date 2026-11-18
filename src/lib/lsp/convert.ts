@@ -1,6 +1,7 @@
 // Conversions between LSP shapes (0-based, file URIs) and Monaco / Haze
 // shapes (1-based, OS paths).
 import { monaco } from "../monaco";
+import { plainPath } from "../path";
 
 export interface LspPosition {
   line: number;
@@ -42,7 +43,7 @@ export function uriToPath(uri: string, windows = isWindows): string {
 }
 
 export function pathToUri(path: string): string {
-  return monaco.Uri.file(path).toString();
+  return monaco.Uri.file(plainPath(path)).toString();
 }
 
 export function toMonacoRange(r: LspRange): monaco.IRange {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ancestors, basename, dirname, isWithin, join, relative } from "./path";
+import { ancestors, basename, dirname, isWithin, join, plainPath, relative } from "./path";
 
 describe("path helpers", () => {
   it("handles posix paths", () => {
@@ -25,6 +25,15 @@ describe("path helpers", () => {
     expect(isWithin("C:\\proj\\Assets\\Player.cs", "c:\\proj")).toBe(true);
     expect(relative("C:\\proj", "c:\\proj\\Assets\\Player.cs")).toBe("Assets/Player.cs");
     expect(isWithin("d:\\proj\\a.cs", "C:\\proj")).toBe(false);
+  });
+
+  it("drops Windows' verbatim prefix (issue #41)", () => {
+    expect(plainPath("\\\\?\\D:\\Projects\\Game")).toBe("D:\\Projects\\Game");
+    expect(plainPath("\\\\?\\UNC\\server\\share\\Game")).toBe("\\\\server\\share\\Game");
+    expect(plainPath("D:\\Projects\\Game")).toBe("D:\\Projects\\Game");
+    expect(plainPath("/Users/me/Game")).toBe("/Users/me/Game");
+    expect(isWithin("D:\\Projects\\Game\\Assets\\A.cs", "\\\\?\\D:\\Projects\\Game")).toBe(true);
+    expect(relative("\\\\?\\D:\\Projects\\Game", "d:\\Projects\\Game\\Assets\\A.cs")).toBe("Assets/A.cs");
   });
 
   it("keeps POSIX paths case-sensitive (macOS, Linux)", () => {

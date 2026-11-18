@@ -25,12 +25,22 @@ export function join(dir: string, name: string): string {
 }
 
 /**
- * `/` separators, no trailing one, and an upper-case drive letter: Monaco's
+ * `\\?\D:\x` → `D:\x`, `\\?\UNC\server\share` → `\\server\share`: Windows'
+ * verbatim spelling (from `std::fs::canonicalize`), which the C# server cannot
+ * resolve in a file URI (issue #41). Other paths as they are.
+ */
+export function plainPath(p: string): string {
+  if (p.startsWith("\\\\?\\UNC\\")) return "\\\\" + p.slice(8);
+  return /^\\\\\?\\[A-Za-z]:/.test(p) ? p.slice(4) : p;
+}
+
+/**
+ * Plain (see `plainPath`), `/` separators, no trailing one, and an upper-case drive letter: Monaco's
  * `Uri.fsPath` spells `C:\x` as `c:\x`, so a model's path would not match a
  * project root read from the OS.
  */
 function norm(p: string): string {
-  const n = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const n = plainPath(p).replace(/\\/g, "/").replace(/\/+$/, "");
   return /^[a-z]:/.test(n) ? n[0].toUpperCase() + n.slice(1) : n;
 }
 

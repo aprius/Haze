@@ -49,7 +49,10 @@ pub fn seed_worktree(project: &Path, repo_root: &Path, worktree: &Path) -> Resul
         return Ok(Seeded::default());
     }
     // Both resolved: git reports `/private/tmp/…` for `/tmp/…` on macOS.
-    let (resolved, root) = (project.canonicalize()?, repo_root.canonicalize()?);
+    let (resolved, root) = (
+        crate::paths::canonicalize(project)?,
+        crate::paths::canonicalize(repo_root)?,
+    );
     let rel = resolved
         .strip_prefix(&root)
         .context("the project is outside its repository")?;
@@ -159,16 +162,18 @@ pub struct RunningEditor {
 /// `project`, the same Unity project in the repository's other worktrees,
 /// and Unity projects next to it whose folder name starts with its own.
 pub fn project_copies(project: &Path) -> Result<Vec<ProjectCopy>> {
-    let project = project.canonicalize()?;
+    let project = crate::paths::canonicalize(project)?;
     let mut copies = vec![copy_of(&project, "project", None)];
     let seen = |copies: &[ProjectCopy], p: &Path| copies.iter().any(|c| Path::new(&c.root) == p);
-    if let Ok(root) = crate::git::toplevel_of(&project).and_then(|r| Ok(r.canonicalize()?)) {
+    if let Ok(root) =
+        crate::git::toplevel_of(&project).and_then(|r| Ok(crate::paths::canonicalize(&r)?))
+    {
         let rel = project
             .strip_prefix(&root)
             .unwrap_or(Path::new(""))
             .to_path_buf();
         for (path, branch) in worktrees(&root) {
-            let Ok(target) = path.join(&rel).canonicalize() else {
+            let Ok(target) = crate::paths::canonicalize(&path.join(&rel)) else {
                 continue;
             };
             if is_unity_project(&target) && !seen(&copies, &target) {
@@ -250,7 +255,7 @@ fn running_editor(root: &Path) -> Option<RunningEditor> {
             names_pid(&p, "pid")
                 && p.get("projectPath")
                     .and_then(|r| r.as_str())
-                    .and_then(|r| Path::new(r).canonicalize().ok())
+                    .and_then(|r| crate::paths::canonicalize(Path::new(r)).ok())
                     .is_some_and(|r| r == root)
         });
     let haze_link = read_json(&root.join("Library/Haze/EditorInstance.json"))
@@ -270,11 +275,8 @@ fn running_editor(root: &Path) -> Option<RunningEditor> {
 /// worktree has none of its own (see `EDITOR_INSTANCE`) until Unity opens it.
 fn editor_instance(project: &Path) -> Option<serde_json::Value> {
     read_json(&project.join("Library/EditorInstance.json")).or_else(|| {
-        let project = project.canonicalize().ok()?;
-        let root = crate::git::toplevel_of(&project)
-            .ok()?
-            .canonicalize()
-            .ok()?;
+        let project = crate::paths::canonicalize(project).ok()?;
+        let root = crate::paths::canonicalize(&crate::git::toplevel_of(&project).ok()?).ok()?;
         let rel = project.strip_prefix(&root).ok()?;
         // `git worktree list` names the main worktree first.
         let (main, _) = worktrees(&root).into_iter().next()?;
@@ -454,7 +456,7 @@ mod tests {
             format!(r#"{{"process_id":{pid},"version":"6000.6.5f1"}}"#),
         )
         .unwrap();
-        let resolved = project.canonicalize().unwrap();
+        let resolved = crate::paths::canonicalize(&project).unwrap();
         std::fs::write(
             project.join("Library/Pipeline/.unity-pipeline-port"),
             serde_json::json!({"pid": pid, "projectPath": resolved}).to_string(),

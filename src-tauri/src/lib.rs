@@ -15,6 +15,7 @@ mod lsp_unity_e2e;
 mod media;
 mod nesting;
 mod opencode_config;
+mod paths;
 mod procinfo;
 pub mod pty;
 mod search;

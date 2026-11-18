@@ -89,6 +89,8 @@ export class CsharpSession {
   private pulled = new Map<string, Pulled>();
   /** Files whose project lost its references, reported once. */
   private brokenReported = false;
+  /** Set when Roslyn found no project to load in the root, shown as the status. */
+  private noProjects?: string;
   /** Scripts checked against Unity's generated projects (unity_csproj.rs). */
   private projectChecked = new Set<string>();
   /** Server semantic tokens in Haze's legend (none when the server has none). */
@@ -226,6 +228,11 @@ export class CsharpSession {
     });
     const showError = (p: unknown) => {
       const m = p as { type: number; message: string };
+      // The server still initializes, so C# would show as ready while it completes nothing from the projects (issue #41).
+      if (/Discovered 0 projects to auto load/i.test(m.message)) {
+        this.noProjects = `No project was loaded from ${this.root}: completion misses the project's references (Unity types). Regenerate the project files (Unity: External Tools), then restart C#`;
+        if (this.ready) setCsharpStatus(this.projectId, { state: "ready", kind: this.kind, message: this.noProjects });
+      }
       if (m.type === 1) setCsharpStatus(this.projectId, { state: this.ready ? "ready" : "loading", kind: this.kind, message: m.message.split("\n")[0] });
     };
     c.onNotification("window/showMessage", showError);
@@ -260,7 +267,7 @@ export class CsharpSession {
   private markReady(message?: string) {
     if (this.ready) return;
     this.ready = true;
-    setCsharpStatus(this.projectId, { state: "ready", kind: this.kind, message });
+    setCsharpStatus(this.projectId, { state: "ready", kind: this.kind, message: this.noProjects ?? message });
     this.readyWaiters.splice(0).forEach((r) => r());
     // Counts from before the projects loaded were partial.
     bumpVisionGeneration();
