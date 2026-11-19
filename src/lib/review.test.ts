@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, commentLocation, hunkKey, type ReviewComment } from "./review";
+import { buildReviewPrompt, commentLocation, fenceLanguage, hunkKey, quoteLines, type ReviewComment } from "./review";
 
 const comment = (over: Partial<ReviewComment>): ReviewComment => ({
   id: "1",
@@ -25,39 +25,73 @@ describe("commentLocation", () => {
 });
 
 describe("buildReviewPrompt", () => {
-  it("numbers the comments by file and line, quoting the code", () => {
+  it("numbers the comments by file and line, the code fenced and the comment labelled", () => {
     const prompt = buildReviewPrompt([
-      comment({ id: "2", rel: "src/B.cs", startLine: 1, endLine: 1, code: "class B {}", text: "Seal it" }),
+      comment({ id: "2", rel: "src/b.py", startLine: 1, endLine: 1, code: "class B: pass", text: "Seal it" }),
       comment({ id: "1", startLine: 9, endLine: 10, code: "if (a)\n  b();", text: "Missing braces\nAlso log" }),
-      comment({ id: "3", startLine: 2, endLine: 2 }),
+      comment({ id: "3", startLine: 2, endLine: 2, rel: "notes.unknownext" }),
     ]);
     expect(prompt).toBe(
       [
-        "Please address these review comments:",
+        "Review comments on the code. Answer the questions; change the code only where a comment asks for it.",
         "",
-        "1. src/A.cs:2",
-        "   > var x = 1;",
-        "   Rename x",
+        "1. notes.unknownext:2",
+        "   ```",
+        "   var x = 1;",
+        "   ```",
+        "   Comment: Rename x",
         "",
         "2. src/A.cs:9-10",
-        "   > if (a)",
-        "   >   b();",
-        "   Missing braces",
+        "   ```csharp",
+        "   if (a)",
+        "     b();",
+        "   ```",
+        "   Comment: Missing braces",
         "   Also log",
         "",
-        "3. src/B.cs:1",
-        "   > class B {}",
-        "   Seal it",
+        "3. src/b.py:1",
+        "   ```python",
+        "   class B: pass",
+        "   ```",
+        "   Comment: Seal it",
       ].join("\n"),
     );
   });
 
-  it("cuts long quotes short", () => {
-    const code = Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n");
+  it("keeps comments in the code inside the block, and drops their shared indentation", () => {
+    const prompt = buildReviewPrompt([comment({ code: "        // this comment\n\n        void Start()\n        {", text: "> 0 then?" })]);
+    expect(prompt).toContain("   ```csharp\n   // this comment\n\n   void Start()\n   {\n   ```\n   Comment: > 0 then?");
+  });
+
+  it("uses a fence longer than any backticks in the code", () => {
+    const prompt = buildReviewPrompt([comment({ rel: "README.md", code: "```bash\nls\n```" })]);
+    expect(prompt).toContain("   ````markdown\n   ```bash\n   ls\n   ```\n   ````\n   Comment: Rename x");
+  });
+
+  it("quotes up to 20 lines whole", () => {
+    const code = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
     const prompt = buildReviewPrompt([comment({ code })]);
-    expect(prompt.startsWith("Please address this review comment:")).toBe(true);
-    expect(prompt).toContain("   > line 7\n   > …\n   Rename x");
-    expect(prompt).not.toContain("line 8");
+    expect(prompt).toContain("   line 0\n");
+    expect(prompt).toContain("   line 19\n   ```\n   Comment: Rename x");
+    expect(prompt).not.toContain("…");
+  });
+});
+
+describe("quoteLines", () => {
+  it("keeps the start and the end of a long quote", () => {
+    const lines = quoteLines(Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\r\n"));
+    expect(lines).toHaveLength(19);
+    expect(lines.slice(0, 12)).toEqual(Array.from({ length: 12 }, (_, i) => `line ${i}`));
+    expect(lines[12]).toBe("… (12 more lines)");
+    expect(lines.slice(13)).toEqual(Array.from({ length: 6 }, (_, i) => `line ${24 + i}`));
+  });
+});
+
+describe("fenceLanguage", () => {
+  it("maps extensions to Markdown languages", () => {
+    expect(fenceLanguage("Assets/Menu.cs")).toBe("csharp");
+    expect(fenceLanguage("a/b.SHADER")).toBe("hlsl");
+    expect(fenceLanguage("Makefile")).toBe("");
   });
 });
 

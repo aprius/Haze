@@ -3929,7 +3929,7 @@ button.toggle.on {
 }
 
 .rv-zone {
-  padding: 6px 0 6px 12px;
+  padding: 6px 0;
   box-sizing: border-box;
   font-family: var(--font-ui);
   font-size: var(--ui-font-size);

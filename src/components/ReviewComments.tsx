@@ -6,6 +6,7 @@ import { errorMessage } from "../lib/ipc";
 import { buildReviewPrompt, type ReviewTarget } from "../lib/review";
 import { monaco } from "../lib/monaco";
 import { isWithin } from "../lib/path";
+import { wheelScroll } from "../lib/wheel";
 import { addComment, clearComments, commentsIn, commentsOn, editComment, removeComment, useReview } from "../store/review";
 import { agentName, shownState, useTerminals } from "../store/terminals";
 import { projectForRoot } from "../store/git";
@@ -34,7 +35,11 @@ export function attachReview(ed: monaco.editor.IStandaloneCodeEditor, target: Re
   const win = doc.defaultView ?? window;
   const marks = ed.createDecorationsCollection();
   const hover = ed.createDecorationsCollection();
-  let zones: { id: string; ro: ResizeObserver }[] = [];
+  // Each box: a view zone that makes room under its line, and an overlay widget
+  // over that room holding the box (Monaco's text layer covers view zones, so
+  // nothing in a zone can be clicked or typed in; VS Code's zone widgets do the same).
+  let zones: { id: string; ro: ResizeObserver; widget: monaco.editor.IOverlayWidget }[] = [];
+  let widgetSeq = 0;
   // The comment box being written (`id` set when editing a saved comment), kept across redraws.
   let draft: { id: string | null; startLine: number; endLine: number; text: string } | null = null;
   let shown = "";
@@ -128,10 +133,12 @@ export function attachReview(ed: monaco.editor.IStandaloneCodeEditor, target: Re
     if (!force && sig === shown) return;
     shown = sig;
     const width = Math.max(240, Math.min(720, ed.getLayoutInfo().contentWidth - 32));
+    const left = ed.getLayoutInfo().contentLeft + 12;
     ed.changeViewZones((acc) => {
       for (const z of zones) {
         acc.removeZone(z.id);
         z.ro.disconnect();
+        ed.removeOverlayWidget(z.widget);
       }
       zones = [];
       const add = (after: number, card: HTMLElement) => {
@@ -140,7 +147,32 @@ export function attachReview(ed: monaco.editor.IStandaloneCodeEditor, target: Re
         node.append(card);
         // Clicks and keys stay in the box instead of moving Monaco's caret.
         for (const type of ["mousedown", "pointerdown"]) node.addEventListener(type, (e) => e.stopPropagation());
-        const zone: monaco.editor.IViewZone = { afterLineNumber: after, heightInPx: 72, domNode: node, suppressMouseDown: true };
+        // The wheel over the box scrolls the editor, as over the code (a textarea with more to show scrolls itself).
+        node.addEventListener(
+          "wheel",
+          (e) => {
+            const area = (e.target as HTMLElement).closest("textarea");
+            if (area && area.scrollHeight > area.clientHeight) return;
+            e.preventDefault();
+            wheelScroll(ed, e);
+          },
+          { passive: false },
+        );
+        const position: monaco.editor.IOverlayWidgetPosition = { preference: { top: -1e6, left } };
+        const wid = `haze.review.${++widgetSeq}`;
+        const widget: monaco.editor.IOverlayWidget = { getId: () => wid, getDomNode: () => node, getPosition: () => position };
+        ed.addOverlayWidget(widget);
+        const zone: monaco.editor.IViewZone = {
+          afterLineNumber: after,
+          heightInPx: 72,
+          domNode: el("div", "rv-zone-space"),
+          onDomNodeTop: (top) => {
+            if (position.preference && typeof position.preference === "object" && position.preference.top !== top) {
+              position.preference = { top, left };
+              ed.layoutOverlayWidget(widget);
+            }
+          },
+        };
         const id = acc.addZone(zone);
         const ro = new win.ResizeObserver(() => {
           const h = card.offsetHeight + 12;
@@ -150,7 +182,7 @@ export function attachReview(ed: monaco.editor.IStandaloneCodeEditor, target: Re
           }
         });
         ro.observe(card);
-        zones.push({ id, ro });
+        zones.push({ id, ro, widget });
       };
       for (const c of list) if (c.id !== draft?.id) add(c.endLine, commentNode(c));
       if (draft) add(draft.endLine, draftNode());
@@ -214,7 +246,10 @@ export function attachReview(ed: monaco.editor.IStandaloneCodeEditor, target: Re
       unsub();
       subs.forEach((s) => s.dispose());
       ed.changeViewZones((acc) => zones.forEach((z) => acc.removeZone(z.id)));
-      zones.forEach((z) => z.ro.disconnect());
+      zones.forEach((z) => {
+        z.ro.disconnect();
+        ed.removeOverlayWidget(z.widget);
+      });
       zones = [];
       marks.clear();
       hover.clear();

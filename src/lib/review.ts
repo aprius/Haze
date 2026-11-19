@@ -34,22 +34,68 @@ export function commentLocation(c: ReviewComment): string {
   return c.rev === "working" ? where : `${where} (at ${short(c.rev)})`;
 }
 
-const MAX_QUOTED = 8;
+/** Longest quote kept whole; a longer one keeps its first and last lines. */
+const MAX_QUOTED = 20;
+const QUOTE_HEAD = 12;
+const QUOTE_TAIL = 6;
 
-/** The prompt that hands `comments` to an agent: one numbered item per comment, by file and line. */
+/** The commented lines to quote: all of them, or their start and end around a count of what is left out. */
+export function quoteLines(code: string): string[] {
+  const lines = dedent(code.split(/\r?\n/));
+  if (lines.length <= MAX_QUOTED) return lines;
+  return [...lines.slice(0, QUOTE_HEAD), `… (${lines.length - QUOTE_HEAD - QUOTE_TAIL} more lines)`, ...lines.slice(-QUOTE_TAIL)];
+}
+
+/** Drops the indentation all non-blank lines share. */
+function dedent(lines: string[]): string[] {
+  const indents = lines.filter((l) => l.trim()).map((l) => /^[ \t]*/.exec(l)![0].length);
+  const cut = indents.length ? Math.min(...indents) : 0;
+  return lines.map((l) => l.slice(Math.min(cut, /^[ \t]*/.exec(l)![0].length)));
+}
+
+const FENCE_LANGS: Record<string, string> = {
+  cs: "csharp", csx: "csharp", ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx", mjs: "javascript", cjs: "javascript",
+  py: "python", go: "go", rs: "rust", java: "java", kt: "kotlin", swift: "swift", c: "c", h: "c", cpp: "cpp", cc: "cpp", hpp: "cpp",
+  m: "objectivec", mm: "objectivec", rb: "ruby", php: "php", lua: "lua", sh: "bash", zsh: "bash", ps1: "powershell",
+  json: "json", asmdef: "json", yml: "yaml", yaml: "yaml", xml: "xml", csproj: "xml", html: "html", css: "css", scss: "scss",
+  md: "markdown", sql: "sql", shader: "hlsl", hlsl: "hlsl", cginc: "hlsl", compute: "hlsl", glsl: "glsl", toml: "toml",
+};
+
+/** The Markdown info string for a file's code block (`csharp` for `.cs`), or "" when unknown. */
+export function fenceLanguage(rel: string): string {
+  const ext = /\.([^./\\]+)$/.exec(rel)?.[1]?.toLowerCase() ?? "";
+  return FENCE_LANGS[ext] ?? "";
+}
+
+/** A code fence longer than any run of backticks in `lines`, so the code cannot close it. */
+function fenceFor(lines: readonly string[]): string {
+  const longest = Math.max(0, ...lines.map((l) => Math.max(0, ...(l.match(/`+/g) ?? []).map((r) => r.length))));
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+/**
+ * The prompt that hands `comments` to an agent: one numbered item per comment,
+ * by file and line, with the commented code in a fenced block and the comment
+ * labelled, so neither is taken for the other (a `// comment` in the code stays code).
+ */
 export function buildReviewPrompt(comments: readonly ReviewComment[]): string {
   const sorted = [...comments].sort((a, b) => a.rel.localeCompare(b.rel) || a.startLine - b.startLine || a.createdAt - b.createdAt);
+  const pad = (l: string) => (l ? `   ${l}` : "");
   const items = sorted.map((c, i) => {
-    const code = c.code.split(/\r?\n/);
-    const quoted = code.slice(0, MAX_QUOTED).map((l) => `   > ${l}`);
-    if (code.length > MAX_QUOTED) quoted.push(`   > …`);
-    const text = c.text
-      .trim()
-      .split(/\r?\n/)
-      .map((l) => `   ${l}`);
-    return [`${i + 1}. ${commentLocation(c)}`, ...quoted, ...text].join("\n");
+    const code = quoteLines(c.code);
+    const fence = fenceFor(code);
+    const [first = "", ...rest] = c.text.trim().split(/\r?\n/);
+    return [
+      `${i + 1}. ${commentLocation(c)}`,
+      pad(fence + fenceLanguage(c.rel)),
+      ...code.map(pad),
+      pad(fence),
+      pad(`Comment: ${first}`),
+      ...rest.map(pad),
+    ].join("\n");
   });
-  const intro = sorted.length === 1 ? "Please address this review comment:" : "Please address these review comments:";
+  // Neutral: a comment may be a question, and the agent should answer it rather than change code.
+  const intro = "Review comments on the code. Answer the questions; change the code only where a comment asks for it.";
   return `${intro}\n\n${items.join("\n\n")}`;
 }
 
