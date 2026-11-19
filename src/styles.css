@@ -336,6 +336,15 @@ kbd {
   border-color: transparent;
 }
 
+/* The light theme's hover is its frame colour (#e0dad8): on the frame and in
+   Settings' side bar, which are drawn in it, hovers and selections go a step
+   darker. A background brings its own (translucent ink, further down). */
+:root[data-theme="light"]:not([data-backdrop]) :is(.title-bar, .project-rail, .status-bar, .settings-nav) {
+  --hover: #d3cdcc;
+  --selected: #c6c0bf;
+  --selected-inactive: #d3cdcc;
+}
+
 /* Background (Settings > Background, src/lib/backdrop.ts sets data-backdrop and
    the variables), islands only. data-backdrop="image": the frame shows an image
    or video and each island is tinted over it. data-backdrop="glass": the window
@@ -542,6 +551,25 @@ kbd {
   text-shadow: none;
 }
 
+/* Light glass: the system draws it light (the window follows the theme), so
+   white chips and halos vanish into it. Hovers and selections are dark ink,
+   on the frame as in the islands, a step stronger than over an image: the
+   glass behind is brighter and plainer. */
+:root[data-theme="light"][data-ui="islands"][data-backdrop="glass"],
+:root[data-theme="light"][data-ui="islands"][data-backdrop="glass"] :is(.title-bar, .project-rail, .status-bar) {
+  --hover: rgb(41 36 42 / 0.1);
+  --selected: rgb(41 36 42 / 0.18);
+  --selected-inactive: rgb(41 36 42 / 0.13);
+}
+
+:root[data-theme="light"][data-ui="islands"][data-backdrop="glass"] :is(.title-bar, .project-rail, .status-bar) {
+  text-shadow: none;
+}
+
+:root[data-theme="light"][data-ui="islands"][data-backdrop="glass"] :is(.title-bar, .project-rail, .status-bar) svg {
+  filter: none;
+}
+
 /* Ambient glow (src/lib/ambient.ts draws it and sets data-ambient): light cast
    around each island, on a canvas between the image and the islands, drawn at a
    quarter of the window's size. */
@@ -677,6 +705,11 @@ kbd {
 
 :root[data-theme="light"][data-ui="islands"][data-backdrop] .btn:not(.primary):not(.danger):hover {
   background: color-mix(in srgb, var(--editor-bg-solid) 90%, transparent);
+}
+
+/* Over light glass a whiter button barely changes: it darkens instead. */
+:root[data-theme="light"][data-ui="islands"][data-backdrop="glass"] .btn:not(.primary):not(.danger):hover {
+  background: color-mix(in srgb, var(--editor-bg-solid) 86%, #29242a);
 }
 
 /* A hover's content is drawn on its frame's glass (Monaco paints both). */

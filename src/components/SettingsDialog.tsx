@@ -411,28 +411,16 @@ function BackdropPreview() {
   const folder = useBackdrop((s) => s.folder);
   const glass = useBackdrop((s) => s.glass);
   const period = useRotation((s) => s.period);
-  if (glass)
-    return (
-      <div className="bg-preview glass">
-        <div className="bg-preview-island side" />
-        <div className="bg-preview-island editor">
-          <i style={{ width: "46%" }} />
-          <i style={{ width: "70%" }} />
-          <i style={{ width: "58%" }} />
-          <i style={{ width: "34%" }} />
-        </div>
-        <div className="bg-preview-island bottom" />
-      </div>
-    );
-  if (!url)
+  if (!url && !glass)
     return (
       <div className="bg-preview empty">
         <Wallpaper size={26} />
         <span>No background</span>
       </div>
     );
+  // Over glass, popups are opaque and there is no file to name.
   return (
-    <div className="bg-preview">
+    <div className={"bg-preview" + (glass ? " glass" : "")}>
       <div className="bg-preview-island side" />
       <div className="bg-preview-island editor">
         <i style={{ width: "46%" }} />
@@ -441,8 +429,8 @@ function BackdropPreview() {
         <i style={{ width: "34%" }} />
       </div>
       <div className="bg-preview-island bottom" />
-      <div className="bg-preview-popup" />
-      {path && (
+      {!glass && <div className="bg-preview-popup" />}
+      {!glass && path && (
         <div className="bg-preview-caption" title={path}>
           {video ? <Film size={12} /> : <ImageIcon size={12} />}
           <span>{basename(path)}</span>
