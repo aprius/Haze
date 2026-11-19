@@ -833,8 +833,8 @@ kbd {
 
 .rail-star {
   position: absolute;
-  right: 1px;
-  top: 1px;
+  right: 0;
+  top: 0;
   color: var(--mk-yellow);
   fill: var(--mk-yellow);
 }

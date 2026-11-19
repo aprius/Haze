@@ -165,7 +165,7 @@ export function ProjectRail() {
           }}
         >
           <ProjectAvatar project={p} size={24} />
-          {p.favorite && <Star size={8} className="rail-star" />}
+          {p.favorite && <Star size={11} className="rail-star" />}
           <AgentBadge projectId={p.id} />
         </button>
       ))}
