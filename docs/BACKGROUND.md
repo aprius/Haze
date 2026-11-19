@@ -22,6 +22,8 @@ A video stops while the window is hidden or covered, and with **Pause in backgro
 - Commit and Diff windows of their own are glass too.
 - The glass follows the theme, dark or light, not the system's appearance.
 
+![Glass on macOS: the desktop blurred behind the Islands layout](glass-view.png)
+
 ## Rotating from a folder
 
 **Folder** (next to **None** and **Image or video**) changes the background by itself, picking another image or video from a folder at the interval set (or only when day turns to night and back):

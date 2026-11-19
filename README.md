@@ -132,7 +132,7 @@ Put an image or a video behind the Islands layout: the panels and popups are tin
 [Docs →](docs/BACKGROUND.md)
 
 </td>
-<td width="50%"><img src="docs/glass-view.png" alt="Glass view over a background image" width="100%"></td>
+<td width="50%"><img src="docs/glass-view.png" alt="Glass: the desktop showing through the Islands layout, blurred by the system" width="100%"></td>
 </tr>
 </table>
 
