@@ -1525,7 +1525,13 @@ pub fn parse_limits(agent: &str, payload: &serde_json::Value, now_ms: u64) -> Op
 
 fn read_stored_limits(path: &Path) -> Result<Vec<AgentLimit>> {
     match std::fs::read_to_string(path) {
-        Ok(text) => Ok(serde_json::from_str(&text)?),
+        // Only the first JSON value counts: a file a crash or an old racing write left with
+        // trailing bytes still gives its limits, and the next save writes it clean.
+        Ok(text) => Ok(serde_json::Deserializer::from_str(&text)
+            .into_iter::<Vec<AgentLimit>>()
+            .next()
+            .and_then(|r| r.ok())
+            .unwrap_or_default()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(e.into()),
     }
@@ -1561,7 +1567,11 @@ pub fn save_agent_limit(limit: AgentLimit) -> Result<Vec<AgentLimit>> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("json.tmp");
+    // Several agents' statusLines save at once: each writes its own temp file, so two
+    // writes never interleave in one file before the rename.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("json.{}.{seq}.tmp", std::process::id()));
     std::fs::write(&tmp, serde_json::to_string(&list)?)?;
     std::fs::rename(&tmp, &path)?;
     Ok(list)
@@ -1761,6 +1771,20 @@ pub fn report_agent_limit(limit: AgentLimit) -> Result<Vec<AgentLimit>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stored_limits_survive_trailing_bytes() {
+        let dir = std::env::temp_dir().join(format!("haze-limits-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("agent-limits.json");
+        std::fs::write(&path, r#"[{"agent":"claude","updatedAt":5}]iveHour":{"usedPercent":83.0},"updatedAt":1}]"#).unwrap();
+        let list = super::read_stored_limits(&path).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].agent, "claude");
+        std::fs::write(&path, "garbage").unwrap();
+        assert!(super::read_stored_limits(&path).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn session_ids_are_plain() {
         assert!(is_session_id("9f1c2d3e-0a1b-4c5d-8e9f-001122334455"));
