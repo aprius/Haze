@@ -19,7 +19,7 @@ import { openSettings } from "./SettingsDialog";
 import { useWorkspace, type BottomTab, type Project } from "../store/workspace";
 import { activeTabOf, openPaths } from "../lib/editorLayout";
 import { closeTabsWithPrompt, PathCrumbs, useCursor } from "./EditorArea";
-import { confirmAction, openMenu } from "./Overlays";
+import { confirmAction, copyText, openMenu } from "./Overlays";
 import { disposeView, toggleTerminal } from "./TerminalPanel";
 import { shortcutLabel } from "../lib/keymap";
 import { setSplitDragging } from "../lib/splitDrag";
@@ -157,6 +157,7 @@ export function ProjectRail() {
               { label: "Move Up", action: () => ws().moveProject(p.id, -1) },
               { label: "Move Down", action: () => ws().moveProject(p.id, 1) },
               { separator: true },
+              { label: "Copy Path", action: () => void copyText(p.path) },
               { label: "Reveal in File Manager", action: () => void revealItemInDir(p.path) },
               { separator: true },
               { label: "Close Project", action: () => void closeProject(p) },
