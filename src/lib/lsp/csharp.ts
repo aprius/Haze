@@ -642,6 +642,11 @@ function ready(model: monaco.editor.ITextModel): CsharpSession | undefined {
  * Roslyn's formatting edits for whole lines `ranges` (1-based, inclusive) of
  * `model`, all computed on its current text; null when no server can format it now.
  */
+/** Whether Roslyn can format lines of `model` right now (checked before any other work for a save). */
+export function csharpCanFormat(model: monaco.editor.ITextModel): boolean {
+  return !!ready(model)?.caps.documentRangeFormattingProvider;
+}
+
 export async function csharpFormatLines(model: monaco.editor.ITextModel, ranges: readonly { start: number; end: number }[]): Promise<monaco.languages.TextEdit[] | null> {
   const s = ready(model);
   if (!s?.caps.documentRangeFormattingProvider) return null;

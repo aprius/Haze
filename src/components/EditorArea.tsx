@@ -9,7 +9,7 @@ import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, isWithin, join, relative } from "../lib/path";
-import { clearUnusedMarks, csharpAnswers, csharpFormatLines, findImplementations, findUsages, importsForPaste, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
+import { clearUnusedMarks, csharpAnswers, csharpCanFormat, csharpFormatLines, findImplementations, findUsages, importsForPaste, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
 import { addUsings } from "../lib/csharpUsings";
 import { moveStatement } from "../lib/csharpSelection";
 import { lineChanges, lineMapper } from "../lib/lineChanges";
@@ -743,31 +743,70 @@ function MarkdownPreview({ path }: { path: string }) {
   return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-/** How long a save waits for the formatter before saving the file as it is. */
+/**
+ * The repository a folder is in, asked of git once per folder: the project's
+ * may not be known yet (a "whole file" by mistake), and a submodule has a
+ * root of its own. Forgotten when a project's repository changes (git init).
+ */
+const gitRoots = new Map<string, Promise<string | null>>();
+let knownRoots = "";
+useGit.subscribe((s) => {
+  const roots = Object.values(s.repos)
+    .map((r) => r.root ?? "")
+    .join("\n");
+  if (roots !== knownRoots) {
+    knownRoots = roots;
+    gitRoots.clear();
+  }
+});
+
+function gitRootOf(dir: string): Promise<string | null> {
+  let root = gitRoots.get(dir);
+  if (!root) {
+    root = api.gitToplevel(dir).catch(() => null);
+    gitRoots.set(dir, root);
+  }
+  return root;
+}
+
+/**
+ * `path` as committed (null = not in HEAD). In a project's own repository this
+ * is the text the change markers already read, so usually no git call is made.
+ */
+function committedText(root: string, path: string): Promise<string | null> {
+  const rel = relative(root, path);
+  const project = projectForPath(path);
+  const r = project ? repo(project.id) : null;
+  if (r?.root === root && r.branches?.head) return headText(root, rel, r.branches.head);
+  return api.gitFileAt(root, "HEAD", rel);
+}
+
+/** How long a save waits for the formatter before saving the files as they are. */
 const FORMAT_TIMEOUT_MS = 2000;
 
 /**
  * Formats the lines of `path` changed since HEAD (the whole file when it is
- * not in Git), as one undo step. C# only, through Roslyn and the project's
- * .editorconfig. Gives up quietly (the file is saved as it is) when Roslyn
- * is not ready, is slow, or the buffer changes meanwhile.
+ * new or not in Git), as one undo step. C# only, through Roslyn and the
+ * project's .editorconfig. Gives up quietly (the file is saved as it is) when
+ * Roslyn is not ready, `deadline` passes, or the buffer changes meanwhile.
  */
-async function formatChangedLines(path: string): Promise<void> {
+async function formatChangedLines(path: string, deadline: number): Promise<void> {
   const model = getModel(path);
-  if (!model || model.getLanguageId() !== "csharp") return;
-  const project = projectForPath(path);
-  const r = project ? repo(project.id) : null;
+  // Roslyn is asked first: while it loads, a save costs nothing more than before.
+  if (!model || model.getLanguageId() !== "csharp" || !csharpCanFormat(model)) return;
   const version = model.getVersionId();
-  // Outside a repository there is no "changed": the whole file is formatted, as Rider does.
-  const base = r?.root && isWithin(path, r.root) ? await headText(r.root, relative(r.root, path), r.branches?.head ?? "") : null;
-  if (model.isDisposed() || model.getVersionId() !== version) return;
+  const root = await gitRootOf(dirname(path));
+  // Not in HEAD (new, untracked) or outside a repository: the whole file, as Rider does.
+  const base = root ? await committedText(root, path) : null;
+  if (model.isDisposed() || model.getVersionId() !== version || Date.now() > deadline) return;
   const ranges = changedRanges(base, model.getValue(), model.getLineCount());
   if (!ranges.length) return;
   const edits = await Promise.race([
     csharpFormatLines(model, ranges).catch(() => null),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), FORMAT_TIMEOUT_MS)),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()))),
   ]);
-  if (!edits?.length || model.isDisposed() || model.getVersionId() !== version) return;
+  // Late edits are dropped: the file may be saved already, and they would make it dirty again.
+  if (!edits?.length || model.isDisposed() || model.getVersionId() !== version || Date.now() > deadline) return;
   model.pushStackElement();
   model.pushEditOperations(null, mergeEdits(edits).map((e) => ({ range: e.range, text: e.text })), () => null);
   model.pushStackElement();
@@ -775,10 +814,16 @@ async function formatChangedLines(path: string): Promise<void> {
 
 export async function saveAll(): Promise<void> {
   const meta = useBuffers.getState().meta;
-  const format = useWorkspace.getState().formatOnSave;
-  for (const [path, m] of Object.entries(meta)) {
-    if (m.status !== "text" || !m.dirty) continue;
-    if (format && !isVirtualPath(path)) await formatChangedLines(path).catch(() => {});
+  const dirty = Object.entries(meta)
+    .filter(([, m]) => m.status === "text" && m.dirty)
+    .map(([path]) => path);
+  if (useWorkspace.getState().formatOnSave) {
+    // All files at once, under one deadline: a slow Roslyn delays the save by that much at most.
+    const deadline = Date.now() + FORMAT_TIMEOUT_MS;
+    const formatting = Promise.all(dirty.filter((p) => !isVirtualPath(p)).map((p) => formatChangedLines(p, deadline).catch(() => {})));
+    await Promise.race([formatting, new Promise((resolve) => setTimeout(resolve, FORMAT_TIMEOUT_MS + 100))]);
+  }
+  for (const path of dirty) {
     try {
       const ok = await saveBuffer(path);
       if (!ok) toast(`${basename(path)} changed on disk — not saved. Choose Reload or Overwrite.`, "error");
