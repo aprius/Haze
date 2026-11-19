@@ -567,7 +567,7 @@ function BackgroundSection() {
   const folder = useBackdrop((s) => s.folder);
   const glass = useBackdrop((s) => s.glass);
   const glassSupported = useSystemGlass((s) => s.supported);
-  const glassOn = useSystemGlass((s) => s.on);
+  const glassOn = useSystemGlass((s) => s.on || s.pending);
   const isDefault = useBackdrop((s) => BACKDROP_TUNING.every((k) => s[k] === DEFAULT_BACKDROP[k]));
   const error = useBackdropImage((s) => s.error);
   const moving = useBackdropImage((s) => !!s.live);

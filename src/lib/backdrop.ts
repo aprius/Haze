@@ -117,8 +117,8 @@ function applyVars(s: BackdropSettings): void {
   root.setProperty("--popup-glass", `${s.popupOpacity}%`);
 }
 
-/** Whether the system draws glass (macOS, Windows 11), and whether it is on. */
-export const useSystemGlass = create<{ supported: boolean; on: boolean }>(() => ({ supported: false, on: false }));
+/** Whether the system draws glass (macOS, Windows 11), whether it is on, and whether it is being turned on or off. */
+export const useSystemGlass = create<{ supported: boolean; on: boolean; pending: boolean }>(() => ({ supported: false, on: false, pending: false }));
 
 /** The system glass as last asked for: "" off, else the theme's mode. */
 let asked = "";
@@ -148,12 +148,13 @@ function applyGlass(): void {
   }
   asked = want;
   const t = ++glassToken;
+  useSystemGlass.setState({ pending: true });
   api
     .setGlass(!!want, want === "dark")
     .catch(() => false)
     .then((on) => {
       if (t !== glassToken) return;
-      useSystemGlass.setState({ on });
+      useSystemGlass.setState({ on, pending: false });
       if (wantGlass) set(on ? "glass" : null);
     });
 }
@@ -225,8 +226,8 @@ async function videoFrame(url: string): Promise<{ src: HTMLVideoElement; w: numb
 }
 
 // The image is read and decoded once, when chosen: kept in IndexedDB at the
-// screen's size (`base`), and as last shown (`shown`), so a start shows
-// the latter at once, with no IPC or decoding, and the background survives the
+// screen's size (`base`), and a video's first frame as last shown (`shown`),
+// so a start shows it at once, with no IPC or decoding, and the background survives the
 // file moving. Nothing keeps the full-size image in memory. A video is copied
 // into the app's cache instead, and played from there over loopback HTTP
 // (src-tauri/src/media.rs), which WebKit plays with half the CPU a blob: URL
@@ -356,7 +357,8 @@ async function render(): Promise<void> {
     }
     if (t !== token || !out) return;
     show(URL.createObjectURL(out), null);
-    putStored("shown", { path, blob: out });
+    // An image is shown as stored in `base`: a second copy would double the space.
+    if (kind === "video") putStored("shown", { path, blob: out });
   } catch (e) {
     if (t === token) show(null, errorMessage(e));
   }
