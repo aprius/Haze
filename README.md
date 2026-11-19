@@ -51,6 +51,18 @@ Rider-style commit window, diffs, log graph, AI checkpoints and per-file "review
 <tr>
 <td width="50%" valign="middle">
 
+### Comment on the diff, send it to the agent
+
+Accept or reject each change in the diff, leave review comments on any line, then send them all to Claude Code, Codex or any agent terminal as one prompt, with file, line range and code attached.
+
+[Docs →](docs/FEATURES.md#git)
+
+</td>
+<td width="50%"><img src="docs/review-comments.png" alt="Review comments in the diff, sent to an agent" width="100%"></td>
+</tr>
+<tr>
+<td width="50%" valign="middle">
+
 ### C# with Roslyn, typed like Rider
 
 Go to Definition, Find Usages, Rename, quick fixes, Code Vision and inline completions through the Roslyn Language Server. Errors, warnings, suggestions and hints as you type, like Rider's, Unity's performance-critical context, and tags, layers, scenes and assembly references checked against the Unity project.
