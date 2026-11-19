@@ -347,9 +347,19 @@ fn token_of(id: &str, server: &str) -> Result<String> {
     }
 }
 
+/// Where `grant` is renewed: GitHub's tokens (`gho_`, `ghu_`) at
+/// `/login/oauth/access_token`, GitLab's at `/oauth/token`.
+fn token_url(server: &str, grant: &OAuthGrant) -> String {
+    if grant.access.starts_with("gho_") || grant.access.starts_with("ghu_") {
+        format!("{server}/login/oauth/access_token")
+    } else {
+        format!("{server}/oauth/token")
+    }
+}
+
 fn refresh(server: &str, grant: &OAuthGrant) -> Result<OAuthGrant> {
     let mut resp = agent()
-        .post(&format!("{server}/oauth/token"))
+        .post(&token_url(server, grant))
         .header("Accept", "application/json")
         .send_form([
             ("grant_type", "refresh_token"),
@@ -700,6 +710,24 @@ mod tests {
         assert_eq!(grant(None, None).into_secret("cid").unwrap().1, "a");
         // A plain token is not mistaken for a grant.
         assert!(serde_json::from_str::<OAuthGrant>("glpat-xyz").is_err());
+    }
+
+    #[test]
+    fn renews_at_the_provider_token_url() {
+        let grant = |access: &str| OAuthGrant {
+            access: access.into(),
+            refresh: "r".into(),
+            expires_at: 0,
+            client_id: "cid".into(),
+        };
+        assert_eq!(
+            token_url("https://github.com", &grant("gho_x")),
+            "https://github.com/login/oauth/access_token"
+        );
+        assert_eq!(
+            token_url("https://gitlab.com", &grant("abc")),
+            "https://gitlab.com/oauth/token"
+        );
     }
 
     #[test]
