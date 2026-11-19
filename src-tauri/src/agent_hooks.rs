@@ -1525,13 +1525,14 @@ pub fn parse_limits(agent: &str, payload: &serde_json::Value, now_ms: u64) -> Op
 
 fn read_stored_limits(path: &Path) -> Result<Vec<AgentLimit>> {
     match std::fs::read_to_string(path) {
-        // Only the first JSON value counts: a file a crash or an old racing write left with
-        // trailing bytes still gives its limits, and the next save writes it clean.
-        Ok(text) => Ok(serde_json::Deserializer::from_str(&text)
-            .into_iter::<Vec<AgentLimit>>()
-            .next()
-            .and_then(|r| r.ok())
-            .unwrap_or_default()),
+        // Only the first JSON value counts: a file an old racing write left with trailing
+        // bytes still gives its limits, and the next save writes it clean. A file with no
+        // readable list is still an error, never an empty snapshot.
+        Ok(text) => match serde_json::Deserializer::from_str(&text).into_iter::<Vec<AgentLimit>>().next() {
+            Some(Ok(list)) => Ok(list),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(Vec::new()),
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(e.into()),
     }
@@ -1572,8 +1573,12 @@ pub fn save_agent_limit(limit: AgentLimit) -> Result<Vec<AgentLimit>> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = path.with_extension(format!("json.{}.{seq}.tmp", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_string(&list)?)?;
-    std::fs::rename(&tmp, &path)?;
+    let written = std::fs::write(&tmp, serde_json::to_string(&list)?).and_then(|_| std::fs::rename(&tmp, &path));
+    if let Err(e) = written {
+        // With a name per write, a failed one would otherwise stay in ~/.haze for good.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(list)
 }
 
@@ -1781,7 +1786,7 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].agent, "claude");
         std::fs::write(&path, "garbage").unwrap();
-        assert!(super::read_stored_limits(&path).unwrap().is_empty());
+        assert!(super::read_stored_limits(&path).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
