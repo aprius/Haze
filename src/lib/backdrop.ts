@@ -1,20 +1,23 @@
-// Background image behind the islands layout (Settings > Background). The
-// frame shows the image, blurred (once, see drawBlurred) and dimmed towards the
-// theme's frame colour, and each island is tinted glass over it: editors and
+// What is behind the islands layout (Settings > Background): an image or a
+// video, or system glass. With an image, the frame shows it dimmed towards the
+// theme's frame colour, and each island is tinted over it: editors and
 // terminals draw with a transparent background (useGlass, read by monaco.ts
 // and TerminalPanel). Popups show the same image, fixed to the window, under
 // their own tint. The settings are in localStorage like the theme, the image in
 // IndexedDB (see readBase); it fades in once loaded. A video plays
 // (backdropLive.ts), its first frame standing in where it does not.
+// With glass, the windows are see-through and the system blurs what is behind
+// them (src-tauri/src/glass.rs); the islands are tinted over that, and popups,
+// which nothing blurs under, are opaque.
 import { create } from "zustand";
 import { api, errorMessage } from "./ipc";
-import { useGlass, useUiStyle } from "./theme";
+import { useGlass, useTheme, useUiStyle } from "./theme";
 
 export interface BackdropSettings {
   /** The image file; null for no background. */
   path: string | null;
-  /** Blur radius of the image, in px. */
-  blur: number;
+  /** System glass instead of an image (never with one). */
+  glass: boolean;
   /** How far the image fades towards the frame colour, 0–90 %. */
   dim: number;
   /** How opaque each island is over the image, 40–100 %. */
@@ -42,10 +45,10 @@ export interface BackdropSettings {
 
 const KEY = "haze.backdrop";
 export const DEFAULT_BACKDROP: BackdropSettings = {
-  path: null, blur: 12, dim: 30, opacity: 82, popupOpacity: 80, ambient: 40, agentGlow: true, pauseInBackground: false,
+  path: null, glass: false, dim: 30, opacity: 82, popupOpacity: 80, ambient: 40, agentGlow: true, pauseInBackground: false,
   folder: null, interval: 30, shuffle: true, dayStart: 6 * 60, nightStart: 18 * 60, fade: 2,
 };
-export const BACKDROP_LIMITS = { blur: [0, 40], dim: [0, 90], opacity: [40, 100], popupOpacity: [50, 100], ambient: [0, 100], fade: [0, 5] } as const;
+export const BACKDROP_LIMITS = { dim: [0, 90], opacity: [40, 100], popupOpacity: [50, 100], ambient: [0, 100], fade: [0, 5] } as const;
 // No GIFs: playing one cost three to seven times what a video does (docs/BACKGROUND.md).
 export const BACKDROP_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "bmp", "mp4", "webm", "mov", "m4v"];
 
@@ -72,7 +75,7 @@ function sanitize(s: Partial<BackdropSettings>): BackdropSettings {
   const d = DEFAULT_BACKDROP;
   return {
     path: typeof s.path === "string" && s.path ? s.path : null,
-    blur: clamp(s.blur, BACKDROP_LIMITS.blur, d.blur),
+    glass: s.glass === true && !s.path,
     dim: clamp(s.dim, BACKDROP_LIMITS.dim, d.dim),
     opacity: clamp(s.opacity, BACKDROP_LIMITS.opacity, d.opacity),
     popupOpacity: clamp(s.popupOpacity, BACKDROP_LIMITS.popupOpacity, d.popupOpacity),
@@ -99,7 +102,7 @@ function initial(): BackdropSettings {
 export const useBackdrop = create<BackdropSettings>(() => initial());
 
 /**
- * The image as shown, already blurred (an object URL), or why it could not be
+ * The image as shown (an object URL), or why it could not be
  * read. For a video, `url` is its first frame (popups and windows of their own
  * show that), and `live` the URL the frame plays it from.
  */
@@ -114,11 +117,45 @@ function applyVars(s: BackdropSettings): void {
   root.setProperty("--popup-glass", `${s.popupOpacity}%`);
 }
 
+/** Whether the system draws glass (macOS, Windows 11), and whether it is on. */
+export const useSystemGlass = create<{ supported: boolean; on: boolean }>(() => ({ supported: false, on: false }));
+
+/** The system glass as last asked for: "" off, else the theme's mode. */
+let asked = "";
+let glassToken = 0;
+
+/**
+ * Sets data-backdrop ("image" or "glass", read by the CSS) and useGlass. Glass
+ * turns the page see-through only once the system draws it, and back opaque
+ * before it stops, so nothing behind the window shows unblurred.
+ */
 function applyGlass(): void {
-  const on = !!useBackdropImage.getState().url && useUiStyle.getState().style === "islands";
-  if (on) document.documentElement.dataset.backdrop = "";
-  else delete document.documentElement.dataset.backdrop;
-  if (useGlass.getState().on !== on) useGlass.setState({ on });
+  const root = document.documentElement.dataset;
+  const islands = useUiStyle.getState().style === "islands";
+  const wantGlass = islands && useBackdrop.getState().glass && useSystemGlass.getState().supported;
+  const image = islands && !wantGlass && !!useBackdropImage.getState().url;
+  const set = (mode: "image" | "glass" | null) => {
+    if (mode) root.backdrop = mode;
+    else delete root.backdrop;
+    const on = mode !== null;
+    if (useGlass.getState().on !== on) useGlass.setState({ on });
+  };
+  const want = wantGlass ? useTheme.getState().mode : "";
+  if (!wantGlass) set(image ? "image" : null);
+  if (want === asked) {
+    if (wantGlass && useSystemGlass.getState().on) set("glass");
+    return;
+  }
+  asked = want;
+  const t = ++glassToken;
+  api
+    .setGlass(!!want, want === "dark")
+    .catch(() => false)
+    .then((on) => {
+      if (t !== glassToken) return;
+      useSystemGlass.setState({ on });
+      if (wantGlass) set(on ? "glass" : null);
+    });
 }
 
 /** Shown images still drawn elsewhere (a fading cover), and whether they are no longer shown. */
@@ -144,65 +181,18 @@ function show(url: string | null, error: string | null): void {
   applyGlass();
 }
 
-/** The size a blurred background is drawn at, and the blur radius there. */
-export function blurredSize(blur: number): { w: number; h: number; r: number } {
-  // Blurred, the image needs fewer pixels: drawn at a fraction of the screen's
-  // size, it is scaled up smoothly. Not too few: sharp detail (lights, edges)
-  // scaled up 3x or more shows as blocks, and so do the JPEG's own. Unblurred,
-  // the screen's own.
-  const scale = blur > 0 ? Math.min(1, 8 / blur) : window.devicePixelRatio || 1;
-  return { w: Math.max(1, Math.round(screen.width * scale)), h: Math.max(1, Math.round(screen.height * scale)), r: blur > 0 ? blur * scale : 0 };
-}
-
-let scratch: HTMLCanvasElement | null = null;
-// Not by setting ctx.filter and reading it back: without the property, that
-// sets a plain one, which reads back the same.
-const canvasFilters = "filter" in CanvasRenderingContext2D.prototype;
-
-/**
- * Draws `src` (sw × sh) blurred by `r` to cover `ctx`'s canvas. Blurred here,
- * rather than by CSS: a blur filter on a layer the size of the window, or
- * backdrop-filter on popups, blurs again on every repaint, and WebKit leaves
- * stale pixels under a backdrop-filter when what is inside it scrolls.
- */
-export function drawBlurred(ctx: CanvasRenderingContext2D, src: CanvasImageSource, sw: number, sh: number, r: number): void {
-  const { width: w, height: h } = ctx.canvas;
-  // Cover the canvas and overflow it by twice the radius, so the edges blur
-  // into the image rather than into transparent (black once a JPEG).
-  const k = Math.max((w + 4 * r) / sw, (h + 4 * r) / sh);
-  const dw = sw * k;
-  const dh = sh * k;
-  // The big step down to the canvas must average, or it aliases into detail
-  // the blur is too small to remove.
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  if (r === 0 || canvasFilters) {
-    ctx.filter = r > 0 ? `blur(${r}px)` : "none";
-    ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
-    return;
-  }
-  // No canvas filters (older WebKit): shrink further and let scaling up blur it.
-  scratch ??= document.createElement("canvas");
-  const sw2 = Math.max(1, Math.round(w / r));
-  const sh2 = Math.max(1, Math.round(h / r));
-  if (scratch.width !== sw2 || scratch.height !== sh2) {
-    scratch.width = sw2;
-    scratch.height = sh2;
-  }
-  const sctx = scratch.getContext("2d")!;
-  sctx.imageSmoothingQuality = "high";
-  sctx.drawImage(src, (w - dw) / 2 / r, (h - dh) / 2 / r, dw / r, dh / r);
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(scratch, 0, 0, w, h);
-}
-
-/** A still of `src`, blurred, as a JPEG. */
-async function blurred(src: CanvasImageSource, sw: number, sh: number, blur: number): Promise<Blob> {
-  const { w, h, r } = blurredSize(blur);
+/** `src` (sw × sh) drawn on a canvas of its own size. */
+export function frameCanvas(src: CanvasImageSource, sw: number, sh: number): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  drawBlurred(canvas.getContext("2d")!, src, sw, sh, r);
+  canvas.width = Math.max(1, sw);
+  canvas.height = Math.max(1, sh);
+  canvas.getContext("2d")!.drawImage(src, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+/** A still of `src`, as a JPEG. */
+async function still(src: CanvasImageSource, sw: number, sh: number): Promise<Blob> {
+  const canvas = frameCanvas(src, sw, sh);
   try {
     return await toBlob(canvas);
   } finally {
@@ -235,7 +225,7 @@ async function videoFrame(url: string): Promise<{ src: HTMLVideoElement; w: numb
 }
 
 // The image is read and decoded once, when chosen: kept in IndexedDB at the
-// screen's size (`base`), and blurred as last shown (`shown`), so a start shows
+// screen's size (`base`), and as last shown (`shown`), so a start shows
 // the latter at once, with no IPC or decoding, and the background survives the
 // file moving. Nothing keeps the full-size image in memory. A video is copied
 // into the app's cache instead, and played from there over loopback HTTP
@@ -245,6 +235,7 @@ const DB = "haze-backdrop";
 const STORE = "images";
 interface Stored {
   path: string;
+  /** Blur radius of a still shown by an older version, which blurred it. */
   blur?: number;
   /** The image at the screen's size, or the still as shown. */
   blob?: Blob;
@@ -292,7 +283,7 @@ function cacheVideo(path: string | null): Promise<string | null> {
 }
 
 /**
- * The file at the screen's size (device pixels, so unblurred it stays sharp);
+ * The file at the screen's size (device pixels, so it stays sharp);
  * a video copied into the app's cache.
  */
 async function readBase(path: string): Promise<Stored> {
@@ -344,12 +335,11 @@ async function setLive(b: Stored | null): Promise<void> {
 async function render(): Promise<void> {
   const t = ++token;
   if (!base) {
-    // The slider moved before the start read the image back.
+    // Shown before the start read the image back.
     const path = useBackdrop.getState().path;
     return path ? load(path, true) : show(null, null);
   }
   const { path } = base;
-  const blur = useBackdrop.getState().blur;
   const kind = kindOf(base);
   try {
     let out = base.blob;
@@ -359,21 +349,14 @@ async function render(): Promise<void> {
       if (!url) throw new Error("cannot play this video");
       const f = await videoFrame(url);
       try {
-        out = await blurred(f.src, f.w, f.h, blur);
+        out = await still(f.src, f.w, f.h);
       } finally {
         f.done();
-      }
-    } else if (blur > 0) {
-      const img = await createImageBitmap(base.blob!);
-      try {
-        out = await blurred(img, img.width, img.height, blur);
-      } finally {
-        img.close();
       }
     }
     if (t !== token || !out) return;
     show(URL.createObjectURL(out), null);
-    putStored("shown", { path, blur, blob: out });
+    putStored("shown", { path, blob: out });
   } catch (e) {
     if (t === token) show(null, errorMessage(e));
   }
@@ -393,7 +376,7 @@ async function load(path: string | null, start = false): Promise<void> {
     if (start) {
       const last = await getStored("shown");
       if (t !== token) return;
-      if (last?.path === path && last.blur === useBackdrop.getState().blur && last.blob) {
+      if (last?.path === path && !last.blur && last.blob) {
         show(URL.createObjectURL(last.blob), null);
         shown = true;
       }
@@ -426,13 +409,21 @@ async function load(path: string | null, start = false): Promise<void> {
 applyVars(useBackdrop.getState());
 void load(useBackdrop.getState().path, true);
 useUiStyle.subscribe(applyGlass);
-
-// The blur slider re-blurs once it rests, not on every step of a drag.
-let reblur: ReturnType<typeof setTimeout> | undefined;
+useTheme.subscribe((s, prev) => s.mode !== prev.mode && applyGlass());
+api
+  .glassSupported()
+  .catch(() => false)
+  .then((supported) => {
+    useSystemGlass.setState({ supported });
+    applyGlass();
+  });
 
 /** Resolves once a new file is shown, or could not be (useBackdropImage's error). */
 export function setBackdrop(patch: Partial<BackdropSettings>): Promise<void> {
   const prev = useBackdrop.getState();
+  // An image or glass, never both: choosing one drops the other.
+  if (patch.glass) patch = { ...patch, path: null, folder: null };
+  else if (patch.path || patch.folder) patch = { ...patch, glass: false };
   const next = sanitize({ ...prev, ...patch });
   try {
     localStorage.setItem(KEY, JSON.stringify(next));
@@ -440,10 +431,7 @@ export function setBackdrop(patch: Partial<BackdropSettings>): Promise<void> {
   applyVars(next);
   useBackdrop.setState(next);
   // Choosing the same file again reads it again: it may have changed.
-  if (patch.path !== undefined) return load(next.path);
-  if (next.blur !== prev.blur) {
-    clearTimeout(reblur);
-    reblur = setTimeout(() => void render(), 150);
-  }
+  if (next.glass !== prev.glass) applyGlass();
+  if (patch.path !== undefined && (patch.path !== null || prev.path !== null)) return load(next.path);
   return Promise.resolve();
 }

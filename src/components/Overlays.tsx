@@ -511,8 +511,9 @@ function useExternalWindow(width: number, height: number, onClose: () => void, s
       unlisten = await w.once("tauri://destroyed", closed);
       // The theme's background behind the page, not WebKit's white: a document
       // with no styles yet (the swap above) otherwise flashes white.
+      // Not over system glass, which it would cover.
       const rgb = getComputedStyle(document.body).backgroundColor.match(/\d+(\.\d+)?/g)?.slice(0, 3).map(Number);
-      if (rgb?.length === 3) await w.setBackgroundColor(rgb as [number, number, number]).catch(() => {});
+      if (rgb?.length === 3 && document.documentElement.dataset.backdrop !== "glass") await w.setBackgroundColor(rgb as [number, number, number]).catch(() => {});
       // Dragged out of a tab bar: it opens with its title bar under the pointer.
       const at = placeId ? windowOpensAt.get(placeId) : undefined;
       if (placeId) windowOpensAt.delete(placeId);

@@ -127,7 +127,7 @@ Rider's shortcuts out of the box (the ReSharper keymap on macOS), fully remappab
 
 ### Glass view
 
-Put an image or a video behind the Islands layout: the panels and popups turn into frosted glass over it, lit in its colours by an ambient glow. Blur, dim and opacity are adjustable, and a 1080p video costs about 4 % of one core (Apple M4). It can also rotate through a folder, with its own pictures for day and for night, fading from one to the next.
+Put an image or a video behind the Islands layout: the panels and popups are tinted over it, lit in its colours by an ambient glow. Or choose Glass, and the desktop shows through, blurred by the system (macOS, Windows 11). Dim and opacity are adjustable, and a 1080p video costs about 4 % of one core (Apple M4). It can also rotate through a folder, with its own pictures for day and for night, fading from one to the next.
 
 [Docs →](docs/BACKGROUND.md)
 

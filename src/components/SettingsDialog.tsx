@@ -24,7 +24,7 @@ import {
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { create } from "zustand";
-import { BACKDROP_EXTENSIONS, BACKDROP_LIMITS, DEFAULT_BACKDROP, setBackdrop, useBackdrop, useBackdropImage } from "../lib/backdrop";
+import { BACKDROP_EXTENSIONS, BACKDROP_LIMITS, DEFAULT_BACKDROP, setBackdrop, useBackdrop, useBackdropImage, useSystemGlass } from "../lib/backdrop";
 import { rotateNow, useRotation } from "../lib/backdropRotate";
 import { basename } from "../lib/path";
 import {
@@ -387,7 +387,6 @@ function BackdropSlider({ field, label, unit }: { field: keyof typeof BACKDROP_L
 
 /** What Reset puts back: the look, not the file or folder. */
 const BACKDROP_TUNING = [
-  "blur",
   "dim",
   "opacity",
   "popupOpacity",
@@ -410,7 +409,21 @@ function BackdropPreview() {
   const video = useBackdropImage((s) => !!s.live);
   const path = useBackdrop((s) => s.path);
   const folder = useBackdrop((s) => s.folder);
+  const glass = useBackdrop((s) => s.glass);
   const period = useRotation((s) => s.period);
+  if (glass)
+    return (
+      <div className="bg-preview glass">
+        <div className="bg-preview-island side" />
+        <div className="bg-preview-island editor">
+          <i style={{ width: "46%" }} />
+          <i style={{ width: "70%" }} />
+          <i style={{ width: "58%" }} />
+          <i style={{ width: "34%" }} />
+        </div>
+        <div className="bg-preview-island bottom" />
+      </div>
+    );
   if (!url)
     return (
       <div className="bg-preview empty">
@@ -540,17 +553,21 @@ function RotateSchedule() {
   );
 }
 
-type BackdropSource = "none" | "file" | "folder";
+type BackdropSource = "none" | "file" | "folder" | "glass";
 const SOURCES: [BackdropSource, string][] = [
   ["none", "None"],
   ["file", "Image or video"],
   ["folder", "Folder"],
+  ["glass", "Glass"],
 ];
 
-/** Background image or video, islands layout only (src/lib/backdrop.ts). */
+/** Background image or video, or system glass, islands layout only (src/lib/backdrop.ts). */
 function BackgroundSection() {
   const path = useBackdrop((s) => s.path);
   const folder = useBackdrop((s) => s.folder);
+  const glass = useBackdrop((s) => s.glass);
+  const glassSupported = useSystemGlass((s) => s.supported);
+  const glassOn = useSystemGlass((s) => s.on);
   const isDefault = useBackdrop((s) => BACKDROP_TUNING.every((k) => s[k] === DEFAULT_BACKDROP[k]));
   const error = useBackdropImage((s) => s.error);
   const moving = useBackdropImage((s) => !!s.live);
@@ -558,21 +575,22 @@ function BackgroundSection() {
   const pauseInBackground = useBackdrop((s) => s.pauseInBackground);
   const islands = useUiStyle((s) => s.style === "islands");
   // Picking File or Folder shows its picker before anything is chosen.
-  const [source, setSource] = useState<BackdropSource>(folder ? "folder" : path ? "file" : "none");
+  const [source, setSource] = useState<BackdropSource>(glass ? "glass" : folder ? "folder" : path ? "file" : "none");
   const choose = (s: BackdropSource) => {
     setSource(s);
-    if (s === "none") void setBackdrop({ path: null, folder: null });
+    if (s === "none") void setBackdrop({ path: null, folder: null, glass: false });
+    if (s === "glass") void setBackdrop({ glass: true });
   };
   return (
     <>
-      <PageHeader title="Background" desc="An image or video behind the Islands layout: the panels and popups turn to tinted glass over it.">
+      <PageHeader title="Background" desc="An image or video behind the Islands layout, or glass that shows the desktop through it, blurred by the system. The panels are tinted over it.">
         {!isDefault && (
           <button className="btn small" onClick={() => void setBackdrop(Object.fromEntries(BACKDROP_TUNING.map((k) => [k, DEFAULT_BACKDROP[k]])))}>
             Reset to Defaults
           </button>
         )}
       </PageHeader>
-      {path && !islands && (
+      {(path || glass) && !islands && (
         <div className="settings-card bg-notice">
           <div className="settings-row static">
             <div className="settings-row-text muted small">The background shows with the Islands layout only.</div>
@@ -587,7 +605,7 @@ function BackgroundSection() {
           <BackdropPreview />
           <div className="bg-source-body">
             <div className="seg bg-source-seg">
-              {SOURCES.map(([id, name]) => (
+              {SOURCES.filter(([id]) => id !== "glass" || glassSupported || glass).map(([id, name]) => (
                 <button key={id} className={"seg-btn" + (source === id ? " on" : "")} onClick={() => choose(id)}>
                   {name}
                 </button>
@@ -598,17 +616,32 @@ function BackgroundSection() {
             )}
             {source === "file" && <PathPicker value={folder ? null : path} placeholder="No file chosen" onChoose={() => void chooseBackdrop()} />}
             {source === "folder" && <RotateFolder />}
+            {source === "glass" && (
+              <div className="muted small">
+                The window turns see-through and the system blurs what is behind it, as its own windows do. Menus and popups stay opaque.
+              </div>
+            )}
+            {source === "glass" && glass && islands && !glassSupported && <div className="modal-error">This system draws no glass behind windows.</div>}
+            {source === "glass" && glass && islands && glassSupported && !glassOn && <div className="modal-error">The system could not turn glass on.</div>}
             {error && <div className="modal-error">Cannot read the file: {error}</div>}
           </div>
         </div>
         {source === "folder" && folder && <RotateSchedule />}
       </div>
+      {glass && (
+        <div className="settings-card">
+          <div className="bg-card-title">Panels</div>
+          <div className="settings-backdrop-grid">
+            <BackdropSlider field="dim" label="Dim" unit="%" />
+            <BackdropSlider field="opacity" label="Panel opacity" unit="%" />
+          </div>
+        </div>
+      )}
       {path && (
         <>
           <div className="settings-card">
-            <div className="bg-card-title">Glass</div>
+            <div className="bg-card-title">Panels</div>
             <div className="settings-backdrop-grid">
-              <BackdropSlider field="blur" label="Blur" unit="px" />
               <BackdropSlider field="dim" label="Dim" unit="%" />
               <BackdropSlider field="opacity" label="Panel opacity" unit="%" />
               <BackdropSlider field="popupOpacity" label="Popup opacity" unit="%" />

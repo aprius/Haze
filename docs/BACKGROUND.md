@@ -1,6 +1,6 @@
-# Background images and videos
+# Background images, videos and glass
 
-**Settings → Background** puts an image or a video behind the Islands layout. The panels turn into tinted glass over it, and their opacity, the blur and the dim are adjustable. Two more options go with it:
+**Settings → Background** puts an image or a video behind the Islands layout. The panels are tinted over it, and their opacity and the dim are adjustable. The image is shown as it is, not blurred. Two more options go with it:
 
 - **Ambient glow**: each island is lit from its edges in the colours of the background behind it.
 - **Agent status glow**: the terminal island glows in the state of its AI agents instead: working, waiting for you, done or failed.
@@ -12,6 +12,15 @@ ffmpeg -i background.gif -movflags +faststart -pix_fmt yuv420p -vf "scale=trunc(
 ```
 
 A video stops while the window is hidden or covered, and with **Pause in background** also while no Haze window has focus.
+
+## Glass
+
+**Glass** (next to **Image or video** and **Folder**) shows the desktop and the windows behind Haze through it, blurred by the system as its own windows are: Liquid Glass on macOS 26 and later, the under-window vibrancy material on older macOS, Mica on Windows 11. It is not offered on Windows 10 or Linux, and it takes the place of an image or video: choosing one turns the other off.
+
+- The panels are tinted over the glass at **Panel opacity**, and **Dim** darkens (or, in a light theme, lightens) the frame between them.
+- Menus, popups and dialogs are opaque: nothing blurs what is under them inside the window, so a see-through popup would show code unblurred.
+- Commit and Diff windows of their own are glass too.
+- The glass follows the theme, dark or light, not the system's appearance.
 
 ## Rotating from a folder
 
@@ -63,9 +72,10 @@ The GIF rows were measured with the GIF support that was removed afterwards. A r
 
 **What it shows**
 
-- An image costs nothing once it is shown: it is blurred once, when chosen, and kept blurred.
+- An image costs nothing once it is shown.
 - The ambient glow costs nothing over an image. It adds about 2 % over a video, which it samples every two seconds.
-- A video costs about 4 %. macOS decodes it in hardware, and WebKit hands its frames to the compositor as a video layer, which blurs them on the GPU.
+- A video costs about 4 %. macOS decodes it in hardware, and WebKit hands its frames to the compositor as a video layer.
+- These were measured when backgrounds were blurred (blur 12); they are shown unblurred now, which costs no more.
 
 ## Why not GIFs
 

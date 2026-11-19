@@ -336,12 +336,14 @@ kbd {
   border-color: transparent;
 }
 
-/* Background image (Settings > Background, src/lib/backdrop.ts sets data-backdrop
-   and the variables), islands only: the frame shows the image and each island is
-   tinted glass over it. The image comes blurred: no filter or backdrop-filter
-   here, which would blur again on every repaint of an editor or terminal.
+/* Background (Settings > Background, src/lib/backdrop.ts sets data-backdrop and
+   the variables), islands only. data-backdrop="image": the frame shows an image
+   or video and each island is tinted over it. data-backdrop="glass": the window
+   is see-through, the system blurs what is behind it (src-tauri/src/glass.rs),
+   and the frame shows that under the dim. No filter or backdrop-filter here,
+   which would blur again on every repaint of an editor or terminal.
    Inside the app the surface colours turn transparent so nothing stacks on the
-   glass; floating surfaces (menus, popups, dialogs) get them back. */
+   tint; floating surfaces (menus, popups, dialogs) get them back. */
 .backdrop {
   display: none;
 }
@@ -421,9 +423,7 @@ kbd {
   animation: backdrop-image-in 0.3s ease-out;
 }
 
-/* A video playing (src/lib/backdropLive.ts), dimmed like the still. Blurred,
-   it overflows the window by twice the radius, so its edges blur into the
-   picture rather than into the frame colour; the window clips it. */
+/* A video playing (src/lib/backdropLive.ts), dimmed like the still. */
 .backdrop-live,
 .backdrop-media {
   position: absolute;
@@ -438,13 +438,6 @@ kbd {
 
 .backdrop-media {
   object-fit: cover;
-}
-
-.backdrop-media.blurred {
-  inset: calc(-2 * var(--live-blur));
-  width: calc(100% + 4 * var(--live-blur));
-  height: calc(100% + 4 * var(--live-blur));
-  filter: blur(var(--live-blur));
 }
 
 .backdrop-live:not(:empty)::after {
@@ -483,6 +476,18 @@ kbd {
   from {
     opacity: 0;
   }
+}
+
+/* Glass: the page is see-through, so the system's glass shows, dimmed towards
+   the frame colour. Popups stay opaque (nothing blurs under them): their
+   background-color below shows through the image layer, which is empty. */
+:root[data-ui="islands"][data-backdrop="glass"],
+:root[data-ui="islands"][data-backdrop="glass"] body {
+  background: transparent;
+}
+
+:root[data-ui="islands"][data-backdrop="glass"] #root {
+  background: var(--backdrop-wash);
 }
 
 :root[data-ui="islands"][data-backdrop] .app {
@@ -4792,6 +4797,15 @@ html:has(.float-external) body {
   font-size: calc(var(--ui-font-size) * 11 / 13);
   border-style: dashed;
   background: var(--pv-rail);
+}
+/* Glass, in miniature: Settings itself is opaque, so a stand-in for a blurred desktop. */
+.bg-preview.glass {
+  background:
+    linear-gradient(var(--pv-dim), var(--pv-dim)),
+    radial-gradient(circle at 18% 28%, #5d8fe8 0, transparent 55%),
+    radial-gradient(circle at 82% 72%, #c06bd8 0, transparent 55%),
+    radial-gradient(circle at 70% 18%, #4fc3b4 0, transparent 45%),
+    var(--pv-rail);
 }
 .bg-preview-island {
   border-radius: 4px;

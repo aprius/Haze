@@ -683,6 +683,10 @@ export const api = {
   readMedia: (path: string) => invoke<ArrayBuffer>("read_media", { path }),
   /** Copies a background video into the app's cache (or, with null, drops it); the copy's path. */
   cacheBackdrop: (path: string | null) => invoke<string | null>("cache_backdrop", { path }),
+  /** Turns system glass on or off in every window; whether it is on (never where the system has none). */
+  setGlass: (on: boolean, dark: boolean) => invoke<boolean>("set_glass", { on, dark }),
+  /** Whether this system draws glass behind windows: macOS, Windows 11. */
+  glassSupported: () => invoke<boolean>("glass_supported"),
   /** A loopback URL that plays a cached background video. */
   mediaUrl: (path: string) => invoke<string>("media_url", { path }),
   /** The images and videos in a rotating background's folder, at its top and in its days and nights folders. */

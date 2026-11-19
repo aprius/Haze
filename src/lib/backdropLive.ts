@@ -1,7 +1,5 @@
-// A video background playing (src/lib/backdrop.ts reads it), in a <video>.
-// Blurred, it is blurred by CSS: WebKit blurs a video layer on the GPU as it
-// composites it, where drawing each frame onto a canvas to blur it took about
-// twice the CPU (1080p at 30 fps). Nothing plays while the window is hidden or
+// A video background playing (src/lib/backdrop.ts reads it), in a <video>:
+// WebKit hands its frames to the compositor as a video layer. Nothing plays while the window is hidden or
 // the background is not shown, nor, with Pause in background, while no Haze
 // window has focus. It plays from loopback HTTP (backdrop.ts), not a blob:
 // URL. The ambient glow follows it every two seconds. Popups and windows of
@@ -9,7 +7,7 @@
 // through a canvas, which cost three to seven times what a 1080p video does
 // (docs/BACKGROUND.md). A background changing for another (cover) fades out
 // over a still of the one before.
-import { blurredSize, drawBlurred, holdImage, useBackdrop, useBackdropImage } from "./backdrop";
+import { frameCanvas, holdImage, useBackdrop, useBackdropImage } from "./backdrop";
 import { sampleLive } from "./ambient";
 import { onAppActive } from "./ipc";
 import { useGlass } from "./theme";
@@ -35,7 +33,7 @@ export function liveRef(el: HTMLElement | null): (() => void) | void {
  * Covers the background with a still of it as it is now, so it can change
  * underneath; the function returned fades the still out over Settings' fade,
  * showing what replaced it. A video's current frame is drawn straight onto a
- * canvas, an image's blurred copy is shown as it is: nothing is encoded,
+ * canvas, an image's copy is shown as it is: nothing is encoded,
  * decoded or copied, so the change starts at once.
  */
 export function cover(): () => void {
@@ -47,11 +45,7 @@ export function cover(): () => void {
   el.className = "backdrop-curtain";
   let release: () => void;
   if (video?.videoWidth) {
-    const canvas = document.createElement("canvas");
-    const { w, h, r } = blurredSize(useBackdrop.getState().blur);
-    canvas.width = w;
-    canvas.height = h;
-    drawBlurred(canvas.getContext("2d")!, video, video.videoWidth, video.videoHeight, r);
+    const canvas = frameCanvas(video, video.videoWidth, video.videoHeight);
     el.appendChild(canvas);
     // WebKit keeps a canvas's backing store until it is collected.
     release = () => (canvas.width = canvas.height = 0);
@@ -114,12 +108,6 @@ function start(v: HTMLVideoElement, tries = 0): void {
   });
 }
 
-function layout(): void {
-  const blur = useBackdrop.getState().blur;
-  host.style.setProperty("--live-blur", `${blur}px`);
-  video?.classList.toggle("blurred", blur > 0);
-}
-
 function setMedia(url: string | null): void {
   clearTimeout(retry);
   clearTimeout(sampler);
@@ -147,13 +135,11 @@ function setMedia(url: string | null): void {
     v.addEventListener("stalled", () => playing() && start(v));
     video = v;
   }
-  layout();
   run();
 }
 
 useBackdropImage.subscribe((s, prev) => s.live !== prev.live && setMedia(s.live));
 useBackdrop.subscribe((s, prev) => {
-  if (s.blur !== prev.blur) layout();
   if (s.pauseInBackground !== prev.pauseInBackground) run();
 });
 // Focus moving from one Haze window to another blurs one before focusing the

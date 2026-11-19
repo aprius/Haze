@@ -6,6 +6,7 @@ mod dotnet;
 mod file_index;
 mod fs_ops;
 mod git;
+mod glass;
 pub mod git_auth;
 mod git_log;
 mod git_ops;
@@ -1086,6 +1087,7 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
     let handle = app.handle().clone();
     let drop_handle = app.handle().clone();
     let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
+        .transparent(glass::TRANSPARENT)
         .on_new_window(move |url, features| {
             let label = url.fragment().filter(|f| f.starts_with("float-")).map(str::to_owned);
             let Some(label) = label.filter(|l| handle.get_webview_window(l).is_none()) else {
@@ -1093,7 +1095,8 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
             };
             let size = features.size();
             let mut builder = tauri::WebviewWindowBuilder::new(&handle, label, tauri::WebviewUrl::External(url))
-                .window_features(features);
+                .window_features(features)
+                .transparent(glass::TRANSPARENT);
             if let Some((x, y)) = float_position(&handle, size) {
                 builder = builder.position(x, y);
             }
@@ -1106,7 +1109,10 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
                 })
                 .build();
             match built {
-                Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+                Ok(window) => {
+                    glass::apply(&window);
+                    tauri::webview::NewWindowResponse::Create { window }
+                }
                 Err(_) => tauri::webview::NewWindowResponse::Deny,
             }
         })
@@ -1301,6 +1307,8 @@ pub fn run() {
         .on_window_event(track_focus)
         .invoke_handler(tauri::generate_handler![
             take_open_requests,
+            glass::set_glass,
+            glass::glass_supported,
             check_update,
             update_install_kind,
             update_in_terminal,
