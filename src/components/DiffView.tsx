@@ -1,19 +1,22 @@
 // Side-by-side diff as an editor tab. The right side of a "working" diff is
 // the file's real buffer, so it can be edited in place.
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ensureBuffer, getModel } from "../lib/buffers";
 import { api, errorMessage } from "../lib/ipc";
-import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, revertEdit, toChunk, type Chunk, type ChunkKind } from "../lib/diffLink";
+import { chunkAtLine, chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, revertEdit, toChunk, type Chunk, type ChunkKind } from "../lib/diffLink";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { extname } from "../lib/path";
 import { monacoTheme } from "../lib/theme";
 import { diffPath, diffTitle, type DiffSpec } from "../lib/diffSpec";
-import { absPath } from "../store/git";
+import { hunkKey, type ReviewTarget } from "../lib/review";
+import { absPath, markReviewed, projectForRoot } from "../store/git";
+import { setAccepted, useReview } from "../store/review";
 import { closeDiffWindow, useUi } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
 import { wheelScroll, zedWheel } from "../lib/wheel";
 import { FloatWindow } from "./Overlays";
+import { attachReview, ReviewBar, type ReviewHandle } from "./ReviewComments";
 
 export { diffPath, diffTitle, parseDiffPath, type DiffSpec } from "../lib/diffSpec";
 
@@ -61,6 +64,58 @@ async function diffModels(spec: DiffSpec, owned: monaco.editor.ITextModel[]) {
 
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"];
 const isImage = (rel: string) => IMAGE_EXTS.includes(extname(rel));
+
+const CHECK =
+  '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M3.5 8.5 6.5 11.5 12.5 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/** What each side of `spec` shows, for review comments (an empty left side takes none). */
+function reviewTargets(spec: DiffSpec): { left: ReviewTarget | null; right: ReviewTarget } {
+  return {
+    left: spec.left ? { root: spec.root, rel: spec.oldRel ?? spec.rel, side: "old", rev: spec.left } : null,
+    right: { root: spec.root, rel: spec.rel, side: "new", rev: spec.right },
+  };
+}
+
+/** Content keys of the blocks between `original` and `modified`, to mark them accepted. */
+function chunkKeys(spec: DiffSpec, chunks: readonly Chunk[], original: monaco.editor.ITextModel | null, modified: monaco.editor.ITextModel | null): string[] {
+  const a = original?.getLinesContent() ?? [];
+  const b = modified?.getLinesContent() ?? [];
+  return chunks.map((c) => hunkKey(spec.root, spec.rel, a.slice(c.a0, c.a1), b.slice(c.b0, c.b1)));
+}
+
+/** Once every block of a diff against the working file is accepted, the file counts as reviewed. */
+function reviewedWhenAllAccepted(spec: DiffSpec, keys: readonly string[]) {
+  if (spec.right !== "working" || !keys.length) return;
+  const accepted = useReview.getState().accepted;
+  if (!keys.every((k) => accepted[k])) return;
+  const project = projectForRoot(spec.root);
+  if (project) void markReviewed(project.id, spec.rel);
+}
+
+/** Next block from `i` in direction `dir` that is not accepted; any block when all are. */
+function nextOpen(keys: readonly string[], i: number, dir: 1 | -1): number {
+  const accepted = useReview.getState().accepted;
+  if (keys.every((k) => accepted[k])) return i;
+  for (let j = i; j >= 0 && j < keys.length; j += dir) if (!accepted[keys[j]]) return j;
+  return -1;
+}
+
+/** Accepts block `i` (or takes the mark back), and says whether it is accepted now. */
+function toggleAccepted(keys: readonly string[], i: number): boolean {
+  const k = keys[i];
+  if (!k) return false;
+  const on = !useReview.getState().accepted[k];
+  setAccepted([k], on);
+  return on;
+}
+
+/** Toolbar text: how many blocks differ, and how many are accepted. */
+function diffStats(error: string | null, stats: number | null, accepted: number): React.ReactNode {
+  if (error) return <span className="error">{error}</span>;
+  if (stats === null) return "Comparing…";
+  if (stats === 0) return "Contents are identical";
+  return `${stats} difference(s)${accepted ? ` · ${accepted} accepted` : ""}`;
+}
 
 /** One side of an image diff: the file at a revision, or on disk. */
 async function imageSide(spec: DiffSpec, rev: string | null, rel: string): Promise<string | null> {
@@ -119,11 +174,14 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
   const gap = useRef<HTMLDivElement>(null);
   const sides = useRef<Sides | null>(null);
   const chunks = useRef<Chunk[]>([]);
+  const keys = useRef<string[]>([]);
+  const review = useRef<{ left: ReviewHandle; right: ReviewHandle } | null>(null);
   // The side last typed or clicked in: F7 and the toolbar step from its caret.
   const leftActive = useRef(false);
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<number | null>(null);
+  const [acceptedCount, setAcceptedCount] = useState(0);
   const [split, setSplit] = useState(lastSplit);
   const editable = spec.right === "working";
 
@@ -156,13 +214,17 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
       overviewRulerLanes: 0,
       overviewRulerBorder: false,
     });
-    const right = monaco.editor.create(rightHost.current, opts(!editable));
+    // The right side's glyph margin holds the "+" that adds a review comment.
+    const right = monaco.editor.create(rightHost.current, { ...opts(!editable), glyphMargin: true });
     const differ = monaco.editor.createDiffEditor(differHost.current, { ignoreTrimWhitespace: false, renderOverviewRuler: false });
     sides.current = { left, right, differ };
     const leftDecos = left.createDecorationsCollection();
     const rightDecos = right.createDecorationsCollection();
     const gutterEl = gutter.current;
     const gapEl = gap.current;
+    const isAccepted = (i: number) => !!useReview.getState().accepted[keys.current[i]];
+    // A block's colour class, faded once it is accepted.
+    const kindClass = (i: number) => chunkKind(chunks.current[i]) + (isAccepted(i) ? " rd-accepted" : "");
 
     // Pixel position of a (fractional) line boundary, relative to the viewport.
     const boundaryY = (ed: monaco.editor.ICodeEditor, b: number) => {
@@ -196,7 +258,8 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
       const line = left.getOption(monaco.editor.EditorOption.lineHeight);
       const font = left.getOption(monaco.editor.EditorOption.fontInfo);
       const digits = Math.max(2, String(model.getLineCount()).length);
-      const width = `${Math.ceil(ICON + 6 + digits * font.typicalHalfwidthCharacterWidth + 8)}px`;
+      const icons = editable ? 2 * ICON + 2 : ICON;
+      const width = `${Math.ceil(icons + 6 + digits * font.typicalHalfwidthCharacterWidth + 8)}px`;
       if (gutterEl.style.width !== width) gutterEl.style.width = width;
       Object.assign(gutterEl.style, { fontFamily: font.fontFamily, fontSize: `${font.fontSize}px`, lineHeight: `${line}px` });
       let html = "";
@@ -205,14 +268,19 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
         const y1 = boundaryY(left, c.a1);
         if (y1 < -line || y0 > height + line) return;
         const kind = chunkKind(c);
+        const cls = kindClass(i);
         if (c.a0 < c.a1) {
-          html += `<div class="rd-gl-band rd-line rd-${kind}" style="top:${y0}px;height:${y1 - y0}px"></div>`;
-          html += `<div class="rd-gl-edge rd-${kind}" style="top:${y0}px"></div><div class="rd-gl-edge rd-${kind}" style="top:${y1 - 1}px"></div>`;
+          html += `<div class="rd-gl-band rd-line rd-${cls}" style="top:${y0}px;height:${y1 - y0}px"></div>`;
+          html += `<div class="rd-gl-edge rd-${cls}" style="top:${y0}px"></div><div class="rd-gl-edge rd-${cls}" style="top:${y1 - 1}px"></div>`;
         } else {
-          html += `<div class="rd-gl-edge rd-${kind}" style="top:${c.a0 > 0 ? y0 - 1 : y0}px"></div>`;
+          html += `<div class="rd-gl-edge rd-${cls}" style="top:${c.a0 > 0 ? y0 - 1 : y0}px"></div>`;
         }
+        const at = boundaryY(left, Math.min(c.a0 + 1, model.getLineCount()) - 1);
+        const on = isAccepted(i);
+        html +=
+          `<button class="rd-apply rd-accept${on ? " on" : ""}" data-accept="${i}" title="${on ? "Accepted — click to unmark" : "Accept"}" ` +
+          `style="top:${at + (line - ICON) / 2}px;left:${editable ? ICON + 5 : 3}px">${CHECK}</button>`;
         if (editable) {
-          const at = boundaryY(left, Math.min(c.a0 + 1, model.getLineCount()) - 1);
           // Like IntelliJ, Ctrl turns the icon of a modified block into Append.
           const append = ctrl && kind === "modified";
           html +=
@@ -237,13 +305,13 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
       const height = gapEl.clientHeight;
       drawGutter(gutterEl.clientHeight);
       let paths = "";
-      chunks.current.forEach((c) => {
+      chunks.current.forEach((c, i) => {
         const l0 = boundaryY(left, c.a0);
         const l1 = boundaryY(left, c.a1);
         const r0 = boundaryY(right, c.b0);
         const r1 = boundaryY(right, c.b1);
         if (Math.max(l1, r1) < 0 || Math.min(l0, r0) > height) return;
-        const kind = chunkKind(c);
+        const kind = kindClass(i);
         // Borders sit half a pixel inside the band to line up with the 1px edges drawn in the editors.
         const edge = (y0: number, y1: number, b: number): [number, number] => (y0 === y1 ? (b > 0 ? [y0 - 0.5, y0 - 0.5] : [y0 + 0.5, y0 + 0.5]) : [y0 + 0.5, y1 - 0.5]);
         const [lt, lb] = edge(l0, l1, c.a0);
@@ -274,9 +342,13 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
     };
 
     const update = () => {
+      // Nothing to compare before the models are in (a mark accepted elsewhere meanwhile).
+      if (!left.getModel() || !right.getModel()) return;
       const changes = differ.getLineChanges() ?? [];
       chunks.current = changes.map(toChunk);
+      keys.current = chunkKeys(spec, chunks.current, left.getModel(), right.getModel());
       setStats(changes.length);
+      setAcceptedCount(chunks.current.filter((_, i) => isAccepted(i)).length);
       // Each class goes on the text and on the gutter, so a block is one band across the editor.
       const whole = (from: number, to: number, cls: string): monaco.editor.IModelDeltaDecoration => ({
         range: new monaco.Range(from, 1, to, 1),
@@ -299,8 +371,9 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
       changes.forEach((ch, i) => {
         const c = chunks.current[i];
         const kind = chunkKind(c);
-        l.push(...lineDeco(left, kind, c.a0, c.a1));
-        r.push(...lineDeco(right, kind, c.b0, c.b1));
+        const cls = kindClass(i) as ChunkKind;
+        l.push(...lineDeco(left, cls, c.a0, c.a1));
+        r.push(...lineDeco(right, cls, c.b0, c.b1));
         if (kind !== "modified") return;
         for (const x of ch.charChanges ?? []) {
           l.push(...charDeco(x.originalStartLineNumber, x.originalStartColumn, x.originalEndLineNumber, x.originalEndColumn));
@@ -310,6 +383,7 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
       leftDecos.set(l);
       rightDecos.set(r);
       redraw();
+      reviewedWhenAllAccepted(spec, keys.current);
     };
 
     // Wheel scrolling like the code editor's (Zed's, no easing); over the
@@ -352,10 +426,11 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
       right.onDidFocusEditorText(() => (leftActive.current = false)),
       differ.onDidUpdateDiff(() => {
         update();
-        if (first && chunks.current.length) goTo(0);
+        if (first && chunks.current.length) goTo(Math.max(0, nextOpen(keys.current, 0, 1)));
         first = false;
       }),
     ];
+    const unsubAccepted = useReview.subscribe((s, prev) => s.accepted !== prev.accepted && update());
 
     const owned: monaco.editor.ITextModel[] = [];
     let cancelled = false;
@@ -366,6 +441,8 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
         left.setModel(original);
         right.setModel(modified);
         differ.setModel({ original, modified });
+        const targets = reviewTargets(spec);
+        review.current = { left: attachReview(left, targets.left, false), right: attachReview(right, targets.right, true) };
       } catch (e) {
         setError(errorMessage(e));
       }
@@ -380,12 +457,17 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
       gapEl.removeEventListener("wheel", wheel);
       wheels.forEach((w) => w.dispose());
       subs.forEach((s) => s.dispose());
+      unsubAccepted();
+      review.current?.left.dispose();
+      review.current?.right.dispose();
+      review.current = null;
       differ.dispose();
       left.dispose();
       right.dispose();
       owned.forEach((m) => m.dispose());
       sides.current = null;
       chunks.current = [];
+      keys.current = [];
     };
   }, [spec.root, spec.rel, spec.oldRel, spec.left, spec.right]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -419,7 +501,25 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
     // A caret on the left is mapped to the right side first.
     const line = fromLeft ? Math.floor(mapBoundary(chunks.current, caret - 1, true)) + 1 : caret;
     const i = nextChunk(chunks.current, line, dir);
-    if (i >= 0) goTo(i);
+    // Accepted blocks are stepped over, until all of them are.
+    const open = i >= 0 ? nextOpen(keys.current, i, dir) : -1;
+    if (open >= 0) goTo(open);
+  }
+
+  /** The block at the caret of the side last used, else the next one. */
+  function current(): number {
+    const s = sides.current;
+    if (!s) return -1;
+    const fromLeft = leftActive.current;
+    const caret = (fromLeft ? s.left : s.right).getPosition()?.lineNumber ?? 1;
+    return chunkAtLine(chunks.current, fromLeft ? Math.floor(mapBoundary(chunks.current, caret - 1, true)) + 1 : caret);
+  }
+
+  // Accepting a block moves on to the next one still to review.
+  function accept(i = current()) {
+    if (i < 0 || !toggleAccepted(keys.current, i)) return;
+    const next = nextOpen(keys.current, i + 1, 1);
+    if (next >= 0 && next !== i) goTo(next);
   }
 
   // Replace the right side of a block with the left side's lines, or with
@@ -467,9 +567,16 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
         <button className="icon-btn" title="Next difference (F7)" onClick={() => step(1)}>
           <ChevronDown size={16} />
         </button>
-        <span className="muted small">
-          {error ? <span className="error">{error}</span> : stats === null ? "Comparing…" : stats === 0 ? "Contents are identical" : `${stats} difference(s)`}
-        </span>
+        <button className="icon-btn" title="Accept this change (it is skipped by F7 from then on)" disabled={!stats} onClick={() => accept()}>
+          <Check size={16} />
+        </button>
+        {editable && (
+          <button className="icon-btn" title="Reject this change (put the left side back)" disabled={!stats} onClick={() => apply(current())}>
+            <Undo2 size={15} />
+          </button>
+        )}
+        <span className="muted small">{diffStats(error, stats, acceptedCount)}</span>
+        <ReviewBar root={spec.root} onComment={() => (leftActive.current ? review.current?.left : review.current?.right)?.comment()} />
         {editable && <span className="muted small diff-hint">Right side is the local file — edits are saved as usual.</span>}
       </div>
       <div className="diff-host">
@@ -479,6 +586,8 @@ function TextDiffView({ spec }: { spec: DiffSpec }) {
           className="diff-lgutter"
           onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
+            const ok = (e.target as HTMLElement).closest<HTMLElement>("[data-accept]");
+            if (ok) return void toggleAccepted(keys.current, Number(ok.dataset.accept));
             const b = (e.target as HTMLElement).closest<HTMLElement>("[data-chunk]");
             if (b) apply(Number(b.dataset.chunk), b.dataset.append !== undefined);
           }}
@@ -509,8 +618,12 @@ export function UnifiedDiffView({ spec }: { spec: DiffSpec }) {
 function UnifiedTextDiffView({ spec }: { spec: DiffSpec }) {
   const host = useRef<HTMLDivElement>(null);
   const diff = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
+  const chunks = useRef<Chunk[]>([]);
+  const keys = useRef<string[]>([]);
+  const review = useRef<ReviewHandle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<number | null>(null);
+  const [acceptedCount, setAcceptedCount] = useState(0);
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
   const editable = spec.right === "working";
 
@@ -525,7 +638,8 @@ function UnifiedTextDiffView({ spec }: { spec: DiffSpec }) {
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
       stickyScroll: { enabled: useWorkspace.getState().stickyScroll },
-      glyphMargin: false,
+      // Holds the "+" that adds a review comment.
+      glyphMargin: true,
       ignoreTrimWhitespace: false,
       renderOverviewRuler: false,
       originalEditable: false,
@@ -540,24 +654,44 @@ function UnifiedTextDiffView({ spec }: { spec: DiffSpec }) {
     // Monaco's F7 opens its accessible diff viewer; IntelliJ's goes to the next change.
     shown.addCommand(monaco.KeyCode.F7, () => step(1));
     shown.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F7, () => step(-1));
+    // Accepted blocks get a check bar beside their lines (Monaco draws the diff colours itself).
+    const acceptedDecos = shown.createDecorationsCollection();
+    const update = () => {
+      const model = ed.getModel();
+      if (!model) return;
+      const changes = ed.getLineChanges() ?? [];
+      chunks.current = changes.map(toChunk);
+      keys.current = chunkKeys(spec, chunks.current, model.original, model.modified);
+      const accepted = useReview.getState().accepted;
+      const on = chunks.current.filter((_, i) => accepted[keys.current[i]]);
+      setStats(changes.length);
+      setAcceptedCount(on.length);
+      const lines = model.modified.getLineCount();
+      acceptedDecos.set(
+        on.map((c) => ({
+          range: new monaco.Range(Math.min(c.b0 + 1, lines), 1, Math.min(Math.max(c.b1, c.b0 + 1), lines), 1),
+          options: { isWholeLine: true, linesDecorationsClassName: "rv-accepted", hoverMessage: { value: "Accepted" } },
+        })),
+      );
+      reviewedWhenAllAccepted(spec, keys.current);
+    };
     let first = true;
     const sub = ed.onDidUpdateDiff(() => {
-      const changes = ed.getLineChanges() ?? [];
-      setStats(changes.length);
-      if (first && changes.length) {
-        const line = Math.max(1, changes[0].modifiedStartLineNumber);
-        shown.revealLineInCenter(line, monaco.editor.ScrollType.Immediate);
-        shown.setPosition({ lineNumber: line, column: 1 });
-      }
+      update();
+      const open = nextOpen(keys.current, 0, 1);
+      if (first && open >= 0) reveal(open);
       first = false;
     });
+    const unsubAccepted = useReview.subscribe((s, prev) => s.accepted !== prev.accepted && update());
 
     const owned: monaco.editor.ITextModel[] = [];
     let cancelled = false;
     void (async () => {
       try {
         const models = await diffModels(spec, owned);
-        if (!cancelled) ed.setModel(models);
+        if (cancelled) return;
+        ed.setModel(models);
+        review.current = attachReview(shown, reviewTargets(spec).right, true);
       } catch (e) {
         setError(errorMessage(e));
       }
@@ -565,6 +699,9 @@ function UnifiedTextDiffView({ spec }: { spec: DiffSpec }) {
     return () => {
       cancelled = true;
       sub.dispose();
+      unsubAccepted();
+      review.current?.dispose();
+      review.current = null;
       wheel.dispose();
       ed.dispose();
       owned.forEach((m) => m.dispose());
@@ -589,6 +726,40 @@ function UnifiedTextDiffView({ spec }: { spec: DiffSpec }) {
     ed.goToDiff(dir === 1 ? "next" : "previous");
   }
 
+  function reveal(i: number) {
+    const shown = diff.current?.getModifiedEditor();
+    const c = chunks.current[i];
+    if (!shown || !c) return;
+    const line = Math.min(c.b0 + 1, shown.getModel()?.getLineCount() ?? 1);
+    shown.revealLinesInCenter(line, Math.max(line, c.b1), monaco.editor.ScrollType.Immediate);
+    shown.setPosition({ lineNumber: line, column: 1 });
+  }
+
+  const current = () => chunkAtLine(chunks.current, diff.current?.getModifiedEditor().getPosition()?.lineNumber ?? 1);
+
+  // Accepting a block moves on to the next one still to review.
+  function accept() {
+    const i = current();
+    if (i < 0 || !toggleAccepted(keys.current, i)) return;
+    const next = nextOpen(keys.current, i + 1, 1);
+    if (next >= 0 && next !== i) reveal(next);
+  }
+
+  // Puts the original lines of the block back, in the file's buffer (one undo step).
+  function reject() {
+    const ed = diff.current;
+    const c = chunks.current[current()];
+    const from = ed?.getOriginalEditor().getModel();
+    const shown = ed?.getModifiedEditor();
+    const to = shown?.getModel();
+    if (!c || !from || !shown || !to) return;
+    const e = revertEdit(c, from.getLinesContent(), to.getLinesContent(), to.getEOL());
+    if (!e) return;
+    shown.pushUndoStop();
+    shown.executeEdits("diff-reject", [{ range: new monaco.Range(e.startLine, e.startColumn, e.endLine, e.endColumn), text: e.text }]);
+    shown.pushUndoStop();
+  }
+
   return (
     <div className="diff-view">
       <div className="diff-toolbar" onMouseDown={(e) => (e.target as HTMLElement).closest("button") && e.preventDefault()}>
@@ -598,9 +769,16 @@ function UnifiedTextDiffView({ spec }: { spec: DiffSpec }) {
         <button className="icon-btn" title="Next difference (F7)" onClick={() => step(1)}>
           <ChevronDown size={16} />
         </button>
-        <span className="muted small">
-          {error ? <span className="error">{error}</span> : stats === null ? "Comparing…" : stats === 0 ? "Contents are identical" : `${stats} difference(s)`}
-        </span>
+        <button className="icon-btn" title="Accept this change" disabled={!stats} onClick={accept}>
+          <Check size={16} />
+        </button>
+        {editable && (
+          <button className="icon-btn" title="Reject this change (put the original lines back)" disabled={!stats} onClick={reject}>
+            <Undo2 size={15} />
+          </button>
+        )}
+        <span className="muted small">{diffStats(error, stats, acceptedCount)}</span>
+        <ReviewBar root={spec.root} onComment={() => review.current?.comment()} />
         <span className="muted small diff-hint">Ctrl+D: side-by-side diff</span>
       </div>
       <div className="diff-host">

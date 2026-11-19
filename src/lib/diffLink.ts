@@ -76,6 +76,15 @@ export function nextChunk(chunks: readonly Chunk[], line: number, dir: 1 | -1): 
   return -1;
 }
 
+/**
+ * The block at `line` on the right side (a block with no lines there sits on
+ * the line below its boundary), else the next one below, else the last one; -1 if none.
+ */
+export function chunkAtLine(chunks: readonly Chunk[], line: number): number {
+  const i = chunks.findIndex((c) => line <= Math.max(c.b1, c.b0 + 1));
+  return i >= 0 ? i : chunks.length - 1;
+}
+
 /** A text edit in Monaco coordinates (1-based lines and columns). */
 export interface LineEdit {
   startLine: number;

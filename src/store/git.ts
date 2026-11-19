@@ -13,7 +13,7 @@ import { isWithin, relative } from "../lib/path";
 import { withTask } from "./tasks";
 import { cappedDelay, isIgnored, onGitStatus, refreshGit as refreshTreeGit, useTree } from "./tree";
 import { useUi } from "./ui";
-import { useWorkspace } from "./workspace";
+import { projectForPath, useWorkspace } from "./workspace";
 
 export interface ConsoleEntry {
   time: number;
@@ -304,6 +304,29 @@ export async function toggleReviewed(projectId: string, rel: string): Promise<vo
   }
   const [print] = await api.gitFingerprints(r.root, [rel]);
   patchRepo(projectId, (s) => ({ reviewed: { ...s.reviewed, [rel]: print ?? "missing" } }));
+}
+
+/**
+ * The open project whose repository is at `root` (a project may be a folder
+ * inside its repository), else the project that contains `root`.
+ */
+export function projectForRoot(root: string) {
+  const projects = useWorkspace.getState().projects;
+  return projects.find((p) => p.open && repo(p.id).root === root) ?? projects.find((p) => repo(p.id).root === root) ?? projectForPath(root);
+}
+
+const marking = new Set<string>();
+
+/** Marks a file reviewed (all its hunks were accepted), unless it already is or is being marked. */
+export async function markReviewed(projectId: string, rel: string): Promise<void> {
+  const key = `${projectId}\0${rel}`;
+  if (repo(projectId).reviewed[rel] || marking.has(key)) return;
+  marking.add(key);
+  try {
+    await toggleReviewed(projectId, rel);
+  } finally {
+    marking.delete(key);
+  }
 }
 
 /** Snapshots the working tree so an agent's edits can be reviewed afterwards. */

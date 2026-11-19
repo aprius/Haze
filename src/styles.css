@@ -3877,6 +3877,139 @@ button.toggle.on {
   background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 
+/* Review: accepted blocks fade, so what is left to look at stands out. */
+.rd-accepted {
+  --diff-tint: 5%;
+  --diff-edge: 22%;
+}
+
+.rd-accept {
+  color: var(--muted);
+}
+
+.rd-accept.on {
+  color: var(--mk-green);
+}
+
+/* Unified diff: a green bar beside an accepted block. */
+.monaco-editor .rv-accepted {
+  margin-left: 2px;
+  width: 3px !important;
+  background: var(--mk-green);
+  border-radius: 1px;
+}
+
+/* Lines a review comment is on. */
+.monaco-editor .rv-mark {
+  margin-left: 2px;
+  width: 3px !important;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+/* The "+" beside the hovered line that adds a review comment. */
+.monaco-editor .rv-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.monaco-editor .rv-add::before {
+  content: "+";
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: 600 13px/1 var(--font-ui);
+}
+
+.rv-zone {
+  padding: 6px 0 6px 12px;
+  box-sizing: border-box;
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size);
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.rv-card {
+  box-sizing: border-box;
+  padding: 6px 10px 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+}
+
+.rv-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+}
+
+.rv-spacer {
+  flex: 1;
+}
+
+.rv-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.rv-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.rv-link:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.rv-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 56px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--editor-bg);
+  color: var(--fg);
+  font: inherit;
+  resize: vertical;
+}
+
+.rv-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.rv-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.rv-send {
+  white-space: nowrap;
+}
+
 .blame-text {
   color: var(--muted) !important;
   font-style: normal;

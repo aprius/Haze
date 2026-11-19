@@ -348,6 +348,25 @@ export function toggleTerminal(projectId: string, hideOnlyWhenFocused = true): v
   });
 }
 
+/**
+ * Types `text` into a terminal as one paste (bracketed, so an agent takes its
+ * line breaks as part of the prompt), presses Enter, then shows the terminal.
+ */
+export async function sendToTerminal(projectId: string | null, id: string, text: string): Promise<void> {
+  const v = views.get(id);
+  // A view pastes as the program asked (bracketed or not); without one, agents all take bracketed paste.
+  if (v) v.term.paste(text);
+  else await api.ptyWrite(id, `\x1b[200~${text.replace(/\r?\n/g, "\r")}\x1b[201~`);
+  // Enter on its own, so a TUI agent takes the text as typed and Enter as submit (as `haze send` does).
+  await new Promise((r) => setTimeout(r, 150));
+  // Through the view too when there is one, so Enter queues behind the pasted text instead of overtaking it.
+  const now = views.get(id);
+  if (now) now.term.input("\r", false);
+  else await api.ptyWrite(id, "\r");
+  if (!projectId) return;
+  useWorkspace.getState().updateUi(projectId, { terminalVisible: true, activeTerminal: id });
+}
+
 export function disposeView(id: string): void {
   const v = views.get(id);
   if (!v) return;

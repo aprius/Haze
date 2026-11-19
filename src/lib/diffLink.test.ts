@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, revertEdit, toChunk, type Chunk } from "./diffLink";
+import { chunkAtLine, chunkKind, connectorCurve, connectorPath, mapBoundary, nextChunk, revertEdit, toChunk, type Chunk } from "./diffLink";
 import { applyEdit } from "./testEdit";
 
 describe("toChunk", () => {
@@ -108,5 +108,21 @@ describe("revertEdit", () => {
     let text = right;
     for (const c of [...chunks].reverse()) text = applyEdit(text, revertEdit(c, left.split("\n"), text.split("\n"), "\n")!);
     expect(text).toBe(left);
+  });
+});
+
+describe("chunkAtLine", () => {
+  const chunks = [
+    { a0: 2, a1: 4, b0: 2, b1: 5 },
+    { a0: 7, a1: 9, b0: 8, b1: 8 },
+  ];
+  it("finds the block at a line, else the next one, else the last", () => {
+    expect(chunkAtLine(chunks, 1)).toBe(0);
+    expect(chunkAtLine(chunks, 3)).toBe(0);
+    expect(chunkAtLine(chunks, 5)).toBe(0);
+    expect(chunkAtLine(chunks, 6)).toBe(1);
+    expect(chunkAtLine(chunks, 9)).toBe(1);
+    expect(chunkAtLine(chunks, 20)).toBe(1);
+    expect(chunkAtLine([], 3)).toBe(-1);
   });
 });
