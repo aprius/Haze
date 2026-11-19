@@ -9,10 +9,11 @@ import { api, errorMessage, type BlameLine } from "../lib/ipc";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename, dirname, extname, isWithin, join, relative } from "../lib/path";
-import { clearUnusedMarks, csharpAnswers, findImplementations, findUsages, importsForPaste, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
+import { clearUnusedMarks, csharpAnswers, csharpFormatLines, findImplementations, findUsages, importsForPaste, prepareRename, renameSymbol, setCodeVisionAuthor } from "../lib/lsp/csharp";
 import { addUsings } from "../lib/csharpUsings";
 import { moveStatement } from "../lib/csharpSelection";
 import { lineChanges, lineMapper } from "../lib/lineChanges";
+import { changedRanges, mergeEdits } from "../lib/formatChanged";
 import { withNested } from "../lib/treeRows";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
 import { completeStatement, mayApply, typingEdit, type BodyEdit, type TypingKey, type TypingOptions } from "../lib/csharpTyping";
@@ -742,10 +743,42 @@ function MarkdownPreview({ path }: { path: string }) {
   return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
+/** How long a save waits for the formatter before saving the file as it is. */
+const FORMAT_TIMEOUT_MS = 2000;
+
+/**
+ * Formats the lines of `path` changed since HEAD (the whole file when it is
+ * not in Git), as one undo step. C# only, through Roslyn and the project's
+ * .editorconfig. Gives up quietly (the file is saved as it is) when Roslyn
+ * is not ready, is slow, or the buffer changes meanwhile.
+ */
+async function formatChangedLines(path: string): Promise<void> {
+  const model = getModel(path);
+  if (!model || model.getLanguageId() !== "csharp") return;
+  const project = projectForPath(path);
+  const r = project ? repo(project.id) : null;
+  const version = model.getVersionId();
+  // Outside a repository there is no "changed": the whole file is formatted, as Rider does.
+  const base = r?.root && isWithin(path, r.root) ? await headText(r.root, relative(r.root, path), r.branches?.head ?? "") : null;
+  if (model.isDisposed() || model.getVersionId() !== version) return;
+  const ranges = changedRanges(base, model.getValue(), model.getLineCount());
+  if (!ranges.length) return;
+  const edits = await Promise.race([
+    csharpFormatLines(model, ranges).catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), FORMAT_TIMEOUT_MS)),
+  ]);
+  if (!edits?.length || model.isDisposed() || model.getVersionId() !== version) return;
+  model.pushStackElement();
+  model.pushEditOperations(null, mergeEdits(edits).map((e) => ({ range: e.range, text: e.text })), () => null);
+  model.pushStackElement();
+}
+
 export async function saveAll(): Promise<void> {
   const meta = useBuffers.getState().meta;
+  const format = useWorkspace.getState().formatOnSave;
   for (const [path, m] of Object.entries(meta)) {
     if (m.status !== "text" || !m.dirty) continue;
+    if (format && !isVirtualPath(path)) await formatChangedLines(path).catch(() => {});
     try {
       const ok = await saveBuffer(path);
       if (!ok) toast(`${basename(path)} changed on disk — not saved. Choose Reload or Overwrite.`, "error");

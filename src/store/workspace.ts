@@ -118,6 +118,8 @@ interface WorkspaceState {
   selectOpenedFile: boolean;
   /** Pins the enclosing class/method lines at the top of the editor while scrolling. */
   stickyScroll: boolean;
+  /** Reformat the lines changed since the last commit when saving (C#, through Roslyn). */
+  formatOnSave: boolean;
   /** Shows the caret line's author, date and commit at the end of the line. */
   lineBlame: boolean;
   /** Code Vision: usages and author above C# types and members; unused private members greyed. */
@@ -173,6 +175,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   nestFiles: true,
   selectOpenedFile: true,
   stickyScroll: true,
+  formatOnSave: false,
   lineBlame: true,
   codeVision: true,
   rainbowBrackets: true,

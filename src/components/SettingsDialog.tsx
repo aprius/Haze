@@ -854,6 +854,7 @@ function IgnoredRulesInput() {
 
 function EditorSection() {
   const stickyScroll = useWorkspace((s) => s.stickyScroll);
+  const formatOnSave = useWorkspace((s) => s.formatOnSave);
   const lineBlame = useWorkspace((s) => s.lineBlame);
   const codeVision = useWorkspace((s) => s.codeVision);
   const rainbowBrackets = useWorkspace((s) => s.rainbowBrackets);
@@ -867,6 +868,12 @@ function EditorSection() {
           desc="Keeps the enclosing namespace, class and method lines pinned at the top while you scroll."
           checked={stickyScroll}
           onChange={(on) => useWorkspace.setState({ stickyScroll: on })}
+        />
+        <SwitchRow
+          label="Reformat changed lines on save"
+          desc="C# files are formatted by Roslyn with the project's .editorconfig, but only on the lines changed since the last commit, so a save never reformats code you did not touch. A file not in Git is formatted whole."
+          checked={formatOnSave}
+          onChange={(on) => useWorkspace.setState({ formatOnSave: on })}
         />
         <SwitchRow
           label="Git blame for the current line"

@@ -638,6 +638,29 @@ function ready(model: monaco.editor.ITextModel): CsharpSession | undefined {
   return s?.usable && s.client.alive ? s : undefined;
 }
 
+/**
+ * Roslyn's formatting edits for whole lines `ranges` (1-based, inclusive) of
+ * `model`, all computed on its current text; null when no server can format it now.
+ */
+export async function csharpFormatLines(model: monaco.editor.ITextModel, ranges: readonly { start: number; end: number }[]): Promise<monaco.languages.TextEdit[] | null> {
+  const s = ready(model);
+  if (!s?.caps.documentRangeFormattingProvider) return null;
+  const { tabSize, insertSpaces } = model.getOptions();
+  const last = model.getLineCount();
+  const results = await Promise.all(
+    ranges.map((r) => {
+      const end = Math.min(r.end, last);
+      const range = new monaco.Range(Math.max(1, r.start), 1, end, model.getLineMaxColumn(end));
+      return s.request<LspTextEdit[] | null>("textDocument/rangeFormatting", {
+        textDocument: { uri: serverUri(model) },
+        range: toLspRange(range),
+        options: { tabSize, insertSpaces },
+      });
+    }),
+  );
+  return results.flatMap((res) => (res ?? []).map((e) => ({ range: toMonacoRange(e.range), text: e.newText })));
+}
+
 /** Whether Roslyn has loaded the model's projects and answers navigation (else lib/textNav.ts guesses). */
 export function csharpAnswers(model: monaco.editor.ITextModel): boolean {
   return !!ready(model)?.ready;

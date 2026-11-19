@@ -5,6 +5,7 @@ import { MessageSquarePlus, Send } from "lucide-react";
 import { errorMessage } from "../lib/ipc";
 import { buildReviewPrompt, type ReviewTarget } from "../lib/review";
 import { monaco } from "../lib/monaco";
+import { isMac } from "../lib/keymap";
 import { isWithin } from "../lib/path";
 import { wheelScroll } from "../lib/wheel";
 import { addComment, clearComments, commentsIn, commentsOn, editComment, removeComment, useReview } from "../store/review";
@@ -19,8 +20,6 @@ export interface ReviewHandle extends monaco.IDisposable {
 }
 
 const NONE: ReviewHandle = { dispose() {}, comment() {} };
-
-const isMac = navigator.platform.toLowerCase().includes("mac");
 
 /**
  * Shows the comments on `target` in `ed` and lets new ones be written.

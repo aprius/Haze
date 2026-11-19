@@ -18,6 +18,7 @@ interface Persisted {
   nestFiles: boolean;
   selectOpenedFile?: boolean;
   stickyScroll?: boolean;
+  formatOnSave?: boolean;
   lineBlame?: boolean;
   codeVision?: boolean;
   rainbowBrackets?: boolean;
@@ -51,6 +52,7 @@ function snapshot(): Persisted {
     nestFiles: s.nestFiles,
     selectOpenedFile: s.selectOpenedFile,
     stickyScroll: s.stickyScroll,
+    formatOnSave: s.formatOnSave,
     lineBlame: s.lineBlame,
     codeVision: s.codeVision,
     rainbowBrackets: s.rainbowBrackets,
@@ -131,6 +133,7 @@ async function doRestore(): Promise<void> {
       nestFiles: data.nestFiles ?? true,
       selectOpenedFile: data.selectOpenedFile ?? true,
       stickyScroll: data.stickyScroll ?? true,
+      formatOnSave: data.formatOnSave ?? false,
       lineBlame: data.lineBlame ?? true,
       codeVision: data.codeVision ?? true,
       rainbowBrackets: data.rainbowBrackets ?? true,
