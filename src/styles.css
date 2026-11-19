@@ -4662,6 +4662,8 @@ html:has(.float-external) body {
   overflow-y: auto;
   margin-top: 42px;
   padding: 0 24px 24px;
+  /* Composited from the start, for the same reason as .switch span::after. */
+  will-change: scroll-position;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -4971,6 +4973,11 @@ html:has(.float-external) body {
   border-radius: 50%;
   background: var(--fg);
   transition: transform 0.15s, background 0.15s;
+  /* A layer from the start: otherwise WebKit creates one on the first toggle's
+     transition, and in a scrolling page (.settings-content) that re-snaps the
+     page's layers and shifts every row once. */
+  transform: translateX(0);
+  will-change: transform;
 }
 .switch input:checked + span {
   background: var(--accent);
