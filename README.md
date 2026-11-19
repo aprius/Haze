@@ -145,7 +145,7 @@ Put an image or a video behind the Islands layout: the panels and popups are tin
 <td width="50%"><img src="docs/glass-video-fire.webp" alt="Ambient glow over a video background" width="100%"></td>
 <td width="50%" valign="middle">
 
-Shown with blur 10, dim 40 %, panel opacity 65 %, popup opacity 65 % and ambient glow 55 %.
+Shown with dim 40 %, panel opacity 65 %, popup opacity 65 % and ambient glow 55 %.
 
 </td>
 </tr>

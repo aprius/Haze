@@ -97,4 +97,4 @@ Other ways of drawing it were measured too (480×270 GIF unless noted). None was
 | Native `<img>` with a CSS blur | 5.2%; 34.2% at 1280×720 | Can't be paused, throttled or sampled for the glow; costs as much at 720p |
 | Tiny canvas, no filter | 6.5% | Visibly blocky: 28.5 dB PSNR against a true blur, where the original drawing reaches 59.7 dB |
 
-A video of the same animation is smaller, decoded in hardware and blurred by the GPU, so Haze takes videos only.
+A video of the same animation is smaller and decoded in hardware, so Haze takes videos only.
