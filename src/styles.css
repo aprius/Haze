@@ -472,6 +472,15 @@ kbd {
   background: var(--backdrop-wash);
 }
 
+/* Dark glass: hovers and selections (buttons, tabs, rows) as translucent light
+   over the image or the system's glass, not the theme's solid greys, which sit
+   on it as opaque patches. */
+:root[data-theme="dark"][data-ui="islands"][data-backdrop] {
+  --hover: rgb(255 255 255 / 0.07);
+  --selected: rgb(255 255 255 / 0.14);
+  --selected-inactive: rgb(255 255 255 / 0.1);
+}
+
 @keyframes backdrop-image-in {
   from {
     opacity: 0;
