@@ -58,7 +58,7 @@ Accept or reject each change in the diff, leave review comments on any line, the
 [Docs →](docs/FEATURES.md#git)
 
 </td>
-<td width="50%"><img src="docs/review-comments.png" alt="Review comments in the diff, sent to an agent" width="100%"></td>
+<td width="50%"><img src="docs/review-comment-add.png" alt="Add a review comment in the diff" width="100%"><img src="docs/review-comment-send.png" alt="Send review comments to an agent" width="100%"></td>
 </tr>
 <tr>
 <td width="50%" valign="middle">
