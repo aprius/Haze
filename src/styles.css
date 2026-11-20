@@ -4365,6 +4365,22 @@ html:has(.float-external) body {
   margin-left: 4px;
 }
 
+/* Rider's branch widget: ↙ incoming (to pull) and ↗ outgoing (to push) commits. */
+.status-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-sync.incoming {
+  color: var(--git-modified);
+}
+
+.status-sync.outgoing {
+  color: var(--git-added);
+}
+
 .sev-ok {
   color: var(--git-added);
 }

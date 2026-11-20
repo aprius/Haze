@@ -1,7 +1,7 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { AlertCircle, ArrowUpCircle, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
+import { AlertCircle, ArrowDownLeft, ArrowUpCircle, ArrowUpRight, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type BuildDiagnostic, type TextEncoding } from "../lib/ipc";
@@ -408,6 +408,7 @@ function ErrorsIndicator({ project, activeTab }: { project: Project; activeTab: 
 export function StatusBar({ project }: { project: Project | null }) {
   const git = useTree((s) => (project ? s.git[project.id] : undefined));
   const operation = useGit((s) => (project ? s.repos[project.id]?.branches?.operation : null));
+  const tracking = useGit((s) => (project ? s.repos[project.id]?.branches?.branches.find((b) => b.current) : undefined));
   const ui = useWorkspace((s) => (project ? s.ui[project.id] : undefined));
   const activeTab = ui ? activeTabOf(ui) : null;
   const meta = useBuffers((s) => (activeTab ? s.meta[activeTab] : undefined));
@@ -436,6 +437,18 @@ export function StatusBar({ project }: { project: Project | null }) {
           {git?.status.isRepo && (
             <button className="status-item status-btn" title={`Branches (${shortcutLabel("branches")})`} onClick={() => openBranchesPopup(project)}>
               <GitBranch size={14} /> {git.status.branch ?? "detached"}
+              {tracking && tracking.behind > 0 && (
+                <span className="status-sync incoming" title={`${tracking.behind} incoming ${tracking.behind === 1 ? "commit" : "commits"} from ${tracking.upstream} (pull)`}>
+                  <ArrowDownLeft size={13} />
+                  {tracking.behind}
+                </span>
+              )}
+              {tracking && tracking.ahead > 0 && (
+                <span className="status-sync outgoing" title={`${tracking.ahead} outgoing ${tracking.ahead === 1 ? "commit" : "commits"} to ${tracking.upstream} (push)`}>
+                  <ArrowUpRight size={13} />
+                  {tracking.ahead}
+                </span>
+              )}
               {operation && <span className="status-op">({operation} in progress)</span>}
             </button>
           )}
