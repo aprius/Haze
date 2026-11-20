@@ -584,6 +584,7 @@ fn broadcast(host: &Host, subscribers: &HashSet<ClientId>, event: Event) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
 
     fn agent(name: &str, state: &str, checks: &[(&str, &str)]) -> AgentStatus {
         AgentStatus {
@@ -660,35 +661,40 @@ mod tests {
 
     #[test]
     fn exit_waits_for_output_to_settle() {
-        let (quiet, max) = (Duration::from_millis(50), Duration::from_millis(400));
+        // `quiet` is far above the feeder's 2 ms period so that a loaded CI
+        // runner oversleeping a few ticks doesn't read as the output pausing.
+        let (quiet, max) = (Duration::from_millis(250), Duration::from_millis(500));
         let timed = |rx: &mpsc::Receiver<()>| {
             let t = Instant::now();
             settle(rx, quiet, max);
             t.elapsed()
         };
 
-        // Output keeps coming every 10 ms: waits, but not past `max`.
+        // Output keeps coming: waits, but not past `max`.
         let (tx, rx) = mpsc::sync_channel::<()>(1);
-        let feeder = thread::spawn(move || {
-            for _ in 0..100 {
-                let _ = tx.try_send(());
-                thread::sleep(Duration::from_millis(10));
+        tx.try_send(()).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let feeder = thread::spawn({
+            let stop = stop.clone();
+            move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = tx.try_send(());
+                    thread::sleep(Duration::from_millis(2));
+                }
             }
         });
         let busy = timed(&rx);
+        stop.store(true, Ordering::Relaxed);
+        feeder.join().unwrap();
         assert!(
-            busy >= Duration::from_millis(390) && busy < Duration::from_millis(800),
+            busy >= max - Duration::from_millis(10) && busy < max * 3,
             "{busy:?}"
         );
-        feeder.join().unwrap();
 
         // No more output: one quiet pause.
         let (_tx, rx) = mpsc::sync_channel::<()>(1);
         let took = timed(&rx);
-        assert!(
-            took >= quiet && took < Duration::from_millis(300),
-            "{took:?}"
-        );
+        assert!(took >= quiet && took < max * 2, "{took:?}");
 
         // The reader ended: no wait, even with a mark still pending.
         let (tx, rx) = mpsc::sync_channel::<()>(1);
