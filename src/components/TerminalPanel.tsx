@@ -8,7 +8,7 @@ import { ChevronDown, ChevronRight, ChevronUp, Plus, Search, X } from "lucide-re
 import { useEffect, useRef, useState } from "react";
 import { codeFontFamily, loadCodeFont, useFonts } from "../lib/fonts";
 import { api } from "../lib/ipc";
-import { matches, shortcutLabel } from "../lib/keymap";
+import { isWindows, matches, shortcutLabel } from "../lib/keymap";
 import { findPathCandidates, parseOscCwd } from "../lib/termLinks";
 import { afterSplitDrag, splitDragging } from "../lib/splitDrag";
 import { terminalTheme, useGlass, useTheme } from "../lib/theme";
@@ -234,6 +234,9 @@ function createView(id: string, project: Project): View {
       void navigator.clipboard.writeText(term.getSelection());
       return false;
     }
+    // Ctrl+V pastes on Windows, as in Windows Terminal and VS Code: xterm would
+    // send ^V and cancel the key, so the browser's paste event never came.
+    if (isWindows && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "v") return false;
     if (mod && !e.shiftKey && e.key.toLowerCase() === "f") {
       window.dispatchEvent(new CustomEvent("haze:terminal-find"));
       return false;
