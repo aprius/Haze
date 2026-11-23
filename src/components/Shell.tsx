@@ -13,7 +13,7 @@ import { busyTerminals, closeTerminal, shownState, useTerminals } from "../store
 import { useTree } from "../store/tree";
 import { toggleCommitWindow, useUi } from "../store/ui";
 import { openRelease, updateLabel, updateNow, useUpdates } from "../store/updates";
-import { openConflictsDialog } from "./ConflictsDialog";
+import { finishLabel, openConflictsDialog } from "./ConflictsDialog";
 import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
@@ -458,6 +458,12 @@ export function StatusBar({ project }: { project: Project | null }) {
           {git?.status.isRepo && conflicts > 0 && (
             <button className="status-item status-btn status-conflicts" title="Resolve conflicts…" onClick={() => openConflictsDialog(project.id)}>
               <AlertTriangle size={14} /> {conflicts} {conflicts === 1 ? "conflict" : "conflicts"}
+            </button>
+          )}
+          {/* Conflicts resolved, the operation still open: the step that finishes it. */}
+          {git?.status.isRepo && conflicts === 0 && operation && (
+            <button className="status-item status-btn status-conflicts" title={`All conflicts are resolved: ${finishLabel(operation).toLowerCase()}`} onClick={() => openConflictsDialog(project.id, true)}>
+              <GitCommitHorizontal size={14} /> {finishLabel(operation)}
             </button>
           )}
           {activeTab &&

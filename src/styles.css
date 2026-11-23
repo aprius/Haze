@@ -4433,6 +4433,29 @@ html:has(.float-external) body {
 /* A side of a conflict not handled yet. */
 .rd-conflict { --rd: var(--git-conflict); }
 
+/* The magic wand in the result's glyph margin: a simple conflict merged word by word. */
+.merge-wand {
+  cursor: pointer;
+  background-color: var(--accent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5l1.6 3.9 3.9 1.6-3.9 1.6L8 12.5 6.4 8.6 2.5 7l3.9-1.6z'/%3E%3C/svg%3E") center / 14px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5l1.6 3.9 3.9 1.6-3.9 1.6L8 12.5 6.4 8.6 2.5 7l3.9-1.6z'/%3E%3C/svg%3E") center / 14px no-repeat;
+}
+
+.merge-auto {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.merge-status {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
 .stash-list {
   flex: 0 0 320px;
   display: flex;
