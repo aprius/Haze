@@ -15,6 +15,10 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// Longest a UnityYAMLMerge run may take before the merge window falls back to its own merge.
+const TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Extensions of the YAML files Unity serializes (it merges .unity, .prefab
 /// and .meta by default; `--force` takes the rest).
@@ -114,17 +118,32 @@ fn run_three(tool: &Path, ext: &str, base: &[u8], mine: &[u8], theirs: &[u8]) ->
         }
         // Argument order: base, theirs, mine, output.
         cmd.arg(&base_f).arg(&theirs_f).arg(&mine_f).arg(out);
-        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        // Its report goes to a file, not a pipe: a full pipe would stall it while it is waited on.
+        let log_path = out.with_extension("log");
+        let log = std::fs::File::create(&log_path)?;
+        cmd.stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
-        let out = cmd.output().with_context(|| format!("running {}", tool.display()))?;
-        let code = out.status.code().unwrap_or(-1);
+        let mut child = cmd.spawn().with_context(|| format!("running {}", tool.display()))?;
+        let started = Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if started.elapsed() > TIMEOUT {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!("UnityYAMLMerge did not finish in {} s", TIMEOUT.as_secs());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let code = status.code().unwrap_or(-1);
         if !matches!(code, 0 | 2 | 3) {
-            let why = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
-            bail!("UnityYAMLMerge failed (exit {code}): {}", why.trim());
+            let why = std::fs::read(&log_path).unwrap_or_default();
+            bail!("UnityYAMLMerge failed (exit {code}): {}", String::from_utf8_lossy(&why).trim());
         }
         Ok(code)
     };
@@ -136,8 +155,14 @@ fn run_three(tool: &Path, ext: &str, base: &[u8], mine: &[u8], theirs: &[u8]) ->
     }
     let theirs_out = file("merged-theirs");
     let base_out = file("merged-base");
-    run(Some("-l"), &theirs_out)?;
-    run(None, &base_out)?;
+    // Independent of each other: side by side.
+    let (theirs_run, base_run) = std::thread::scope(|s| {
+        let theirs = s.spawn(|| run(Some("-l"), &theirs_out));
+        let base = run(None, &base_out);
+        (theirs.join().unwrap_or_else(|_| Err(anyhow::anyhow!("UnityYAMLMerge run panicked"))), base)
+    });
+    theirs_run?;
+    base_run?;
     Ok(UnityPremerge {
         tool: tool_name,
         conflicts: true,
@@ -225,13 +250,18 @@ fn find_tool(project: &Path) -> Option<PathBuf> {
     })
 }
 
+/// `6000.6.10f1` → [6000, 6, 10, 1]: numbers compare as numbers, so 6000.6.10 is newer than 6000.6.5.
+fn version_key(name: &str) -> Vec<u64> {
+    name.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).filter_map(|p| p.parse().ok()).collect()
+}
+
 fn find_in_roots(roots: &[PathBuf], version: Option<&str>) -> Option<PathBuf> {
     if let Some(v) = version {
         if let Some(tool) = roots.iter().find_map(|r| tool_in(&editor_of_version(&r.join(v)))) {
             return Some(tool);
         }
     }
-    // Any installed Editor, newest version first (Unity versions sort well enough as text).
+    // Any installed Editor, newest version first.
     let mut versions: Vec<PathBuf> = roots
         .iter()
         .filter_map(|r| std::fs::read_dir(r).ok())
@@ -240,7 +270,7 @@ fn find_in_roots(roots: &[PathBuf], version: Option<&str>) -> Option<PathBuf> {
         .map(|e| e.path())
         .filter(|p| p.is_dir())
         .collect();
-    versions.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    versions.sort_by_key(|v| std::cmp::Reverse(version_key(&v.file_name().unwrap_or_default().to_string_lossy())));
     versions.iter().find_map(|v| tool_in(&editor_of_version(v)))
 }
 
@@ -289,7 +319,8 @@ mod tests {
             tool
         };
         let old = place("2021.3.1f1");
-        let new = place("2023.2.5f1");
+        place("2023.2.5f1");
+        let new = place("2023.2.10f1");
         let roots = [dir.path().to_path_buf()];
         assert_eq!(find_in_roots(&roots, Some("2021.3.1f1")), Some(old));
         assert_eq!(find_in_roots(&roots, Some("6000.0.1f1")), Some(new.clone()));

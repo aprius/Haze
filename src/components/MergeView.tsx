@@ -100,6 +100,25 @@ function boundaryAt(ed: monaco.editor.ICodeEditor, y: number): number {
   return lo + (h > 0 ? Math.min(1, Math.max(0, (y - y0) / h)) : 0);
 }
 
+/** The first of `n` items, their ends ascending, whose end is at or after `at`. */
+function firstEndingFrom(n: number, end: (i: number) => number, at: number): number {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (end(mid) < at) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** The line boundaries `ed` shows (with a line to spare either way). */
+function shown(ed: monaco.editor.ICodeEditor): [number, number] {
+  const r = ed.getVisibleRanges();
+  const count = ed.getModel()?.getLineCount() ?? 1;
+  return [Math.max(0, (r[0]?.startLineNumber ?? 1) - 2), (r[r.length - 1]?.endLineNumber ?? count) + 1];
+}
+
 interface Panes {
   left: Ed;
   center: Ed;
@@ -194,7 +213,8 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     let frame = 0;
     // A side's gutter, mirrored for the left one: band tints and edges, the
     // conflict buttons on each conflict's first line, and line numbers against the gap.
-    const drawGutter = (el: HTMLDivElement, ed: Ed, blocks: { s0: number; s1: number; cls: string }[], which: Side) => {
+    // Only what is in view is drawn: blocks and conflicts are in line order, so a binary search finds the first.
+    const drawGutter = (el: HTMLDivElement, ed: Ed, chunks: Chunk[], kindOf: string[], which: Side) => {
       const model = ed.getModel();
       if (!model) return void (el.innerHTML = "");
       const line = ed.getOption(monaco.editor.EditorOption.lineHeight);
@@ -205,7 +225,13 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
       if (el.style.width !== width) el.style.width = width;
       Object.assign(el.style, { fontFamily: font.fontFamily, fontSize: `${font.fontSize}px`, lineHeight: `${line}px` });
       let html = "";
-      for (const { s0, s1, cls } of blocks) {
+      const [top, bottom] = shown(ed);
+      const lo = (c: Chunk) => (which === "ours" ? c.a0 : c.b0);
+      const hi = (c: Chunk) => (which === "ours" ? c.a1 : c.b1);
+      for (let i = firstEndingFrom(chunks.length, (j) => hi(chunks[j]), top); i < chunks.length && lo(chunks[i]) <= bottom; i++) {
+        const s0 = lo(chunks[i]);
+        const s1 = hi(chunks[i]);
+        const cls = kindOf[i];
         const y0 = boundaryY(ed, s0);
         const y1 = boundaryY(ed, s1);
         if (y1 < -line || y0 > height + line) continue;
@@ -218,9 +244,13 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
       }
       const pos = (n: number) => (which === "ours" ? `left:${n}px` : `left:auto;right:${n}px`);
       const name = which === "ours" ? "left" : "right";
-      for (const c of conflictsRef.current) {
+      const list = conflictsRef.current;
+      const startOf = (c: ConflictBlock) => (which === "ours" ? c.oursStart : c.theirsStart);
+      const endOf = (c: ConflictBlock) => startOf(c) + (which === "ours" ? c.ours : c.theirs).length;
+      for (let i = firstEndingFrom(list.length, (j) => endOf(list[j]), top); i < list.length && startOf(list[i]) <= bottom; i++) {
+        const c = list[i];
         if (states.current[c.id]?.[which] !== "pending") continue;
-        const start = which === "ours" ? c.oursStart : c.theirsStart;
+        const start = startOf(c);
         const y = boundaryY(ed, Math.min(start + 1, model.getLineCount()) - 1) + (line - ICON) / 2;
         if (y < -line || y > height) continue;
         html +=
@@ -240,7 +270,11 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
       const width = el.clientWidth;
       const height = el.clientHeight;
       let paths = "";
-      for (let i = 0; i < chunks.length; i++) {
+      const [aTop, aBottom] = shown(a);
+      const [bTop, bBottom] = shown(b);
+      // A link is in view while either end is; one going from above to below starts before both.
+      const from = Math.min(firstEndingFrom(chunks.length, (j) => chunks[j].a1, aTop), firstEndingFrom(chunks.length, (j) => chunks[j].b1, bTop));
+      for (let i = from; i < chunks.length && (chunks[i].a0 <= aBottom || chunks[i].b0 <= bBottom); i++) {
         const c = chunks[i];
         const l0 = boundaryY(a, c.a0);
         const l1 = boundaryY(a, c.a1);
@@ -260,8 +294,8 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     };
     const draw = () => {
       frame = 0;
-      drawGutter(lgEl, left, chunksL.map((c, i) => ({ s0: c.a0, s1: c.a1, cls: kindsL[i] })), "ours");
-      drawGutter(rgEl, right, chunksR.map((c, i) => ({ s0: c.b0, s1: c.b1, cls: kindsR[i] })), "theirs");
+      drawGutter(lgEl, left, chunksL, kindsL, "ours");
+      drawGutter(rgEl, right, chunksR, kindsR, "theirs");
       drawGap(lgapEl, left, center, chunksL, kindsL);
       drawGap(rgapEl, center, right, chunksR, kindsR);
     };
@@ -443,8 +477,11 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     if (r) p.center.revealLinesInCenter(r.startLineNumber, r.endLineNumber);
   }
 
-  /** Puts conflict `c` in state `next`: rewrites its lines in the result. */
-  function setState(c: ConflictBlock, next: ConflictState, advance = true) {
+  /**
+   * Puts conflict `c` in state `next`: rewrites its lines in the result. In a
+   * batch the caller re-decorates once at the end instead of after each one.
+   */
+  function setState(c: ConflictBlock, next: ConflictState, batch = false) {
     const p = panes.current;
     const model = p?.center.getModel();
     if (!p || !model) return;
@@ -474,9 +511,10 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     const [id] = model.deltaDecorations([tracked.current[c.id]], [{ range, options: { stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges } }]);
     tracked.current[c.id] = id;
     states.current[c.id] = next;
+    if (batch) return;
     refresh.current();
     setVersion((v) => v + 1);
-    if (isResolved(next) && advance) {
+    if (isResolved(next)) {
       const i = conflicts.findIndex((x) => x.id !== c.id && !isResolved(states.current[x.id]));
       if (i >= 0) reveal(conflicts[i], i);
     }
@@ -512,13 +550,16 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
   };
 
   // Like Rider's Accept Left/Right: the other side of each unresolved conflict is ignored.
-  const acceptAll = (choice: Side) =>
-    conflicts
-      .filter((c) => !resolved(c))
-      .forEach((c) => {
-        const other: Side = choice === "ours" ? "theirs" : "ours";
-        setState(c, actOnSide(actOnSide(states.current[c.id], choice, "apply"), other, "ignore"), false);
-      });
+  const acceptAll = (choice: Side) => {
+    const other: Side = choice === "ours" ? "theirs" : "ours";
+    const edit = panes.current?.center;
+    // One undo step for all of them.
+    edit?.pushUndoStop();
+    for (const c of conflicts) if (!resolved(c)) setState(c, actOnSide(actOnSide(states.current[c.id], choice, "apply"), other, "ignore"), true);
+    edit?.pushUndoStop();
+    refresh.current();
+    setVersion((v) => v + 1);
+  };
 
   const step = (dir: 1 | -1) => {
     if (!conflicts.length) return;

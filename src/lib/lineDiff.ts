@@ -86,10 +86,27 @@ export function diffLines(o: readonly string[], ab: readonly string[], budgetMs 
     });
     return out;
   };
-  const A = intern(o);
-  const B = intern(ab);
-  const removed = new Uint8Array(A.length);
-  const added = new Uint8Array(B.length);
+  const fullA = intern(o);
+  const fullB = intern(ab);
+  const removed = new Uint8Array(fullA.length);
+  const added = new Uint8Array(fullB.length);
+  // As git does (xdl_cleanup_records): a line missing from the other text is
+  // surely removed or added, so Myers runs on the rest only. It cannot be in a
+  // common subsequence, so the diff stays minimal.
+  const inA = new Uint8Array(ids.size);
+  const inB = new Uint8Array(ids.size);
+  fullA.forEach((id) => (inA[id] = 1));
+  fullB.forEach((id) => (inB[id] = 1));
+  const keep = (full: Int32Array, other: Uint8Array, gone: Uint8Array): [Int32Array, Int32Array] => {
+    const idx: number[] = [];
+    full.forEach((id, i) => (other[id] ? idx.push(i) : (gone[i] = 1)));
+    return [Int32Array.from(idx, (i) => full[i]), Int32Array.from(idx)];
+  };
+  const [A, mapA] = keep(fullA, inB, removed);
+  const [B, mapB] = keep(fullB, inA, added);
+  const mark = (gone: Uint8Array, map: Int32Array, from: number, to: number) => {
+    for (let i = from; i < to; i++) gone[map[i]] = 1;
+  };
   const deadline = Date.now() + budgetMs;
   const stack: [number, number, number, number][] = [[0, A.length, 0, B.length]];
   while (stack.length) {
@@ -97,14 +114,15 @@ export function diffLines(o: readonly string[], ab: readonly string[], budgetMs 
     while (a0 < a1 && b0 < b1 && A[a0] === B[b0]) (a0++, b0++);
     while (a0 < a1 && b0 < b1 && A[a1 - 1] === B[b1 - 1]) (a1--, b1--);
     if (a0 === a1 || b0 === b1) {
-      removed.fill(1, a0, a1);
-      added.fill(1, b0, b1);
+      mark(removed, mapA, a0, a1);
+      mark(added, mapB, b0, b1);
       continue;
     }
     const mid = bisect(A, B, a0, a1 - a0, b0, b1 - b0, deadline);
-    if (!mid) {
-      removed.fill(1, a0, a1);
-      added.fill(1, b0, b1);
+    // A split at either end would push the same stretch again: count it as replaced instead.
+    if (!mid || (mid[0] === 0 && mid[1] === 0) || (mid[0] === a1 - a0 && mid[1] === b1 - b0)) {
+      mark(removed, mapA, a0, a1);
+      mark(added, mapB, b0, b1);
       continue;
     }
     const [x, y] = mid;
@@ -114,16 +132,16 @@ export function diffLines(o: readonly string[], ab: readonly string[], budgetMs 
   const hunks: DiffHunk[] = [];
   let i = 0;
   let j = 0;
-  while (i < A.length || j < B.length) {
-    if (i < A.length && j < B.length && !removed[i] && !added[j]) {
+  while (i < fullA.length || j < fullB.length) {
+    if (i < fullA.length && j < fullB.length && !removed[i] && !added[j]) {
       i++;
       j++;
       continue;
     }
     const i0 = i;
     const j0 = j;
-    while (i < A.length && removed[i]) i++;
-    while (j < B.length && added[j]) j++;
+    while (i < fullA.length && removed[i]) i++;
+    while (j < fullB.length && added[j]) j++;
     hunks.push({ oStart: i0, oLength: i - i0, abStart: j0, abLength: j - j0 });
   }
   return hunks;

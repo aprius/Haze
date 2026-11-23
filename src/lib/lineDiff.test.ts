@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { diff3Merge as nodeDiff3Merge } from "node-diff3";
 import { diff3Merge, diffLines } from "./lineDiff";
+import { buildMerge } from "./merge";
 
 // Applies `diffLines(o, ab)` to `o`; it must give back `ab`.
 function patch(o: string[], ab: string[]): string[] {
@@ -102,5 +103,43 @@ describe("diff3Merge", () => {
     const conflicts = clash.filter((r) => "conflict" in r);
     expect(conflicts).toHaveLength(1);
     expect("conflict" in conflicts[0] && conflicts[0].conflict.b).toEqual(["  m_LocalPosition: {x: 9, y: 0, z: 0}"]);
+  });
+});
+
+// Minimal number of inserted + deleted lines, by dynamic programming.
+function editDistance(a: string[], b: string[]): number {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1]);
+  return dp[a.length][b.length];
+}
+
+describe("diffLines on hard inputs", () => {
+  it("is minimal, lines missing from the other side set aside or not", () => {
+    const r = rng(3);
+    for (let t = 0; t < 2000; t++) {
+      const alpha = 1 + Math.floor(r() * 6);
+      const a = Array.from({ length: Math.floor(r() * 40) }, () => String(Math.floor(r() * alpha)));
+      const b = Array.from({ length: Math.floor(r() * 40) }, () => String(Math.floor(r() * (alpha + 2))));
+      const h = diffLines(a, b);
+      expect(h.reduce((n, x) => n + x.oLength + x.abLength, 0)).toBe(editDistance(a, b));
+      expect(patch(a, b)).toEqual(b);
+    }
+  });
+
+  it("stays fast in the worst cases", { timeout: 60000 }, () => {
+    const timed = (f: () => unknown) => {
+      const t = performance.now();
+      f();
+      return performance.now() - t;
+    };
+    const n = 20000; // 240,000 lines
+    const base = scene(n, () => 0);
+    // Changes all over: every 3rd object on one side, every 4th on the other.
+    expect(timed(() => diff3Merge(scene(n, (i) => (i % 3 === 0 ? 1 : 0)), base, scene(n, (i) => (i % 4 === 0 ? 2 : 0))))).toBeLessThan(5000);
+    // A regenerated file sharing almost no line.
+    expect(timed(() => diffLines(base, base.map((l) => l + " #")))).toBeLessThan(2000);
+    // One huge conflict, which must not overflow the stack either.
+    const big = Array.from({ length: 300000 }, (_, i) => `line ${i}`);
+    expect(timed(() => buildMerge(big.map((l) => l + "a").join("\n"), big.join("\n"), big.map((l) => l + "b").join("\n")))).toBeLessThan(5000);
   });
 });
