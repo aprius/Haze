@@ -1,17 +1,21 @@
 // Three-pane merge window (Yours | Result | Theirs) as an editor tab, opened
 // for a conflicted file. Non-conflicting changes are already applied in the
-// result. As in Rider, each conflict has » and × beside it on the left side
-// and « and × on the right: apply that side to the result, or ignore it; a
-// conflict is resolved once both sides are handled (or by hand).
+// result. It is drawn like the side-by-side diff, twice: each side against the
+// result, with curved connectors between matching blocks and scrolling kept in
+// step block by block. As in Rider, a conflict has » and × in the left side's
+// gutter and « and × in the right side's: apply that side to the result, or
+// ignore it; a conflict is resolved once both sides are handled (or by hand).
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getModel, reloadBuffer } from "../lib/buffers";
+import { chunkKind, connectorCurve, connectorPath, mapBoundary, toChunk, type Chunk } from "../lib/diffLink";
 import { api, errorMessage } from "../lib/ipc";
 import { actOnSide, buildMerge, conflictRange, isResolved, pendingState, replaceBlock, stateLines, type ConflictBlock, type ConflictState, type ResultEdit } from "../lib/merge";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
 import { mergePath, type MergeSpec } from "../lib/diffSpec";
+import { wheelScroll, zedWheel } from "../lib/wheel";
 import { absPath, refreshRepo, repo, runGit } from "../store/git";
 import { useWorkspace, type Project } from "../store/workspace";
 import { closeTabsWithPrompt } from "./EditorArea";
@@ -24,8 +28,10 @@ export function openMerge(projectId: string, spec: MergeSpec): void {
 }
 
 type Side = "ours" | "theirs";
+type Ed = monaco.editor.IStandaloneCodeEditor;
 
 const ICON = 16;
+const GAP = 24;
 const SVG = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const APPLY_RIGHT = SVG("M3.5 4.5 7 8l-3.5 3.5M8.5 4.5 12 8l-3.5 3.5");
 const APPLY_LEFT = SVG("M12.5 4.5 9 8l3.5 3.5M7.5 4.5 4 8l3.5 3.5");
@@ -33,25 +39,59 @@ const IGNORE = SVG("M4.5 4.5l7 7M11.5 4.5l-7 7");
 
 const rangeOf = (e: ResultEdit) => new monaco.Range(e.startLine, e.startColumn, e.endLine, e.endColumn);
 
-interface Pane {
-  editor: monaco.editor.IStandaloneCodeEditor;
-  decorations: monaco.editor.IEditorDecorationsCollection;
+/** Whether the line boundaries `a0..a1` and `b0..b1` touch, an empty span counting as its point. */
+const overlaps = (a0: number, a1: number, b0: number, b1: number) => (a0 === a1 || b0 === b1 ? a0 <= b1 && b0 <= a1 : a0 < b1 && b0 < a1);
+
+// Pixel position of a (fractional) line boundary, relative to the viewport.
+function boundaryY(ed: monaco.editor.ICodeEditor, b: number): number {
+  const lines = ed.getModel()?.getLineCount() ?? 1;
+  const at = (n: number) => (n <= 0 ? 0 : ed.getBottomForLineNumber(Math.min(n, lines)));
+  const lo = Math.floor(b);
+  return at(lo) + (b - lo) * (at(lo + 1) - at(lo)) - ed.getScrollTop();
+}
+
+// Inverse of `boundaryY` by binary search (folded regions make lines uneven).
+function boundaryAt(ed: monaco.editor.ICodeEditor, y: number): number {
+  const lines = ed.getModel()?.getLineCount() ?? 1;
+  let lo = 0;
+  let hi = lines;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (boundaryY(ed, mid) <= y) lo = mid;
+    else hi = mid - 1;
+  }
+  if (lo >= lines) return lines;
+  const y0 = boundaryY(ed, lo);
+  const h = boundaryY(ed, lo + 1) - y0;
+  return lo + (h > 0 ? Math.min(1, Math.max(0, (y - y0) / h)) : 0);
+}
+
+interface Panes {
+  left: Ed;
+  center: Ed;
+  right: Ed;
 }
 
 export function MergeView({ project, spec }: { project: Project; spec: MergeSpec }) {
   const leftHost = useRef<HTMLDivElement>(null);
   const centerHost = useRef<HTMLDivElement>(null);
   const rightHost = useRef<HTMLDivElement>(null);
-  const panes = useRef<{ left: Pane; center: Pane; right: Pane } | null>(null);
+  const leftGutter = useRef<HTMLDivElement>(null);
+  const rightGutter = useRef<HTMLDivElement>(null);
+  const leftGap = useRef<HTMLDivElement>(null);
+  const rightGap = useRef<HTMLDivElement>(null);
+  const differL = useRef<HTMLDivElement>(null);
+  const differR = useRef<HTMLDivElement>(null);
+  const panes = useRef<Panes | null>(null);
   // Tracked ranges of each conflict in the result model.
   const tracked = useRef<string[]>([]);
-  const [conflicts, setConflicts] = useState<ConflictBlock[]>([]);
   // Each conflict's sides; the ref is what the editors' handlers read.
   const states = useRef<ConflictState[]>([]);
+  const conflictsRef = useRef<ConflictBlock[]>([]);
+  // Re-decorates and redraws after a conflict's state changes.
+  const refresh = useRef<() => void>(() => {});
+  const [conflicts, setConflicts] = useState<ConflictBlock[]>([]);
   const [, setVersion] = useState(0);
-  const leftStrip = useRef<HTMLDivElement>(null);
-  const rightStrip = useRef<HTMLDivElement>(null);
-  const draw = useRef<() => void>(() => {});
   const [current, setCurrent] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const operation = repo(project.id).branches?.operation ?? null;
@@ -59,37 +99,217 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
   const labels = operation === "rebase" ? ["Upstream (being rebased onto)", "Your commit"] : ["Yours (current branch)", "Theirs (incoming)"];
 
   useEffect(() => {
-    if (!leftHost.current || !centerHost.current || !rightHost.current) return;
+    const hosts = [leftHost, centerHost, rightHost, leftGutter, rightGutter, leftGap, rightGap, differL, differR].map((r) => r.current);
+    if (hosts.some((h) => !h)) return;
+    const [lh, ch, rh, lgEl, rgEl, lgapEl, rgapEl, dlh, drh] = hosts as HTMLDivElement[];
+    const win = ch.ownerDocument.defaultView ?? window;
     const opts = (readOnly: boolean): monaco.editor.IStandaloneEditorConstructionOptions => ({
       readOnly,
       automaticLayout: true,
-      minimap: { enabled: false },
+      disableLayerHinting: win !== window,
       ...codeFontOptions(),
+      minimap: { enabled: false },
       scrollBeyondLastLine: false,
       glyphMargin: false,
       suggest: suggestOptions,
       theme: monacoTheme(),
     });
-    const mk = (host: HTMLDivElement, readOnly: boolean): Pane => {
-      const editor = monaco.editor.create(host, opts(readOnly));
-      return { editor, decorations: editor.createDecorationsCollection() };
-    };
-    const p = { left: mk(leftHost.current, true), center: mk(centerHost.current, false), right: mk(rightHost.current, true) };
-    panes.current = p;
-    // Keep the three panes scrolled together.
-    let syncing = false;
-    const all = [p.left.editor, p.center.editor, p.right.editor];
-    const subs = all.map((ed) =>
-      ed.onDidScrollChange((e) => {
-        if (!syncing && e.scrollTopChanged) {
-          syncing = true;
-          all.filter((o) => o !== ed).forEach((o) => o.setScrollTop(e.scrollTop));
-          syncing = false;
+    // The sides have no vertical scrollbar (they follow the result) and no
+    // gutter of their own: theirs are drawn against the gaps, as in the diff.
+    const side = (host: HTMLDivElement) =>
+      monaco.editor.create(host, {
+        ...opts(true),
+        lineNumbers: "off",
+        folding: false,
+        lineDecorationsWidth: 10,
+        scrollbar: { vertical: "hidden", verticalScrollbarSize: 0 },
+        overviewRulerLanes: 0,
+        overviewRulerBorder: false,
+      });
+    const left = side(lh);
+    const center = monaco.editor.create(ch, opts(false));
+    const right = side(rh);
+    const all = [left, center, right];
+    panes.current = { left, center, right };
+    // Hidden diff editors, as in the diff view: each side against the result.
+    const dl = monaco.editor.createDiffEditor(dlh, { ignoreTrimWhitespace: false, renderOverviewRuler: false });
+    const dr = monaco.editor.createDiffEditor(drh, { ignoreTrimWhitespace: false, renderOverviewRuler: false });
+    const decos = all.map((ed) => ed.createDecorationsCollection());
+    // Left vs result (a = left, b = result) and result vs right (a = result, b = right).
+    let chunksL: Chunk[] = [];
+    let chunksR: Chunk[] = [];
+    let changesL: monaco.editor.ILineChange[] = [];
+    let changesR: monaco.editor.ILineChange[] = [];
+
+    // A block's colour: red where it is a side of a conflict not handled yet.
+    const kindL = (c: Chunk) =>
+      conflictsRef.current.some((x) => states.current[x.id]?.ours === "pending" && overlaps(c.a0, c.a1, x.oursStart, x.oursStart + x.ours.length)) ? "conflict" : chunkKind(c);
+    const kindR = (c: Chunk) =>
+      conflictsRef.current.some((x) => states.current[x.id]?.theirs === "pending" && overlaps(c.b0, c.b1, x.theirsStart, x.theirsStart + x.theirs.length)) ? "conflict" : chunkKind(c);
+
+    let frame = 0;
+    // A side's gutter, mirrored for the left one: band tints and edges, the
+    // conflict buttons on each conflict's first line, and line numbers against the gap.
+    const drawGutter = (el: HTMLDivElement, ed: Ed, blocks: { s0: number; s1: number; cls: string }[], which: Side) => {
+      const model = ed.getModel();
+      if (!model) return void (el.innerHTML = "");
+      const line = ed.getOption(monaco.editor.EditorOption.lineHeight);
+      const font = ed.getOption(monaco.editor.EditorOption.fontInfo);
+      const height = el.clientHeight;
+      const digits = Math.max(2, String(model.getLineCount()).length);
+      const width = `${Math.ceil(2 * ICON + 2 + 6 + digits * font.typicalHalfwidthCharacterWidth + 8)}px`;
+      if (el.style.width !== width) el.style.width = width;
+      Object.assign(el.style, { fontFamily: font.fontFamily, fontSize: `${font.fontSize}px`, lineHeight: `${line}px` });
+      let html = "";
+      for (const { s0, s1, cls } of blocks) {
+        const y0 = boundaryY(ed, s0);
+        const y1 = boundaryY(ed, s1);
+        if (y1 < -line || y0 > height + line) continue;
+        if (s0 < s1) {
+          html += `<div class="rd-gl-band rd-line rd-${cls}" style="top:${y0}px;height:${y1 - y0}px"></div>`;
+          html += `<div class="rd-gl-edge rd-${cls}" style="top:${y0}px"></div><div class="rd-gl-edge rd-${cls}" style="top:${y1 - 1}px"></div>`;
+        } else {
+          html += `<div class="rd-gl-edge rd-${cls}" style="top:${s0 > 0 ? y0 - 1 : y0}px"></div>`;
         }
-        draw.current();
+      }
+      const pos = (n: number) => (which === "ours" ? `left:${n}px` : `left:auto;right:${n}px`);
+      const name = which === "ours" ? "left" : "right";
+      for (const c of conflictsRef.current) {
+        if (states.current[c.id]?.[which] !== "pending") continue;
+        const start = which === "ours" ? c.oursStart : c.theirsStart;
+        const y = boundaryY(ed, Math.min(start + 1, model.getLineCount()) - 1) + (line - ICON) / 2;
+        if (y < -line || y > height) continue;
+        html +=
+          `<button class="rd-apply" data-id="${c.id}" data-act="apply" title="Apply ${name} side" style="top:${y}px;${pos(3)}">${which === "ours" ? APPLY_RIGHT : APPLY_LEFT}</button>` +
+          `<button class="rd-apply" data-id="${c.id}" data-act="ignore" title="Ignore ${name} side" style="top:${y}px;${pos(ICON + 5)}">${IGNORE}</button>`;
+      }
+      const caret = ed.getPosition()?.lineNumber;
+      const scroll = ed.getScrollTop();
+      for (const r of ed.getVisibleRanges()) {
+        for (let n = r.startLineNumber; n <= r.endLineNumber; n++) {
+          html += `<div class="rd-gl-num${n === caret ? " active" : ""}" style="top:${ed.getTopForLineNumber(n) - scroll}px">${n}</div>`;
+        }
+      }
+      el.innerHTML = html;
+    };
+    const drawGap = (el: HTMLDivElement, a: Ed, b: Ed, chunks: Chunk[], kind: (c: Chunk) => string) => {
+      const width = el.clientWidth;
+      const height = el.clientHeight;
+      let paths = "";
+      for (const c of chunks) {
+        const l0 = boundaryY(a, c.a0);
+        const l1 = boundaryY(a, c.a1);
+        const r0 = boundaryY(b, c.b0);
+        const r1 = boundaryY(b, c.b1);
+        if (Math.max(l1, r1) < 0 || Math.min(l0, r0) > height) continue;
+        const k = kind(c);
+        // Borders sit half a pixel inside the band to line up with the 1px edges drawn in the editors.
+        const edge = (y0: number, y1: number, s: number): [number, number] => (y0 === y1 ? (s > 0 ? [y0 - 0.5, y0 - 0.5] : [y0 + 0.5, y0 + 0.5]) : [y0 + 0.5, y1 - 0.5]);
+        const [lt, lb] = edge(l0, l1, c.a0);
+        const [rt, rb] = edge(r0, r1, c.b0);
+        paths +=
+          `<path class="rd-link rd-${k}" d="${connectorPath(width, l0, l1, r0, r1)}"/>` +
+          `<path class="rd-edge rd-${k}" d="${connectorCurve(width, lt, rt)} ${connectorCurve(width, lb, rb)}"/>`;
+      }
+      el.innerHTML = `<svg width="${width}" height="${height}">${paths}</svg>`;
+    };
+    const draw = () => {
+      frame = 0;
+      drawGutter(lgEl, left, chunksL.map((c) => ({ s0: c.a0, s1: c.a1, cls: kindL(c) })), "ours");
+      drawGutter(rgEl, right, chunksR.map((c) => ({ s0: c.b0, s1: c.b1, cls: kindR(c) })), "theirs");
+      drawGap(lgapEl, left, center, chunksL, kindL);
+      drawGap(rgapEl, center, right, chunksR, kindR);
+    };
+    const redraw = () => {
+      if (!frame) frame = win.requestAnimationFrame(draw);
+    };
+
+    // The result leads; each side is scrolled so the line at mid-viewport stays matched.
+    let syncing = false;
+    const align = (to: Ed, target: number, mid: number) => to.setScrollTop(to.getScrollTop() + boundaryY(to, target) - mid);
+    const follow = (from: Ed) => (e: monaco.IScrollEvent) => {
+      redraw();
+      if (syncing || !e.scrollTopChanged) return;
+      syncing = true;
+      const mid = from.getLayoutInfo().height / 2;
+      if (from === left) align(center, mapBoundary(chunksL, boundaryAt(left, mid), true), mid);
+      if (from === right) align(center, mapBoundary(chunksR, boundaryAt(right, mid), false), mid);
+      const x = boundaryAt(center, mid);
+      if (from !== left) align(left, mapBoundary(chunksL, x, false), mid);
+      if (from !== right) align(right, mapBoundary(chunksR, x, true), mid);
+      syncing = false;
+    };
+
+    const update = () => {
+      chunksL = changesL.map(toChunk);
+      chunksR = changesR.map(toChunk);
+      // Each class goes on the text and on the gutter, so a block is one band across the editor.
+      const whole = (from: number, to: number, cls: string): monaco.editor.IModelDeltaDecoration => ({
+        range: new monaco.Range(from, 1, to, 1),
+        options: { isWholeLine: true, className: cls, marginClassName: cls },
+      });
+      const lineDeco = (ed: Ed, kind: string, s: number, e: number): monaco.editor.IModelDeltaDecoration[] => {
+        if (s < e) {
+          const text = { range: new monaco.Range(s + 1, 1, e, ed.getModel()?.getLineMaxColumn(e) ?? 1), options: { inlineClassName: "rd-text" } };
+          return [whole(s + 1, e, `rd-line rd-${kind}`), whole(s + 1, s + 1, `rd-top rd-${kind}`), whole(e, e, `rd-bottom rd-${kind}`), text];
+        }
+        // Empty side: a thin line where the other side's block belongs.
+        const lines = ed.getModel()?.getLineCount() ?? 1;
+        return s >= 1 ? [whole(Math.min(s, lines), Math.min(s, lines), `rd-bottom rd-${kind}`)] : [whole(1, 1, `rd-top rd-${kind}`)];
+      };
+      const charDeco = (sl: number, sc: number, el: number, ec: number): monaco.editor.IModelDeltaDecoration[] =>
+        sl > 0 && el > 0 && (sl !== el || sc !== ec) ? [{ range: new monaco.Range(sl, sc, el, ec), options: { inlineClassName: "rd-char" } }] : [];
+      const l: monaco.editor.IModelDeltaDecoration[] = [];
+      const m: monaco.editor.IModelDeltaDecoration[] = [];
+      const r: monaco.editor.IModelDeltaDecoration[] = [];
+      const add = (changes: monaco.editor.ILineChange[], chunks: Chunk[], kind: (c: Chunk) => string, a: monaco.editor.IModelDeltaDecoration[], ae: Ed, b: monaco.editor.IModelDeltaDecoration[], be: Ed) =>
+        changes.forEach((ch, i) => {
+          const c = chunks[i];
+          const k = kind(c);
+          a.push(...lineDeco(ae, k, c.a0, c.a1));
+          b.push(...lineDeco(be, k, c.b0, c.b1));
+          if (chunkKind(c) !== "modified") return;
+          for (const x of ch.charChanges ?? []) {
+            a.push(...charDeco(x.originalStartLineNumber, x.originalStartColumn, x.originalEndLineNumber, x.originalEndColumn));
+            b.push(...charDeco(x.modifiedStartLineNumber, x.modifiedStartColumn, x.modifiedEndLineNumber, x.modifiedEndColumn));
+          }
+        });
+      add(changesL, chunksL, kindL, l, left, m, center);
+      add(changesR, chunksR, kindR, m, center, r, right);
+      decos[0].set(l);
+      decos[1].set(m);
+      decos[2].set(r);
+      redraw();
+    };
+    refresh.current = update;
+
+    // Wheel scrolling like the code editor's; over a gutter or a gap it scrolls the result.
+    const wheels = all.map(zedWheel);
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault();
+      wheelScroll(center, e);
+    };
+    const wheelHosts = [lgEl, rgEl, lgapEl, rgapEl];
+    wheelHosts.forEach((h) => h.addEventListener("wheel", wheel, { passive: false }));
+
+    let first = true;
+    const subs = [
+      ...all.map((ed) => ed.onDidScrollChange(follow(ed))),
+      ...all.map((ed) => ed.onDidLayoutChange(redraw)),
+      left.onDidChangeCursorPosition(redraw),
+      right.onDidChangeCursorPosition(redraw),
+      dl.onDidUpdateDiff(() => {
+        changesL = dl.getLineChanges() ?? [];
+        update();
       }),
-    );
-    subs.push(p.left.editor.onDidLayoutChange(() => draw.current()), p.right.editor.onDidLayoutChange(() => draw.current()));
+      dr.onDidUpdateDiff(() => {
+        changesR = dr.getLineChanges() ?? [];
+        update();
+        if (first && conflictsRef.current.length) reveal(conflictsRef.current[0], 0);
+        first = false;
+      }),
+    ];
+
     const owned: monaco.editor.ITextModel[] = [];
     let cancelled = false;
     void (async () => {
@@ -108,74 +328,58 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
           owned.push(m);
           return m;
         };
-        p.left.editor.setModel(mkModel(ours ?? ""));
-        p.right.editor.setModel(mkModel(theirs ?? ""));
+        const oursModel = mkModel(ours ?? "");
+        const theirsModel = mkModel(theirs ?? "");
         const result = mkModel(model.result);
-        p.center.editor.setModel(result);
         const lines = result.getLinesContent();
         tracked.current = result.deltaDecorations(
           [],
           model.conflicts.map((c) => ({
             range: rangeOf(conflictRange(c, lines)),
-            options: {
-              stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-              isWholeLine: true,
-              className: "merge-conflict",
-            },
+            options: { stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
           })),
         );
         states.current = model.conflicts.map(pendingState);
+        conflictsRef.current = model.conflicts;
         setConflicts(model.conflicts);
-        decorateSides(model.conflicts);
-        if (model.conflicts.length) reveal(model.conflicts[0], 0);
+        left.setModel(oursModel);
+        center.setModel(result);
+        right.setModel(theirsModel);
+        dl.setModel({ original: oursModel, modified: result });
+        dr.setModel({ original: result, modified: theirsModel });
       } catch (e) {
         setError(errorMessage(e));
       }
     })();
     return () => {
       cancelled = true;
+      win.cancelAnimationFrame(frame);
+      wheelHosts.forEach((h) => h.removeEventListener("wheel", wheel));
+      wheels.forEach((w) => w.dispose());
       subs.forEach((s) => s.dispose());
+      dl.dispose();
+      dr.dispose();
       all.forEach((ed) => ed.dispose());
       owned.forEach((m) => m.dispose());
       panes.current = null;
+      refresh.current = () => {};
     };
   }, [spec.root, spec.rel]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Scrolls the result to conflict `c`; the sides follow. */
   function reveal(c: ConflictBlock, i: number) {
     const p = panes.current;
-    const model = p?.center.editor.getModel();
+    const model = p?.center.getModel();
     if (!p || !model) return;
     setCurrent(i);
     const r = model.getDecorationRange(tracked.current[c.id]);
-    if (r) p.center.editor.revealLinesInCenter(r.startLineNumber, r.endLineNumber);
-    p.left.editor.revealLinesInCenter(c.oursStart + 1, c.oursStart + Math.max(1, c.ours.length));
-    p.right.editor.revealLinesInCenter(c.theirsStart + 1, c.theirsStart + Math.max(1, c.theirs.length));
+    if (r) p.center.revealLinesInCenter(r.startLineNumber, r.endLineNumber);
   }
 
-  /** Tints each side's block by its state: pending, applied or ignored. */
-  function decorateSides(list: ConflictBlock[]) {
-    const p = panes.current;
-    if (!p) return;
-    const cls = { pending: "merge-conflict-side", applied: "merge-resolved", ignored: "merge-ignored" } as const;
-    const side = (pane: Pane, which: Side) =>
-      pane.decorations.set(
-        list.map((c) => {
-          const start = which === "ours" ? c.oursStart : c.theirsStart;
-          const len = (which === "ours" ? c.ours : c.theirs).length;
-          return {
-            range: new monaco.Range(start + 1, 1, start + Math.max(1, len), 1),
-            options: { isWholeLine: true, className: cls[states.current[c.id]?.[which] ?? "pending"] },
-          };
-        }),
-      );
-    side(p.left, "ours");
-    side(p.right, "theirs");
-  }
-
-  /** Puts conflict `c` in state `next`: rewrites its lines in the result and re-marks it. */
+  /** Puts conflict `c` in state `next`: rewrites its lines in the result. */
   function setState(c: ConflictBlock, next: ConflictState, advance = true) {
     const p = panes.current;
-    const model = p?.center.editor.getModel();
+    const model = p?.center.getModel();
     if (!p || !model) return;
     const prev = states.current[c.id];
     if (prev === next) return;
@@ -190,7 +394,7 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     const changed = prev.order.join() !== next.order.join();
     if (changed) {
       const e = replaceBlock(held, lines, start, r.endLineNumber, model.getLinesContent(), model.getEOL());
-      p.center.editor.executeEdits("merge", [{ range: rangeOf(e), text: e.text }]);
+      p.center.executeEdits("merge", [{ range: rangeOf(e), text: e.text }]);
     }
     const count = model.getLineCount();
     const len = changed ? lines.length : held;
@@ -200,71 +404,29 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
         : start <= count
           ? new monaco.Range(start, 1, start, 1)
           : new monaco.Range(count, model.getLineMaxColumn(count), count, model.getLineMaxColumn(count));
-    const done = isResolved(next);
-    const [id] = model.deltaDecorations(
-      [tracked.current[c.id]],
-      [{ range, options: { isWholeLine: true, className: done ? "merge-resolved" : "merge-conflict", stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges } }],
-    );
+    const [id] = model.deltaDecorations([tracked.current[c.id]], [{ range, options: { stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges } }]);
     tracked.current[c.id] = id;
     states.current[c.id] = next;
-    decorateSides(conflicts);
+    refresh.current();
     setVersion((v) => v + 1);
-    if (done && advance) {
+    if (isResolved(next) && advance) {
       const i = conflicts.findIndex((x) => x.id !== c.id && !isResolved(states.current[x.id]));
       if (i >= 0) reveal(conflicts[i], i);
     }
   }
 
-  const act = (c: ConflictBlock, side: Side, how: "apply" | "ignore") => setState(c, actOnSide(states.current[c.id], side, how));
-
-  // The » × / « × buttons beside each conflict, on the first line of its block in that side.
-  draw.current = () => {
-    const p = panes.current;
-    const strip = (host: HTMLDivElement | null, ed: monaco.editor.IStandaloneCodeEditor, side: Side) => {
-      const model = ed.getModel();
-      if (!host || !model) return;
-      const line = ed.getOption(monaco.editor.EditorOption.lineHeight);
-      const height = host.clientHeight;
-      const scroll = ed.getScrollTop();
-      let html = "";
-      for (const c of conflicts) {
-        if (states.current[c.id]?.[side] !== "pending") continue;
-        const first = Math.min((side === "ours" ? c.oursStart : c.theirsStart) + 1, model.getLineCount());
-        const len = Math.max(1, (side === "ours" ? c.ours : c.theirs).length);
-        const top = ed.getTopForLineNumber(first) - scroll;
-        const bottom = top + len * line;
-        if (bottom < 0 || top > height) continue;
-        // Keep the buttons in view while the block's top is scrolled away.
-        const y = (top < 0 ? Math.min(0, bottom - line) : top) + (line - ICON) / 2;
-        const apply = `<button class="merge-act" data-id="${c.id}" data-act="apply" title="Apply ${side === "ours" ? "left" : "right"} side" style="top:${y}px">${side === "ours" ? APPLY_RIGHT : APPLY_LEFT}</button>`;
-        const ignore = `<button class="merge-act" data-id="${c.id}" data-act="ignore" title="Ignore ${side === "ours" ? "left" : "right"} side" style="top:${y}px">${IGNORE}</button>`;
-        // The apply arrow sits next to the result, like Rider.
-        html += side === "ours" ? ignore.replace("merge-act", "merge-act first") + apply.replace("merge-act", "merge-act second") : apply.replace("merge-act", "merge-act first") + ignore.replace("merge-act", "merge-act second");
-      }
-      host.innerHTML = html;
-    };
-    if (!p) return;
-    strip(leftStrip.current, p.left.editor, "ours");
-    strip(rightStrip.current, p.right.editor, "theirs");
-  };
-  useEffect(() => draw.current());
-
-  const onStrip = (side: Side) => (e: React.MouseEvent) => {
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button.merge-act");
+  const onGutter = (side: Side) => (e: React.MouseEvent) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-act]");
     const c = b && conflicts.find((x) => x.id === Number(b.dataset.id));
     if (!b || !c) return;
-    act(c, side, b.dataset.act === "apply" ? "apply" : "ignore");
-  };
-  const wheel = (e: React.WheelEvent) => {
-    const ed = panes.current?.center.editor;
-    if (ed) ed.setScrollTop(ed.getScrollTop() + e.deltaY);
+    setState(c, actOnSide(states.current[c.id], side, b.dataset.act === "apply" ? "apply" : "ignore"));
   };
 
   const resolved = (c: ConflictBlock) => !!states.current[c.id] && isResolved(states.current[c.id]);
   const unresolved = conflicts.filter((c) => !resolved(c)).length;
 
   const apply = async () => {
-    const model = panes.current?.center.editor.getModel();
+    const model = panes.current?.center.getModel();
     if (!model) return;
     if (unresolved && !(await confirmAction("Apply Merge", `${unresolved} conflict(s) are not resolved; the base text stays there. Apply anyway?`, "Apply"))) return;
     const path = absPath(spec.root, spec.rel);
@@ -291,13 +453,19 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
         setState(c, actOnSide(actOnSide(states.current[c.id], choice, "apply"), other, "ignore"), false);
       });
 
+  const step = (dir: 1 | -1) => {
+    if (!conflicts.length) return;
+    const i = (current + dir + conflicts.length) % conflicts.length;
+    reveal(conflicts[i], i);
+  };
+
   return (
     <div className="merge-view">
       <div className="diff-toolbar">
-        <button className="icon-btn" title="Previous conflict" onClick={() => conflicts.length && reveal(conflicts[(current - 1 + conflicts.length) % conflicts.length], (current - 1 + conflicts.length) % conflicts.length)}>
+        <button className="icon-btn" title="Previous conflict" onClick={() => step(-1)}>
           <ChevronUp size={16} />
         </button>
-        <button className="icon-btn" title="Next conflict" onClick={() => conflicts.length && reveal(conflicts[(current + 1) % conflicts.length], (current + 1) % conflicts.length)}>
+        <button className="icon-btn" title="Next conflict" onClick={() => step(1)}>
           <ChevronDown size={16} />
         </button>
         <span className={"small " + (unresolved ? "error" : "muted")}>
@@ -314,25 +482,21 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
           Apply
         </button>
       </div>
-      <div className="merge-columns">
-        <div className="merge-col">
-          <div className="merge-label">{labels[0]}</div>
-          <div className="merge-body">
-            <div ref={leftHost} className="merge-editor" />
-            <div ref={leftStrip} className="merge-strip" onClick={onStrip("ours")} onWheel={wheel} />
-          </div>
-        </div>
-        <div className="merge-col center">
-          <div className="merge-label">Result</div>
-          <div ref={centerHost} className="merge-editor" />
-        </div>
-        <div className="merge-col">
-          <div className="merge-label">{labels[1]}</div>
-          <div className="merge-body">
-            <div ref={rightStrip} className="merge-strip" onClick={onStrip("theirs")} onWheel={wheel} />
-            <div ref={rightHost} className="merge-editor" />
-          </div>
-        </div>
+      <div className="merge-labels">
+        <div className="merge-label">{labels[0]}</div>
+        <div className="merge-label center">Result</div>
+        <div className="merge-label">{labels[1]}</div>
+      </div>
+      <div className="diff-host">
+        <div ref={leftHost} className="diff-side" />
+        <div ref={leftGutter} className="diff-lgutter" onMouseDown={(e) => e.preventDefault()} onClick={onGutter("ours")} />
+        <div ref={leftGap} className="diff-gap merge-gap" style={{ width: GAP }} />
+        <div ref={centerHost} className="diff-side" />
+        <div ref={rightGap} className="diff-gap merge-gap" style={{ width: GAP }} />
+        <div ref={rightGutter} className="diff-lgutter merge-rgutter" onMouseDown={(e) => e.preventDefault()} onClick={onGutter("theirs")} />
+        <div ref={rightHost} className="diff-side" />
+        <div ref={differL} className="diff-differ" aria-hidden />
+        <div ref={differR} className="diff-differ" aria-hidden />
       </div>
     </div>
   );

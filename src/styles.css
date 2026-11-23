@@ -4395,105 +4395,39 @@ html:has(.float-external) body {
   background: var(--editor-bg);
 }
 
-.merge-columns {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-}
-
-.merge-col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  border-right: 1px solid var(--border);
-}
-
-.merge-col:last-child {
-  border-right: 0;
-}
-
-.merge-label {
+.merge-labels {
   flex: none;
-  padding: 3px 10px;
-  font-size: calc(var(--ui-font-size) * 12 / 13);
-  color: var(--muted);
+  display: flex;
   border-bottom: 1px solid var(--border);
 }
 
-.merge-col.center .merge-label {
+.merge-label {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 10px;
+  font-size: calc(var(--ui-font-size) * 12 / 13);
+  color: var(--muted);
+}
+
+.merge-label.center {
   color: var(--fg);
   font-weight: 600;
 }
 
-.merge-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
+/* The merge window's gaps only link blocks; they do not resize. */
+.merge-gap {
+  cursor: default;
 }
 
-.merge-editor {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
+/* The right side's gutter, not mirrored: line numbers against the gap, icons next to the text. */
+.merge-rgutter .rd-gl-num {
+  padding-right: 0;
+  padding-left: 8px;
+  text-align: left;
 }
 
-/* Rider-style » × / « × beside each conflict, between a side and the result. */
-.merge-strip {
-  flex: 0 0 40px;
-  position: relative;
-  overflow: hidden;
-  background: var(--editor-bg);
-}
-
-.merge-act {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  border-radius: 3px;
-  color: var(--muted);
-  background: transparent;
-  cursor: pointer;
-}
-
-.merge-act.first {
-  left: 3px;
-}
-
-.merge-act.second {
-  left: 21px;
-}
-
-.merge-act svg {
-  display: block;
-}
-
-.merge-act:hover {
-  color: var(--fg);
-  background: color-mix(in srgb, var(--fg) 12%, transparent);
-}
-
-.merge-act[data-act="apply"] {
-  color: var(--accent, var(--fg));
-}
-
-.merge-ignored {
-  background: color-mix(in srgb, var(--muted) 6%, transparent);
-}
-
-.merge-conflict {
-  background: color-mix(in srgb, var(--diff-deleted) var(--diff-tint), transparent);
-}
-
-.merge-conflict-side {
-  background: color-mix(in srgb, var(--diff-modified) var(--diff-tint), transparent);
-}
-
-.merge-resolved {
-  background: color-mix(in srgb, var(--diff-added) var(--diff-tint), transparent);
-}
+/* A side of a conflict not handled yet. */
+.rd-conflict { --rd: var(--git-conflict); }
 
 .stash-list {
   flex: 0 0 320px;
