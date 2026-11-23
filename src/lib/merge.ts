@@ -1,7 +1,7 @@
 // Three-way merge model for the merge window: non-conflicting changes from
 // both sides are applied automatically; each conflict keeps the base text in
 // the result until the user picks a side (like IntelliJ's merge tool).
-import { diff3Merge } from "node-diff3";
+import { diff3Merge } from "./lineDiff";
 
 export interface ConflictBlock {
   id: number;
@@ -33,13 +33,13 @@ export function detectEol(text: string): string {
 
 export function buildMerge(ours: string, base: string, theirs: string): MergeModel {
   const eol = detectEol(ours || theirs || base);
-  const regions = diff3Merge(lines(ours), lines(base), lines(theirs), { excludeFalseConflicts: true });
+  const regions = diff3Merge(lines(ours), lines(base), lines(theirs));
   const out: string[] = [];
   const conflicts: ConflictBlock[] = [];
   for (const r of regions) {
-    if (r.ok) {
-      out.push(...r.ok);
-    } else if (r.conflict) {
+    if ("ok" in r) {
+      for (const l of r.ok) out.push(l);
+    } else {
       const c = r.conflict;
       conflicts.push({
         id: conflicts.length,
@@ -50,7 +50,7 @@ export function buildMerge(ours: string, base: string, theirs: string): MergeMod
         base: c.o,
         resultStart: out.length,
       });
-      out.push(...c.o);
+      for (const l of c.o) out.push(l);
     }
   }
   return { eol, result: out.join(eol), conflicts };

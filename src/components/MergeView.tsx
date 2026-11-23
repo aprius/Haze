@@ -10,7 +10,8 @@ import { useEffect, useRef, useState } from "react";
 import { getModel, reloadBuffer } from "../lib/buffers";
 import { chunkKind, connectorCurve, connectorPath, mapBoundary, toChunk, type Chunk } from "../lib/diffLink";
 import { api, errorMessage } from "../lib/ipc";
-import { actOnSide, buildMerge, conflictRange, isResolved, pendingState, replaceBlock, stateLines, type ConflictBlock, type ConflictState, type ResultEdit } from "../lib/merge";
+import { actOnSide, conflictRange, isResolved, pendingState, replaceBlock, stateLines, type ConflictBlock, type ConflictState, type MergeModel, type ResultEdit } from "../lib/merge";
+import MergeWorker from "../lib/merge.worker?worker";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
 import { basename } from "../lib/path";
@@ -36,6 +37,36 @@ const SVG = (d: string) => `<svg viewBox="0 0 16 16" width="16" height="16"><pat
 const APPLY_RIGHT = SVG("M3.5 4.5 7 8l-3.5 3.5M8.5 4.5 12 8l-3.5 3.5");
 const APPLY_LEFT = SVG("M12.5 4.5 9 8l3.5 3.5M7.5 4.5 4 8l3.5 3.5");
 const IGNORE = SVG("M4.5 4.5l7 7M11.5 4.5l-7 7");
+
+/** `buildMerge` in a worker; it ends when this does. */
+function buildMergeInWorker(ours: string, base: string, theirs: string): { result: Promise<MergeModel>; cancel: () => void } {
+  const worker = new MergeWorker();
+  const result = new Promise<MergeModel>((resolve, reject) => {
+    worker.onmessage = (e: MessageEvent<MergeModel>) => (worker.terminate(), resolve(e.data));
+    worker.onerror = (e) => (worker.terminate(), reject(new Error(e.message || "Could not compute the merge.")));
+  });
+  worker.postMessage({ ours, base, theirs });
+  return { result, cancel: () => worker.terminate() };
+}
+
+/**
+ * For each chunk (by its boundaries on one side), whether it touches one of
+ * `spans` (sorted, not overlapping): a binary search each, not a scan.
+ */
+function touching(chunks: readonly [number, number][], spans: readonly [number, number][]): boolean[] {
+  return chunks.map(([c0, c1]) => {
+    let lo = 0;
+    let hi = spans.length;
+    // The first span ending at or after the chunk's start.
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (spans[mid][1] < c0) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let i = lo; i < spans.length && spans[i][0] <= c1; i++) if (overlaps(c0, c1, spans[i][0], spans[i][1])) return true;
+    return false;
+  });
+}
 
 const rangeOf = (e: ResultEdit) => new monaco.Range(e.startLine, e.startColumn, e.endLine, e.endColumn);
 
@@ -94,6 +125,7 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
   const [, setVersion] = useState(0);
   const [current, setCurrent] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const operation = repo(project.id).branches?.operation ?? null;
   // During a rebase, stage 2 is the branch being rebased onto and stage 3 is your commit.
   const labels = operation === "rebase" ? ["Upstream (being rebased onto)", "Your commit"] : ["Yours (current branch)", "Theirs (incoming)"];
@@ -141,11 +173,17 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     let changesL: monaco.editor.ILineChange[] = [];
     let changesR: monaco.editor.ILineChange[] = [];
 
-    // A block's colour: red where it is a side of a conflict not handled yet.
-    const kindL = (c: Chunk) =>
-      conflictsRef.current.some((x) => states.current[x.id]?.ours === "pending" && overlaps(c.a0, c.a1, x.oursStart, x.oursStart + x.ours.length)) ? "conflict" : chunkKind(c);
-    const kindR = (c: Chunk) =>
-      conflictsRef.current.some((x) => states.current[x.id]?.theirs === "pending" && overlaps(c.b0, c.b1, x.theirsStart, x.theirsStart + x.theirs.length)) ? "conflict" : chunkKind(c);
+    // Each block's colour, worked out once per update: red where it is a side
+    // of a conflict not handled yet, else the kind of change.
+    let kindsL: string[] = [];
+    let kindsR: string[] = [];
+    const kinds = (chunks: Chunk[], side: Side) => {
+      const spans = conflictsRef.current
+        .filter((x) => states.current[x.id]?.[side] === "pending")
+        .map((x): [number, number] => (side === "ours" ? [x.oursStart, x.oursStart + x.ours.length] : [x.theirsStart, x.theirsStart + x.theirs.length]));
+      const hit = touching(chunks.map((c) => (side === "ours" ? [c.a0, c.a1] : [c.b0, c.b1])), spans);
+      return chunks.map((c, i) => (hit[i] ? "conflict" : chunkKind(c)));
+    };
 
     let frame = 0;
     // A side's gutter, mirrored for the left one: band tints and edges, the
@@ -192,17 +230,18 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
       }
       el.innerHTML = html;
     };
-    const drawGap = (el: HTMLDivElement, a: Ed, b: Ed, chunks: Chunk[], kind: (c: Chunk) => string) => {
+    const drawGap = (el: HTMLDivElement, a: Ed, b: Ed, chunks: Chunk[], kindOf: string[]) => {
       const width = el.clientWidth;
       const height = el.clientHeight;
       let paths = "";
-      for (const c of chunks) {
+      for (let i = 0; i < chunks.length; i++) {
+        const c = chunks[i];
         const l0 = boundaryY(a, c.a0);
         const l1 = boundaryY(a, c.a1);
         const r0 = boundaryY(b, c.b0);
         const r1 = boundaryY(b, c.b1);
         if (Math.max(l1, r1) < 0 || Math.min(l0, r0) > height) continue;
-        const k = kind(c);
+        const k = kindOf[i];
         // Borders sit half a pixel inside the band to line up with the 1px edges drawn in the editors.
         const edge = (y0: number, y1: number, s: number): [number, number] => (y0 === y1 ? (s > 0 ? [y0 - 0.5, y0 - 0.5] : [y0 + 0.5, y0 + 0.5]) : [y0 + 0.5, y1 - 0.5]);
         const [lt, lb] = edge(l0, l1, c.a0);
@@ -215,10 +254,10 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     };
     const draw = () => {
       frame = 0;
-      drawGutter(lgEl, left, chunksL.map((c) => ({ s0: c.a0, s1: c.a1, cls: kindL(c) })), "ours");
-      drawGutter(rgEl, right, chunksR.map((c) => ({ s0: c.b0, s1: c.b1, cls: kindR(c) })), "theirs");
-      drawGap(lgapEl, left, center, chunksL, kindL);
-      drawGap(rgapEl, center, right, chunksR, kindR);
+      drawGutter(lgEl, left, chunksL.map((c, i) => ({ s0: c.a0, s1: c.a1, cls: kindsL[i] })), "ours");
+      drawGutter(rgEl, right, chunksR.map((c, i) => ({ s0: c.b0, s1: c.b1, cls: kindsR[i] })), "theirs");
+      drawGap(lgapEl, left, center, chunksL, kindsL);
+      drawGap(rgapEl, center, right, chunksR, kindsR);
     };
     const redraw = () => {
       if (!frame) frame = win.requestAnimationFrame(draw);
@@ -243,6 +282,8 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     const update = () => {
       chunksL = changesL.map(toChunk);
       chunksR = changesR.map(toChunk);
+      kindsL = kinds(chunksL, "ours");
+      kindsR = kinds(chunksR, "theirs");
       // Each class goes on the text and on the gutter, so a block is one band across the editor.
       const whole = (from: number, to: number, cls: string): monaco.editor.IModelDeltaDecoration => ({
         range: new monaco.Range(from, 1, to, 1),
@@ -262,10 +303,10 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
       const l: monaco.editor.IModelDeltaDecoration[] = [];
       const m: monaco.editor.IModelDeltaDecoration[] = [];
       const r: monaco.editor.IModelDeltaDecoration[] = [];
-      const add = (changes: monaco.editor.ILineChange[], chunks: Chunk[], kind: (c: Chunk) => string, a: monaco.editor.IModelDeltaDecoration[], ae: Ed, b: monaco.editor.IModelDeltaDecoration[], be: Ed) =>
+      const add = (changes: monaco.editor.ILineChange[], chunks: Chunk[], kindOf: string[], a: monaco.editor.IModelDeltaDecoration[], ae: Ed, b: monaco.editor.IModelDeltaDecoration[], be: Ed) =>
         changes.forEach((ch, i) => {
           const c = chunks[i];
-          const k = kind(c);
+          const k = kindOf[i];
           a.push(...lineDeco(ae, k, c.a0, c.a1));
           b.push(...lineDeco(be, k, c.b0, c.b1));
           if (chunkKind(c) !== "modified") return;
@@ -274,8 +315,8 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
             b.push(...charDeco(x.modifiedStartLineNumber, x.modifiedStartColumn, x.modifiedEndLineNumber, x.modifiedEndColumn));
           }
         });
-      add(changesL, chunksL, kindL, l, left, m, center);
-      add(changesR, chunksR, kindR, m, center, r, right);
+      add(changesL, chunksL, kindsL, l, left, m, center);
+      add(changesR, chunksR, kindsR, m, center, r, right);
       decos[0].set(l);
       decos[1].set(m);
       decos[2].set(r);
@@ -312,6 +353,7 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
 
     const owned: monaco.editor.ITextModel[] = [];
     let cancelled = false;
+    let stopWorker = () => {};
     void (async () => {
       try {
         const [base, ours, theirs] = await Promise.all([
@@ -321,7 +363,10 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
         ]);
         if (cancelled) return;
         if (ours === null && theirs === null) throw new Error("This file is not in conflict anymore.");
-        const model = buildMerge(ours ?? "", base ?? "", theirs ?? "");
+        const job = buildMergeInWorker(ours ?? "", base ?? "", theirs ?? "");
+        stopWorker = job.cancel;
+        const model = await job.result;
+        if (cancelled) return;
         const lang = languageFor(spec.rel);
         const mkModel = (text: string) => {
           const m = monaco.editor.createModel(text, lang);
@@ -342,17 +387,21 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
         states.current = model.conflicts.map(pendingState);
         conflictsRef.current = model.conflicts;
         setConflicts(model.conflicts);
+        setLoading(false);
         left.setModel(oursModel);
         center.setModel(result);
         right.setModel(theirsModel);
         dl.setModel({ original: oursModel, modified: result });
         dr.setModel({ original: result, modified: theirsModel });
       } catch (e) {
+        if (cancelled) return;
         setError(errorMessage(e));
+        setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      stopWorker();
       win.cancelAnimationFrame(frame);
       wheelHosts.forEach((h) => h.removeEventListener("wheel", wheel));
       wheels.forEach((w) => w.dispose());
@@ -468,8 +517,8 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
         <button className="icon-btn" title="Next conflict" onClick={() => step(1)}>
           <ChevronDown size={16} />
         </button>
-        <span className={"small " + (unresolved ? "error" : "muted")}>
-          {error ? error : conflicts.length === 0 ? "No conflicts left — changes merged automatically." : `${unresolved} of ${conflicts.length} conflict(s) unresolved`}
+        <span className={"small " + (unresolved && !loading ? "error" : "muted")}>
+          {error ? error : loading ? "Computing merge…" : conflicts.length === 0 ? "No conflicts left — changes merged automatically." : `${unresolved} of ${conflicts.length} conflict(s) unresolved`}
         </span>
         <span className="run-spacer" />
         <button className="btn small" onClick={() => acceptAll("ours")} disabled={!unresolved}>
@@ -478,7 +527,7 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
         <button className="btn small" onClick={() => acceptAll("theirs")} disabled={!unresolved}>
           Accept Right
         </button>
-        <button className="btn small primary" onClick={() => void apply()} disabled={!!error}>
+        <button className="btn small primary" onClick={() => void apply()} disabled={!!error || loading}>
           Apply
         </button>
       </div>
