@@ -4426,9 +4426,61 @@ html:has(.float-external) body {
   font-weight: 600;
 }
 
+.merge-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 .merge-editor {
   flex: 1;
+  min-width: 0;
   min-height: 0;
+}
+
+/* Rider-style » × / « × beside each conflict, between a side and the result. */
+.merge-strip {
+  flex: 0 0 40px;
+  position: relative;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+
+.merge-act {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.merge-act.first {
+  left: 3px;
+}
+
+.merge-act.second {
+  left: 21px;
+}
+
+.merge-act svg {
+  display: block;
+}
+
+.merge-act:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+.merge-act[data-act="apply"] {
+  color: var(--accent, var(--fg));
+}
+
+.merge-ignored {
+  background: color-mix(in srgb, var(--muted) 6%, transparent);
 }
 
 .merge-conflict {
@@ -4441,31 +4493,6 @@ html:has(.float-external) body {
 
 .merge-resolved {
   background: color-mix(in srgb, var(--diff-added) var(--diff-tint), transparent);
-}
-
-.merge-conflicts {
-  flex: none;
-  max-height: 120px;
-  overflow: auto;
-  border-top: 1px solid var(--border);
-  padding: 4px 8px;
-}
-
-.merge-conflict-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.merge-conflict-row.selected {
-  background: var(--selected);
-}
-
-.merge-conflict-row.done {
-  color: var(--muted);
 }
 
 .stash-list {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMerge, conflictRange, resolution, resolveEdit } from "./merge";
+import { actOnSide, buildMerge, conflictRange, isResolved, pendingState, replaceBlock, resolution, resolveEdit, stateLines } from "./merge";
 import { applyEdit } from "./testEdit";
 
 describe("buildMerge", () => {
@@ -96,5 +96,46 @@ describe("resolveEdit", () => {
     let text = applyEdit(m.result, resolveEdit(c2, "theirs", c2.resultStart + 1, c2.resultStart + 1, m.result.split("\n"), "\n"));
     text = applyEdit(text, resolveEdit(c1, "ours", c1.resultStart + 1, c1.resultStart + 1, text.split("\n"), "\n"));
     expect(text).toBe("A1\nk\nB2\n");
+  });
+});
+
+describe("per-side actions (Rider's » × / « ×)", () => {
+  const m = buildMerge("one\nvalue = 2\nend\n", "one\nvalue = 1\nend\n", "one\nvalue = 3\nend\n");
+  const c = m.conflicts[0];
+
+  it("keeps the base until a side is applied, and appends the second applied side", () => {
+    let s = pendingState();
+    expect(stateLines(c, s)).toEqual(["value = 1"]);
+    s = actOnSide(s, "theirs", "apply");
+    expect(stateLines(c, s)).toEqual(["value = 3"]);
+    expect(isResolved(s)).toBe(false);
+    s = actOnSide(s, "ours", "apply");
+    expect(stateLines(c, s)).toEqual(["value = 3", "value = 2"]);
+    expect(isResolved(s)).toBe(true);
+  });
+
+  it("resolves once both sides are handled, ignored ones adding nothing", () => {
+    let s = actOnSide(pendingState(), "ours", "ignore");
+    expect(isResolved(s)).toBe(false);
+    expect(stateLines(c, s)).toEqual(["value = 1"]);
+    s = actOnSide(s, "theirs", "apply");
+    expect(isResolved(s)).toBe(true);
+    expect(stateLines(c, s)).toEqual(["value = 3"]);
+    // A handled side does not change again.
+    expect(actOnSide(s, "ours", "apply")).toBe(s);
+  });
+
+  it("rewrites a block that already holds an applied side", () => {
+    // "value = 2" (ours) is in the result on line 2; apply theirs after it.
+    const text = "one\nvalue = 2\nend\n";
+    expect(applyEdit(text, replaceBlock(1, ["value = 2", "value = 3"], 2, 2, text.split("\n"), "\n"))).toBe("one\nvalue = 2\nvalue = 3\nend\n");
+    // An empty block (a side that deleted the lines) gets lines inserted at its place.
+    const gone = "one\nend\n";
+    expect(applyEdit(gone, replaceBlock(0, ["x"], 2, 2, gone.split("\n"), "\n"))).toBe("one\nx\nend\n");
+  });
+
+  it("removes the last lines of a file without a final newline with their line break", () => {
+    const text = "a\nX";
+    expect(applyEdit(text, replaceBlock(1, [], 2, 2, text.split("\n"), "\n"))).toBe("a");
   });
 });

@@ -100,16 +100,55 @@ export function conflictRange(c: ConflictBlock, result: readonly string[]): Resu
  * inserted before `start`, or after the last line when `start` is past it.
  */
 export function resolveEdit(c: ConflictBlock, choice: "ours" | "theirs" | "both", start: number, end: number, result: readonly string[], eol: string): ResultEdit {
-  const chosen = resolution(c, choice);
+  return replaceBlock(c.base.length, resolution(c, choice), start, end, result, eol);
+}
+
+/**
+ * The edit that replaces a block of `held` lines at `start..end` of `result`
+ * (1-based) with `chosen`. A block of no lines sits before line `start`, or
+ * after the last line when `start` is past it.
+ */
+export function replaceBlock(held: number, chosen: readonly string[], start: number, end: number, result: readonly string[], eol: string): ResultEdit {
   const text = chosen.join(eol);
   const edit = (startLine: number, startColumn: number, endLine: number, endColumn: number, text: string) => ({ startLine, startColumn, endLine, endColumn, text });
-  if (c.base.length === 0) {
-    if (start <= result.length) return edit(start, 1, start, 1, text ? text + eol : "");
+  if (held === 0) {
+    if (chosen.length === 0) return edit(start, 1, start, 1, "");
+    if (start <= result.length) return edit(start, 1, start, 1, text + eol);
     const n = Math.max(1, result.length);
     const endOfFile = (result[n - 1] ?? "").length + 1;
-    return edit(n, endOfFile, n, endOfFile, text ? eol + text : "");
+    return edit(n, endOfFile, n, endOfFile, eol + text);
   }
   const endColumn = (result[end - 1] ?? "").length + 1;
-  if (chosen.length === 0) return end < result.length ? edit(start, 1, end + 1, 1, "") : edit(start, 1, end, endColumn, "");
+  if (chosen.length === 0) {
+    if (end < result.length) return edit(start, 1, end + 1, 1, "");
+    // The last lines: take the line break before them too.
+    if (start > 1) return edit(start - 1, (result[start - 2] ?? "").length + 1, end, endColumn, "");
+    return edit(start, 1, end, endColumn, "");
+  }
   return edit(start, 1, end, endColumn, text);
 }
+
+/** One side of a conflict in the merge window: not handled yet, applied to the result, or ignored. */
+export type SideState = "pending" | "applied" | "ignored";
+
+export interface ConflictState {
+  ours: SideState;
+  theirs: SideState;
+  /** The applied sides, in the order they were applied. */
+  order: ("ours" | "theirs")[];
+}
+
+export const pendingState = (): ConflictState => ({ ours: "pending", theirs: "pending", order: [] });
+
+/** The lines conflict `c` holds in the result in state `s`: the applied sides in order, else the base. */
+export function stateLines(c: ConflictBlock, s: ConflictState): string[] {
+  return s.order.length ? s.order.flatMap((side) => (side === "ours" ? c.ours : c.theirs)) : c.base;
+}
+
+/** `s` after applying (`»`/`«`) or ignoring (`×`) one side, as in Rider's merge tool. */
+export function actOnSide(s: ConflictState, side: "ours" | "theirs", act: "apply" | "ignore"): ConflictState {
+  if (s[side] !== "pending") return s;
+  return { ...s, [side]: act === "apply" ? "applied" : "ignored", order: act === "apply" ? [...s.order, side] : s.order };
+}
+
+export const isResolved = (s: ConflictState): boolean => s.ours !== "pending" && s.theirs !== "pending";
