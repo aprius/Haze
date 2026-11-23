@@ -1,7 +1,7 @@
 // App chrome: project rail, welcome screen, splitters and status bar.
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { AlertCircle, ArrowDownLeft, ArrowUpCircle, ArrowUpRight, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
+import { AlertCircle, AlertTriangle, ArrowDownLeft, ArrowUpCircle, ArrowUpRight, FolderOpen, FolderTree, GitBranch, GitCommitHorizontal, GitGraph, Hammer, LoaderCircle, Moon, Plus, RotateCcw, Settings, Star, Sun, TerminalSquare } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useBuffers } from "../lib/buffers";
 import { api, type BuildDiagnostic, type TextEncoding } from "../lib/ipc";
@@ -13,6 +13,7 @@ import { busyTerminals, closeTerminal, shownState, useTerminals } from "../store
 import { useTree } from "../store/tree";
 import { toggleCommitWindow, useUi } from "../store/ui";
 import { openRelease, updateLabel, updateNow, useUpdates } from "../store/updates";
+import { openConflictsDialog } from "./ConflictsDialog";
 import { diffTitle, parseDiffPath } from "./DiffView";
 import { openBranchesPopup } from "./GitDialogs";
 import { openSettings } from "./SettingsDialog";
@@ -409,6 +410,7 @@ export function StatusBar({ project }: { project: Project | null }) {
   const git = useTree((s) => (project ? s.git[project.id] : undefined));
   const operation = useGit((s) => (project ? s.repos[project.id]?.branches?.operation : null));
   const tracking = useGit((s) => (project ? s.repos[project.id]?.branches?.branches.find((b) => b.current) : undefined));
+  const conflicts = useGit((s) => (project ? (s.repos[project.id]?.changes.filter((c) => c.status === "conflict").length ?? 0) : 0));
   const ui = useWorkspace((s) => (project ? s.ui[project.id] : undefined));
   const activeTab = ui ? activeTabOf(ui) : null;
   const meta = useBuffers((s) => (activeTab ? s.meta[activeTab] : undefined));
@@ -450,6 +452,12 @@ export function StatusBar({ project }: { project: Project | null }) {
                 </span>
               )}
               {operation && <span className="status-op">({operation} in progress)</span>}
+            </button>
+          )}
+          {/* Like Rider: the Conflicts popup can be opened again from here once it was closed. */}
+          {git?.status.isRepo && conflicts > 0 && (
+            <button className="status-item status-btn status-conflicts" title="Resolve conflicts…" onClick={() => openConflictsDialog(project.id)}>
+              <AlertTriangle size={14} /> {conflicts} {conflicts === 1 ? "conflict" : "conflicts"}
             </button>
           )}
           {activeTab &&

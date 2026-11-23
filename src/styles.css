@@ -4365,6 +4365,10 @@ html:has(.float-external) body {
   margin-left: 4px;
 }
 
+.status-conflicts {
+  color: var(--git-conflict);
+}
+
 /* Rider's branch widget: ↙ incoming (to pull) and ↗ outgoing (to push) commits. */
 .status-sync {
   display: inline-flex;
