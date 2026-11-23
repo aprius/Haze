@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { getModel, reloadBuffer } from "../lib/buffers";
 import { chunkKind, connectorCurve, connectorPath, mapBoundary, toChunk, type Chunk } from "../lib/diffLink";
 import { api, errorMessage } from "../lib/ipc";
-import { actOnSide, conflictRange, isResolved, pendingState, replaceBlock, stateLines, type ConflictBlock, type ConflictState, type MergeModel, type ResultEdit } from "../lib/merge";
+import { actOnSide, conflictRange, isResolved, pendingState, rewriteBlock, stateLines, type ConflictBlock, type ConflictState, type MergeModel, type ResultEdit } from "../lib/merge";
 import MergeWorker from "../lib/merge.worker?worker";
 import { codeFontOptions, languageFor, monaco, suggestOptions } from "../lib/monaco";
 import { monacoTheme } from "../lib/theme";
@@ -138,6 +138,9 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
   const panes = useRef<Panes | null>(null);
   // Tracked ranges of each conflict in the result model.
   const tracked = useRef<string[]>([]);
+  // Whether each conflict holds no line in the result. Not read off its range:
+  // a one-line block is marked from column 1 to column 1, an empty range too.
+  const blockEmpty = useRef<boolean[]>([]);
   // Each conflict's sides; the ref is what the editors' handlers read.
   const states = useRef<ConflictState[]>([]);
   const conflictsRef = useRef<ConflictBlock[]>([]);
@@ -437,6 +440,7 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
           })),
         );
         states.current = model.conflicts.map(pendingState);
+        blockEmpty.current = model.conflicts.map((c) => c.base.length === 0);
         conflictsRef.current = model.conflicts;
         setConflicts(model.conflicts);
         setLoading(false);
@@ -489,27 +493,15 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     if (prev === next) return;
     const r = model.getDecorationRange(tracked.current[c.id]);
     if (!r) return;
-    const empty = r.isEmpty();
-    // An empty block past the last line is marked at the end of that line.
-    const start = empty && r.startColumn > 1 ? r.startLineNumber + 1 : r.startLineNumber;
-    // Lines typed into the block by hand are part of it too.
-    const held = empty ? 0 : r.endLineNumber - r.startLineNumber + 1;
-    const lines = stateLines(c, next);
-    const changed = prev.order.join() !== next.order.join();
-    if (changed) {
-      const e = replaceBlock(held, lines, start, r.endLineNumber, model.getLinesContent(), model.getEOL());
-      p.center.executeEdits("merge", [{ range: rangeOf(e), text: e.text }]);
+    // Lines typed into the block by hand are part of it too: its range says how many.
+    const mark = { startLine: r.startLineNumber, startColumn: r.startColumn, endLine: r.endLineNumber, empty: blockEmpty.current[c.id] };
+    if (prev.order.join() !== next.order.join()) {
+      const { edit, mark: after } = rewriteBlock(mark, stateLines(c, next), model.getLinesContent(), model.getEOL());
+      p.center.executeEdits("merge", [{ range: rangeOf(edit), text: edit.text }]);
+      const range = new monaco.Range(after.startLine, after.startColumn, after.endLine, after.endColumn);
+      [tracked.current[c.id]] = model.deltaDecorations([tracked.current[c.id]], [{ range, options: { stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges } }]);
+      blockEmpty.current[c.id] = after.empty;
     }
-    const count = model.getLineCount();
-    const len = changed ? lines.length : held;
-    const range =
-      len > 0
-        ? new monaco.Range(start, 1, start + len - 1, 1)
-        : start <= count
-          ? new monaco.Range(start, 1, start, 1)
-          : new monaco.Range(count, model.getLineMaxColumn(count), count, model.getLineMaxColumn(count));
-    const [id] = model.deltaDecorations([tracked.current[c.id]], [{ range, options: { stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges } }]);
-    tracked.current[c.id] = id;
     states.current[c.id] = next;
     if (batch) return;
     refresh.current();

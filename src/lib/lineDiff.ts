@@ -147,65 +147,98 @@ export function diffLines(o: readonly string[], ab: readonly string[], budgetMs 
   return hunks;
 }
 
+/**
+ * A stretch where `a` or `b` (or both) differ from `o`, in line boundaries of
+ * all three: lines `aStart..aEnd` of `a` stand for `oStart..oEnd` of `o` and
+ * `bStart..bEnd` of `b`. A side that did not change it holds `o`'s lines there.
+ */
+export interface Diff3Change {
+  aStart: number;
+  aEnd: number;
+  oStart: number;
+  oEnd: number;
+  bStart: number;
+  bEnd: number;
+  /** Both sides changed it, differently. */
+  conflict: boolean;
+  aChanged: boolean;
+  bChanged: boolean;
+}
+
+/**
+ * node-diff3's diff3 (Khanna, Kunal and Pierce) over `diffLines`, as the
+ * changes IntelliJ's merge window works with: every stretch either side
+ * changed, overlapping changes as one conflict; the same change on both sides
+ * is no conflict.
+ */
+export function diff3Changes(a: readonly string[], o: readonly string[], b: readonly string[]): Diff3Change[] {
+  const hunks = [...diffLines(o, a).map((h) => ({ ...h, ab: "a" as const })), ...diffLines(o, b).map((h) => ({ ...h, ab: "b" as const }))];
+  hunks.sort((x, y) => x.oStart - y.oStart);
+  const changes: Diff3Change[] = [];
+  // How far `a` and `b` are ahead of `o` after the changes so far: unchanged stretches keep that offset.
+  let da = 0;
+  let db = 0;
+  let h = 0;
+  while (h < hunks.length) {
+    const first = hunks[h++];
+    const oStart = first.oStart;
+    let oEnd = first.oStart + first.oLength;
+    const region = [first];
+    while (h < hunks.length && hunks[h].oStart <= oEnd) {
+      oEnd = Math.max(oEnd, hunks[h].oStart + hunks[h].oLength);
+      region.push(hunks[h++]);
+    }
+    // Each side's span: its hunks widened by the unchanged lines around them, else `o`'s lines.
+    const span = (side: "a" | "b", d: number): [number, number] => {
+      const own = region.filter((x) => x.ab === side);
+      if (!own.length) return [oStart + d, oEnd + d];
+      const s0 = Math.min(...own.map((x) => x.abStart));
+      const s1 = Math.max(...own.map((x) => x.abStart + x.abLength));
+      const o0 = Math.min(...own.map((x) => x.oStart));
+      const o1 = Math.max(...own.map((x) => x.oStart + x.oLength));
+      return [s0 - (o0 - oStart), s1 + (oEnd - o1)];
+    };
+    const [aStart, aEnd] = span("a", da);
+    const [bStart, bEnd] = span("b", db);
+    const aChanged = region.some((x) => x.ab === "a");
+    const bChanged = region.some((x) => x.ab === "b");
+    let conflict = aChanged && bChanged;
+    if (conflict && aEnd - aStart === bEnd - bStart) {
+      let same = true;
+      for (let i = 0; same && i < aEnd - aStart; i++) same = a[aStart + i] === b[bStart + i];
+      conflict = !same;
+    }
+    changes.push({ aStart, aEnd, oStart, oEnd, bStart, bEnd, conflict, aChanged, bChanged });
+    da = aEnd - oEnd;
+    db = bEnd - oEnd;
+  }
+  return changes;
+}
+
 export type MergeRegion = { ok: string[] } | { conflict: { a: string[]; aIndex: number; o: string[]; oIndex: number; b: string[]; bIndex: number } };
 
 /**
- * node-diff3's `diff3Merge` (Khanna, Kunal and Pierce's diff3) over `diffLines`:
- * stretches changed on one side only are taken from it, overlapping changes
- * become conflicts, and the same change on both sides is no conflict.
+ * The merged text as regions: each change taken from the side that made it,
+ * conflicts left as such (what `git merge-file` does, in node-diff3's shape).
  */
 export function diff3Merge(a: readonly string[], o: readonly string[], b: readonly string[]): MergeRegion[] {
-  const hunks = [...diffLines(o, a).map((h) => ({ ...h, ab: "a" as const })), ...diffLines(o, b).map((h) => ({ ...h, ab: "b" as const }))];
-  hunks.sort((x, y) => x.oStart - y.oStart);
   const results: MergeRegion[] = [];
   let ok: string[] = [];
   const pushOk = (lines: readonly string[]) => {
     for (const l of lines) ok.push(l);
   };
   let curr = 0;
-  let h = 0;
-  while (h < hunks.length) {
-    const first = hunks[h++];
-    const regionStart = first.oStart;
-    let regionEnd = first.oStart + first.oLength;
-    const region = [first];
-    while (h < hunks.length && hunks[h].oStart <= regionEnd) {
-      regionEnd = Math.max(regionEnd, hunks[h].oStart + hunks[h].oLength);
-      region.push(hunks[h++]);
+  for (const c of diff3Changes(a, o, b)) {
+    pushOk(o.slice(curr, c.oStart));
+    if (!c.conflict) pushOk(c.aChanged ? a.slice(c.aStart, c.aEnd) : b.slice(c.bStart, c.bEnd));
+    else {
+      if (ok.length) results.push({ ok });
+      ok = [];
+      results.push({ conflict: { a: a.slice(c.aStart, c.aEnd), aIndex: c.aStart, o: o.slice(c.oStart, c.oEnd), oIndex: c.oStart, b: b.slice(c.bStart, c.bEnd), bIndex: c.bStart } });
     }
-    if (regionStart > curr) pushOk(o.slice(curr, regionStart));
-    if (region.length === 1) {
-      // Only one side changed this stretch: take it.
-      const src = first.ab === "a" ? a : b;
-      pushOk(src.slice(first.abStart, first.abStart + first.abLength));
-    } else {
-      const bounds = { a: [a.length, -1, o.length, -1], b: [b.length, -1, o.length, -1] };
-      for (const x of region) {
-        const s = bounds[x.ab];
-        s[0] = Math.min(x.abStart, s[0]);
-        s[1] = Math.max(x.abStart + x.abLength, s[1]);
-        s[2] = Math.min(x.oStart, s[2]);
-        s[3] = Math.max(x.oStart + x.oLength, s[3]);
-      }
-      // A side with no hunk here keeps the region as it is in `o`.
-      const span = (s: number[], len: number): [number, number] => {
-        if (s[1] < 0) return [regionStart, regionEnd];
-        return [s[0] + (regionStart - s[2]), Math.min(len, s[1] + (regionEnd - s[3]))];
-      };
-      const [aStart, aEnd] = span(bounds.a, a.length);
-      const [bStart, bEnd] = span(bounds.b, b.length);
-      const ac = a.slice(aStart, aEnd);
-      const bc = b.slice(bStart, bEnd);
-      if (ac.length === bc.length && ac.every((l, i) => l === bc[i])) pushOk(ac);
-      else {
-        if (ok.length) results.push({ ok });
-        ok = [];
-        results.push({ conflict: { a: ac, aIndex: aStart, o: o.slice(regionStart, regionEnd), oIndex: regionStart, b: bc, bIndex: bStart } });
-      }
-    }
-    curr = regionEnd;
+    curr = c.oEnd;
   }
-  if (curr < o.length) pushOk(o.slice(curr));
+  pushOk(o.slice(curr));
   if (ok.length) results.push({ ok });
   return results;
 }
