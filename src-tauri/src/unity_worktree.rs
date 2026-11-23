@@ -273,7 +273,7 @@ fn running_editor(root: &Path) -> Option<RunningEditor> {
 
 /// The project's `EditorInstance.json`, else its main checkout's: a seeded
 /// worktree has none of its own (see `EDITOR_INSTANCE`) until Unity opens it.
-fn editor_instance(project: &Path) -> Option<serde_json::Value> {
+pub(crate) fn editor_instance(project: &Path) -> Option<serde_json::Value> {
     read_json(&project.join("Library/EditorInstance.json")).or_else(|| {
         let project = crate::paths::canonicalize(project).ok()?;
         let root = crate::paths::canonicalize(&crate::git::toplevel_of(&project).ok()?).ok()?;

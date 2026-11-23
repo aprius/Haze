@@ -29,6 +29,7 @@ mod unity;
 mod unity_csproj;
 mod unity_data;
 mod unity_index;
+mod unity_merge;
 mod unity_worktree;
 mod updates;
 mod watcher;
@@ -501,6 +502,13 @@ async fn git_commit_details(root: String, hash: String) -> CmdResult<git_ops::Co
 #[tauri::command]
 async fn git_file_at(root: String, rev: String, rel: String) -> CmdResult<Option<String>> {
     blocking(move || git_ops::file_at(root.as_ref(), &rev, &rel)).await
+}
+
+/// UnityYAMLMerge's premerge of a conflicted Unity scene, prefab or other Unity
+/// YAML file, as Rider merges them; `None` when it does not apply.
+#[tauri::command]
+async fn unity_yaml_merge(root: String, rel: String) -> CmdResult<Option<unity_merge::UnityPremerge>> {
+    blocking(move || unity_merge::premerge(root.as_ref(), &rel)).await
 }
 
 /// An image as committed at `rev` (the Diff tab's image preview); `None` when absent there.
@@ -1352,6 +1360,7 @@ pub fn run() {
             git_rollback,
             git_commit_details,
             git_file_at,
+            unity_yaml_merge,
             git_image_at,
             git_branches,
             git_stashes,

@@ -11,6 +11,15 @@ export interface DirEntry {
 }
 
 /** `*-invalid`: UTF-8 with a few invalid bytes, kept as U+F780–U+F7FF and saved back as those bytes. */
+/** UnityYAMLMerge's premerge of a conflicted Unity YAML file: without conflicts all three are the merged file. */
+export interface UnityPremerge {
+  tool: string;
+  conflicts: boolean;
+  mine: string;
+  base: string;
+  theirs: string;
+}
+
 export type TextEncoding = "utf8" | "utf8-bom" | "utf16le" | "utf16be" | "windows1252" | "utf8-invalid" | "utf8-bom-invalid";
 export type Eol = "lf" | "crlf";
 
@@ -720,6 +729,8 @@ export const api = {
   gitCommitDetails: (root: string, hash: string) => invoke<CommitDetails>("git_commit_details", { root, hash }),
   gitImageAt: (root: string, rev: string, rel: string) => invoke<{ mime: string; base64: string } | null>("git_image_at", { root, rev, rel }),
   gitFileAt: (root: string, rev: string, rel: string) => invoke<string | null>("git_file_at", { root, rev, rel }),
+  /** Rider's merge of Unity scenes, prefabs and other Unity YAML; null when it does not apply. */
+  unityYamlMerge: (root: string, rel: string) => invoke<UnityPremerge | null>("unity_yaml_merge", { root, rel }),
   gitBranches: (root: string) => invoke<BranchesInfo>("git_branches", { root }),
   gitStashes: (root: string) => invoke<StashEntry[]>("git_stashes", { root }),
   /** Blame of the disk file, of `contents` (unsaved text) or, with `rev`, of the file as committed there. */

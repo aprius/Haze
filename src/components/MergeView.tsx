@@ -5,6 +5,9 @@
 // step block by block. As in Rider, a conflict has » and × in the left side's
 // gutter and « and × in the right side's: apply that side to the result, or
 // ignore it; a conflict is resolved once both sides are handled (or by hand).
+// Unity scenes, prefabs and other Unity YAML go through UnityYAMLMerge first,
+// as in Rider: the panes then hold its premerged versions, and only the
+// conflicts it could not resolve are left.
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getModel, reloadBuffer } from "../lib/buffers";
@@ -126,6 +129,9 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
   const [current, setCurrent] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // UnityYAMLMerge ran (its path), or why it could not.
+  const [smart, setSmart] = useState<{ tool: string; conflicts: boolean } | null>(null);
+  const [smartError, setSmartError] = useState<string | null>(null);
   const operation = repo(project.id).branches?.operation ?? null;
   // During a rebase, stage 2 is the branch being rebased onto and stage 3 is your commit.
   const labels = operation === "rebase" ? ["Upstream (being rebased onto)", "Your commit"] : ["Yours (current branch)", "Theirs (incoming)"];
@@ -356,25 +362,37 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
     let stopWorker = () => {};
     void (async () => {
       try {
-        const [base, ours, theirs] = await Promise.all([
+        const [base, ours, theirs, unity] = await Promise.all([
           api.gitFileAt(spec.root, ":1", spec.rel),
           api.gitFileAt(spec.root, ":2", spec.rel),
           api.gitFileAt(spec.root, ":3", spec.rel),
+          api.unityYamlMerge(spec.root, spec.rel).catch((e) => (setSmartError(errorMessage(e)), null)),
         ]);
         if (cancelled) return;
         if (ours === null && theirs === null) throw new Error("This file is not in conflict anymore.");
-        const job = buildMergeInWorker(ours ?? "", base ?? "", theirs ?? "");
-        stopWorker = job.cancel;
-        const model = await job.result;
-        if (cancelled) return;
+        let leftText = ours ?? "";
+        let rightText = theirs ?? "";
+        let model: MergeModel;
+        if (unity && !unity.conflicts) {
+          // Merged whole: the sides stay as committed, to compare with.
+          model = { eol: "\n", result: unity.mine, conflicts: [] };
+        } else {
+          // With conflicts left, the sides are Unity's premerged versions, which differ only there.
+          if (unity) [leftText, rightText] = [unity.mine, unity.theirs];
+          const job = unity ? buildMergeInWorker(unity.mine, unity.base, unity.theirs) : buildMergeInWorker(ours ?? "", base ?? "", theirs ?? "");
+          stopWorker = job.cancel;
+          model = await job.result;
+          if (cancelled) return;
+        }
+        if (unity) setSmart({ tool: unity.tool, conflicts: unity.conflicts });
         const lang = languageFor(spec.rel);
         const mkModel = (text: string) => {
           const m = monaco.editor.createModel(text, lang);
           owned.push(m);
           return m;
         };
-        const oursModel = mkModel(ours ?? "");
-        const theirsModel = mkModel(theirs ?? "");
+        const oursModel = mkModel(leftText);
+        const theirsModel = mkModel(rightText);
         const result = mkModel(model.result);
         const lines = result.getLinesContent();
         tracked.current = result.deltaDecorations(
@@ -518,8 +536,26 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
           <ChevronDown size={16} />
         </button>
         <span className={"small " + (unresolved && !loading ? "error" : "muted")}>
-          {error ? error : loading ? "Computing merge…" : conflicts.length === 0 ? "No conflicts left — changes merged automatically." : `${unresolved} of ${conflicts.length} conflict(s) unresolved`}
+          {error
+            ? error
+            : loading
+              ? "Computing merge…"
+              : conflicts.length === 0
+                ? smart
+                  ? "No conflicts left — merged by UnityYAMLMerge."
+                  : "No conflicts left — changes merged automatically."
+                : `${unresolved} of ${conflicts.length} conflict(s) unresolved`}
         </span>
+        {smart && smart.conflicts && (
+          <span className="muted small" title={smart.tool}>
+            Pre-merged by UnityYAMLMerge
+          </span>
+        )}
+        {smartError && (
+          <span className="muted small" title={smartError}>
+            UnityYAMLMerge failed — line merge used
+          </span>
+        )}
         <span className="run-spacer" />
         <button className="btn small" onClick={() => acceptAll("ours")} disabled={!unresolved}>
           Accept Left
@@ -532,9 +568,9 @@ export function MergeView({ project, spec }: { project: Project; spec: MergeSpec
         </button>
       </div>
       <div className="merge-labels">
-        <div className="merge-label">{labels[0]}</div>
+        <div className="merge-label">{labels[0] + (smart?.conflicts ? " · pre-merged" : "")}</div>
         <div className="merge-label center">Result</div>
-        <div className="merge-label">{labels[1]}</div>
+        <div className="merge-label">{labels[1] + (smart?.conflicts ? " · pre-merged" : "")}</div>
       </div>
       <div className="diff-host">
         <div ref={leftHost} className="diff-side" />
