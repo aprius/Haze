@@ -3,6 +3,7 @@
 // thing; anything unclear is left alone.
 //   `{`  at the `=>` of an expression-bodied member → block body
 //   `{`  in a plain string                          → interpolated string
+//   `{`  before the statement of an `if`/`else`     → wraps it in a block
 //   Enter at the braces of a one-line method        → body on its own lines
 //   Enter in a `///` comment                        → continues it
 //   Enter in a string                               → `"a " +` / `"b"`
@@ -662,6 +663,42 @@ export function splitStringEdit(t: string, offset: number, indentUnit: string, e
 }
 
 // ---------------------------------------------------------------------------
+// `{` before an embedded statement
+
+const BRACE_HEADER = /(?:^|[\s}])(?:(?:else\s+)?if|while|for|foreach|using|lock|fixed)\s*$/;
+const BRACE_STARTS_BLOCK = /^(if|else|while|for|foreach|using|lock|fixed|switch|try|do|return\s*;)\b/;
+
+/**
+ * `{` typed between an `if (...)` or `else` and the one-line statement after
+ * it wraps that statement in a block, as in Rider:
+ * `if (x) |Foo();` → `if (x)` / `{` / `    Foo();|` / `}`.
+ */
+export function braceStatementEdit(t: string, offset: number, indentUnit: string, eol = "\n"): BodyEdit | null {
+  const { start, end } = lineBounds(t, offset);
+  const headerEnd = skipWsBack(t, offset);
+  if (headerEnd <= start || inCommentOrString(t, offset)) return null;
+  if (t[headerEnd - 1] === ")") {
+    const open = matchBack(t, headerEnd, "(", ")");
+    if (open < start || !BRACE_HEADER.test(t.slice(start, open))) return null;
+  } else if (!(wordBack(t, headerEnd) === headerEnd - 4 && /(?:^|[\s}])else$/.test(t.slice(start, headerEnd)))) return null;
+
+  const stmtStart = skipWsFwd(t, offset);
+  if (stmtStart >= end || t[stmtStart] === "{" || BRACE_STARTS_BLOCK.test(t.slice(stmtStart, end))) return null;
+  const semi = scanCode(t, stmtStart, ";", "");
+  if (semi < 0 || semi >= end) return null;
+  // Only a comment may follow the statement on its line.
+  const rest = t.slice(semi + 1, end).trim();
+  if (rest && !rest.startsWith("//") && !rest.startsWith("/*")) return null;
+
+  const indent = /^[ \t]*/.exec(t.slice(start, end))![0];
+  const inner = indent + indentUnit;
+  const stmt = t.slice(stmtStart, semi + 1);
+  const head = `${eol}${indent}{${eol}${inner}`;
+  const tail = rest ? ` ${rest}` : "";
+  return { start: headerEnd, end, text: `${head}${stmt}${tail}${eol}${indent}}`, caret: headerEnd + head.length + stmt.length };
+}
+
+// ---------------------------------------------------------------------------
 // `;` inside closing brackets
 
 /**
@@ -868,7 +905,12 @@ export interface TypingOptions {
 export function mayApply(key: TypingKey, lineBefore: string, lineAfter: string): boolean {
   switch (key) {
     case "{":
-      return lineBefore.includes("=>") || lineAfter.trimStart().startsWith("=>") || lineBefore.includes('"');
+      return (
+        lineBefore.includes("=>") ||
+        lineAfter.trimStart().startsWith("=>") ||
+        lineBefore.includes('"') ||
+        (/(\)|\belse)\s*$/.test(lineBefore) && lineAfter.includes(";"))
+      );
     case "Enter":
       return /\/\/\/|#region|"|\{/.test(lineBefore) || /[{}]/.test(lineAfter);
     case "/":
@@ -884,7 +926,7 @@ export function mayApply(key: TypingKey, lineBefore: string, lineAfter: string):
 export function typingEdit(key: TypingKey, t: string, offset: number, o: TypingOptions): BodyEdit | null {
   switch (key) {
     case "{":
-      return expandExpressionBody(t, offset, o.indentUnit, o.eol) ?? interpolateEdit(t, offset);
+      return expandExpressionBody(t, offset, o.indentUnit, o.eol) ?? interpolateEdit(t, offset) ?? braceStatementEdit(t, offset, o.indentUnit, o.eol);
     case "Enter":
       return (
         docCommentEnter(t, offset, o.eol) ??

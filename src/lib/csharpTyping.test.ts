@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backspaceEdit, completeStatement, mayApply, docCommentEdit, docCommentEnter, expandExpressionBody, expandInlineMethod, interpolateEdit, regionEdit, semicolonEdit, splitStringEdit } from "./csharpTyping";
+import { backspaceEdit, braceStatementEdit, completeStatement, mayApply, docCommentEdit, docCommentEnter, expandExpressionBody, expandInlineMethod, interpolateEdit, regionEdit, semicolonEdit, splitStringEdit } from "./csharpTyping";
 
 /** Types `{` at `|` and returns the text with the caret marked, or null when nothing changes. */
 function type(src: string, expand: (t: string, offset: number, unit: string) => ReturnType<typeof expandExpressionBody> = expandExpressionBody) {
@@ -295,6 +295,26 @@ describe("regressions", () => {
   });
 });
 
+describe("braceStatementEdit", () => {
+  const brace = (src: string) => type(src, braceStatementEdit);
+  it("wraps the statement after an if or else in a block", () => {
+    expect(brace(" if (owned) |localeTextLevel.ActiveGameObject();")).toBe(" if (owned)\n {\n     localeTextLevel.ActiveGameObject();|\n }");
+    expect(brace(" else |localeTextLevel.DeactiveGameObject();")).toBe(" else\n {\n     localeTextLevel.DeactiveGameObject();|\n }");
+    expect(brace("} else |Foo();")).toBe("} else\n{\n    Foo();|\n}");
+    expect(brace("else if (a && b(c))| Foo(); // why")).toBe("else if (a && b(c))\n{\n    Foo();| // why\n}");
+    expect(brace("foreach (var x in xs) |Use(x);")).toBe("foreach (var x in xs)\n{\n    Use(x);|\n}");
+  });
+
+  it("leaves everything else to the usual `{`", () => {
+    expect(brace("if (owned) |")).toBeNull();
+    expect(brace("Foo(x) |Bar();")).toBeNull();
+    expect(brace("if (a) |if (b) Foo();")).toBeNull();
+    expect(brace("if (a) |Foo(); Bar();")).toBeNull();
+    expect(brace("var s = \"if (a) |Foo();\";")).toBeNull();
+    expect(brace("Something |Foo();")).toBeNull();
+  });
+});
+
 describe("mayApply", () => {
   it("agrees with the assists on the caret's line", () => {
     expect(mayApply("Backspace", "    ", "")).toBe(true);
@@ -305,6 +325,7 @@ describe("mayApply", () => {
     expect(mayApply(";", "Foo(x)", "")).toBe(false);
     expect(mayApply("{", "void F() ", "=> x;")).toBe(true);
     expect(mayApply("{", "if (x) ", "")).toBe(false);
+    expect(mayApply("{", "if (x) ", "Foo();")).toBe(true);
     expect(mayApply("Enter", "void F() ", "{ x(); }")).toBe(true);
     expect(mayApply("Enter", "    Foo();", "")).toBe(false);
   });
