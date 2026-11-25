@@ -809,6 +809,15 @@ export function onCheckUpdatesMenu(cb: () => void): Promise<UnlistenFn> {
   return listen("app://check-updates", () => cb());
 }
 
+/**
+ * The mouse's back or forward button, on macOS: WKWebView does not give the
+ * page those buttons, so the native side reports them, with the label of the
+ * window clicked in.
+ */
+export function onMouseNav(cb: (e: { label: string | null; forward: boolean }) => void): Promise<UnlistenFn> {
+  return listen<{ label: string | null; forward: boolean }>("app://mouse-nav", (e) => cb(e.payload));
+}
+
 /** Whether any Haze window has focus, when that changes. */
 export function onAppActive(cb: (active: boolean) => void): Promise<UnlistenFn> {
   return listen<boolean>("app://active", (e) => cb(e.payload));

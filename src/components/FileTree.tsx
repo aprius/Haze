@@ -14,6 +14,7 @@ import { isIgnored, loadDir, loadUnityPackages, refreshDirs, refreshGit, setSele
 import { useWorkspace, type Project, type TreeView } from "../store/workspace";
 import { activeTabOf, openBeside, openInNewWindow, openPaths } from "../lib/editorLayout";
 import { matches, shortcutLabel } from "../lib/keymap";
+import { forgetNavPaths } from "../lib/navHistory";
 import { buildRows, isUnityProject, resolveView, type Row } from "../lib/treeRows";
 import { confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
 
@@ -230,6 +231,7 @@ export function FileTree({ project }: { project: Project }) {
       if (closing.length) ws.closeTabs(id, closing);
     }
     Object.keys(useBuffers.getState().meta).filter(gone).forEach(disposeBuffer);
+    forgetNavPaths(gone);
     setSelection(project.id, next ? [next.entry.path] : [], next?.entry.path);
     afterChange();
   };

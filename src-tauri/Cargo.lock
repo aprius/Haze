@@ -1679,6 +1679,7 @@ version = "1.0.47"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "block2",
  "dirs",
  "encoding_rs",
  "fancy-regex",
@@ -1690,6 +1691,8 @@ dependencies = [
  "log",
  "notify",
  "nucleo-matcher",
+ "objc2",
+ "objc2-app-kit",
  "parking_lot",
  "portable-pty",
  "regex",

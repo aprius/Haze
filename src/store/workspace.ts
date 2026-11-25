@@ -4,6 +4,7 @@
 import { create } from "zustand";
 import * as L from "../lib/editorLayout";
 import { basename, isWithin } from "../lib/path";
+import { renameNavPaths } from "../lib/navHistory";
 
 export type { EditorTab } from "../lib/editorLayout";
 
@@ -314,6 +315,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       }
       return { ui };
     });
+    renameNavPaths(map);
   },
 }));
 

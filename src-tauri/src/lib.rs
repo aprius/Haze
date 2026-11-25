@@ -15,6 +15,8 @@ mod lsp;
 #[cfg(test)]
 mod lsp_unity_e2e;
 mod media;
+#[cfg(target_os = "macos")]
+mod mouse_nav;
 mod nesting;
 mod opencode_config;
 mod paths;
@@ -1296,6 +1298,8 @@ pub fn run() {
         .manage(Arc::new(unity_index::UnityIndexes::default()))
         .setup(|app| {
             create_main_window(app)?;
+            #[cfg(target_os = "macos")]
+            mouse_nav::install(app.handle());
             if let Ok(dir) = app.path().app_config_dir() {
                 git_auth::init(git_auth::accounts_path(&dir));
             }

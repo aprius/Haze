@@ -24,6 +24,9 @@ const app = {
   nextTab: { mac: ["ctrl TAB", "meta shift CLOSE_BRACKET"], other: ["ctrl TAB"] },
   previousTab: { mac: ["ctrl shift TAB", "meta shift OPEN_BRACKET"], other: ["ctrl shift TAB"] },
   selectInProject: { mac: ["alt F1"], other: ["alt F1"] },
+  // Rider's Back and Forward. The mouse's back and forward buttons run them too.
+  navigateBack: { mac: ["meta OPEN_BRACKET", "meta alt LEFT"], other: ["ctrl alt LEFT"] },
+  navigateForward: { mac: ["meta CLOSE_BRACKET", "meta alt RIGHT"], other: ["ctrl alt RIGHT"] },
   // Editor splits: Rider has no default keys for most of them either.
   splitVertically: { mac: [], other: [] },
   splitHorizontally: { mac: [], other: [] },
@@ -64,6 +67,8 @@ export const COMMANDS: { id: Command; name: string; group: string }[] = [
   { id: "findInFiles", name: "Find in Files", group: "Navigation" },
   { id: "replaceInFiles", name: "Replace in Files", group: "Navigation" },
   { id: "selectInProject", name: "Select Opened File in Project View", group: "Navigation" },
+  { id: "navigateBack", name: "Back", group: "Navigation" },
+  { id: "navigateForward", name: "Forward", group: "Navigation" },
   { id: "nextTab", name: "Next Tab", group: "Navigation" },
   { id: "previousTab", name: "Previous Tab", group: "Navigation" },
   { id: "nextSplitter", name: "Go to Next Splitter", group: "Navigation" },

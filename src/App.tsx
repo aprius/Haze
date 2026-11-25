@@ -10,7 +10,7 @@ import { Backdrop } from "./components/Backdrop";
 // Rotates the background through a folder, if one is set.
 import "./lib/backdropRotate";
 import { glowRef } from "./lib/ambient";
-import { ContextMenu, Dialogs, inDoc, keyboardIn, setAppShortcuts, Toasts } from "./components/Overlays";
+import { ContextMenu, Dialogs, externalWindows, inDoc, keyboardIn, setAppShortcuts, Toasts } from "./components/Overlays";
 import { ProjectRail, Splitter, StatusBar, toggleBottom, UpdateProgressCard, Welcome } from "./components/Shell";
 import { BuildPanel } from "./components/BuildPanel";
 import { EditorsPanel, TestsPanel, UnityPanel } from "./components/UnityPanel";
@@ -32,8 +32,9 @@ import { loadDotnetInfo, useDotnet } from "./store/dotnet";
 import { buildProject, startUnityLink, stopUnityLink, unityFilesChanged, useUnity } from "./store/unity";
 import { unityFilesChangedForCode, warmUnityIndex } from "./lib/unity/scripts";
 import { handleDiskChanges } from "./lib/buffers";
-import { isRecordingKeys, matches, type Command } from "./lib/keymap";
-import { api, onCheckUpdatesMenu, onFsChange, onOpenRequest, type OpenRequest } from "./lib/ipc";
+import { isMac, isRecordingKeys, matches, type Command } from "./lib/keymap";
+import { navigate } from "./store/navigation";
+import { api, onCheckUpdatesMenu, onFsChange, onMouseNav, onOpenRequest, type OpenRequest } from "./lib/ipc";
 import { basename, dirname } from "./lib/path";
 import { resetZoom, zoomIn, zoomOut } from "./lib/zoom";
 import { restore } from "./store/persist";
@@ -115,6 +116,18 @@ function selectedTreeDir(project: Project): string | null {
   return st ? sel : null;
 }
 
+const inTerminal = (e: KeyboardEvent) => e.target instanceof Element && e.target.closest(".xterm") != null;
+
+/** Each window with app-wide shortcuts, and the project it shows: where the mouse's back and forward buttons navigate. */
+const navWindows = new Map<Window, () => Project | null>();
+
+/** The mouse's back or forward button on macOS, in the window `label`. */
+function onNativeMouseNav({ label, forward }: { label: string | null; forward: boolean }) {
+  const win = [...externalWindows].find(([, l]) => l === label)?.[0] ?? window;
+  const project = (navWindows.get(win) ?? navWindows.get(window))?.();
+  if (project) navigate(project.id, forward ? 1 : -1);
+}
+
 /**
  * App-wide shortcuts, on the main window and on each detached editor window:
  * for `projectOf()` there, the project the window shows. They run in the
@@ -168,6 +181,10 @@ function installShortcuts(win: Window, projectOf: () => Project | null): () => v
     else if (is("recentFiles") && project) openSearchEverywhere("files", "");
     else if ((is("findInFiles") || is("replaceInFiles")) && project) {
       openFindInFiles({ replace: is("replaceInFiles"), query: selectedText(), directory: selectedTreeDir(project) });
+    }
+    // Not in a terminal, where Ctrl+Alt+arrows and Cmd+[ go to the shell.
+    else if ((is("navigateBack") || is("navigateForward")) && project && !inTerminal(e)) {
+      navigate(project.id, is("navigateBack") ? -1 : 1);
     } else if (is("selectInProject") && project) {
       const ui = useWorkspace.getState().ui[project.id];
       const tab = ui && activeTabOf(ui);
@@ -197,13 +214,28 @@ function installShortcuts(win: Window, projectOf: () => Project | null): () => v
       lastShift = now;
     }
   };
+  // The mouse's back and forward buttons (3 and 4): Back and Forward, not the
+  // webview's own history. macOS reports them natively (see onMouseNav).
+  const onMouse = (e: MouseEvent) => {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type !== "mouseup" || isMac) return;
+    const project = projectOf();
+    if (project) navigate(project.id, e.button === 3 ? -1 : 1);
+  };
+  const mouseEvents = ["mousedown", "mouseup", "auxclick"] as const;
+  navWindows.set(win, projectOf);
   win.addEventListener("keydown", onDown, true);
   win.addEventListener("keydown", onCapture, true);
   win.addEventListener("keyup", onUp, true);
+  for (const t of mouseEvents) win.addEventListener(t, onMouse, true);
   return () => {
+    if (navWindows.get(win) === projectOf) navWindows.delete(win);
     win.removeEventListener("keydown", onDown, true);
     win.removeEventListener("keydown", onCapture, true);
     win.removeEventListener("keyup", onUp, true);
+    for (const t of mouseEvents) win.removeEventListener(t, onMouse, true);
   };
 }
 
@@ -294,6 +326,12 @@ export default function App() {
 
   useEffect(() => {
     const un = onCheckUpdatesMenu(() => void checkForUpdates(true));
+    return () => void un.then((f) => f());
+  }, []);
+
+  useEffect(() => {
+    if (!isMac) return;
+    const un = onMouseNav(onNativeMouseNav);
     return () => void un.then((f) => f());
   }, []);
 

@@ -11,6 +11,7 @@ import type { Command } from "./keymap";
 import { toggleThemeMode } from "./theme";
 import { resetZoom, zoomIn, zoomOut } from "./zoom";
 import { activeProject, useWorkspace } from "../store/workspace";
+import { navigate } from "../store/navigation";
 import { activeGroupOf, activeTabOf, openPaths, unsplitAll } from "./editorLayout";
 
 export interface Action {
@@ -100,6 +101,8 @@ export const actions: Action[] = [
       if (p && tab) revealInTree(p, tab);
     },
   },
+  { id: "navigateBack", label: "Back", command: "navigateBack", needsProject: true, run: withProject((id) => void navigate(id, -1)) },
+  { id: "navigateForward", label: "Forward", command: "navigateForward", needsProject: true, run: withProject((id) => void navigate(id, 1)) },
   {
     id: "toggleTerminal",
     label: "Terminal",

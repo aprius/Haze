@@ -38,6 +38,7 @@ import { registerCsharpProviders } from "../lib/csharpProviders";
 import { installUnityPerf } from "../lib/unity/perfDecorations";
 import { installUnityInspections } from "../lib/unity/inspectionMarkers";
 import { isMac, matches, shortcutLabel } from "../lib/keymap";
+import { notePlace } from "../store/navigation";
 
 export const useCursor = create<{ line: number; column: number; selected: number }>(() => ({
   line: 1,
@@ -1491,6 +1492,13 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
         selected: model ? model.getValueLengthInRange(sel) : 0,
       });
     });
+    // Navigate Back / Forward: the caret's moves in the editor the user works in.
+    // A tab shown (a model set, its view state restored) is noted by the effect below.
+    editor.onDidChangeCursorPosition((e) => {
+      if (e.source === "modelChange" || e.source === "restoreState" || e.reason === monaco.editor.CursorChangeReason.ContentFlush) return;
+      const path = shownPath.current;
+      if (path && editor.hasWidgetFocus()) notePlace(project.id, { path, line: e.position.lineNumber, column: e.position.column, group: group.id });
+    });
     editor.onDidChangeModelContent(() => {
       // Editing a preview tab keeps it; an agent changing the file on disk does not.
       if (reloadingFromDisk()) return;
@@ -1740,6 +1748,13 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       // A file split off keeps its place: the state of the group it came from, until it has one here.
       const vs = active ? (viewStates.get(viewKey(group.id, active)) ?? lastViewState(active)) : null;
       if (model && vs) editor.restoreViewState(vs);
+      // A tab shown in the active group is a place, unless a line in it is about to be revealed (that is the place).
+      const pos = editor.getPosition();
+      const r = useWorkspace.getState().reveal;
+      const revealing = r?.group === group.id && r.path === active;
+      if (model && pos && !revealing && useWorkspace.getState().ui[project.id]?.activeGroup === group.id) {
+        notePlace(project.id, { path: active!, line: pos.lineNumber, column: pos.column, group: group.id });
+      }
     }
     // Only the active group takes focus: the others are just shown (a split restored at startup).
     if (model && useWorkspace.getState().ui[project.id]?.activeGroup === group.id) editor.focus();
@@ -1753,6 +1768,7 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
     editor.setPosition(pos);
     editor.revealPositionInCenter(pos);
     editor.focus();
+    notePlace(project.id, { path: active, line: reveal.line, column: reveal.column, group: group.id });
     useWorkspace.setState({ reveal: null });
   }, [reveal, active, ready]);
 
