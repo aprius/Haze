@@ -874,6 +874,28 @@ async fn unity_asset_usages(
     blocking(move || Ok(indexes.asset_usages(root.as_ref(), script.as_ref(), &classes))).await
 }
 
+/// The asset (or folder) a GUID names in a Unity project, from its `.meta`.
+#[tauri::command]
+async fn unity_guid_path(
+    indexes: State<'_, Arc<unity_index::UnityIndexes>>,
+    root: String,
+    guid: String,
+) -> CmdResult<Option<unity_index::GuidTarget>> {
+    let indexes = indexes.inner().clone();
+    blocking(move || Ok(indexes.guid_path(root.as_ref(), &guid))).await
+}
+
+/// Scenes, prefabs and assets that reference a GUID.
+#[tauri::command]
+async fn unity_guid_usages(
+    indexes: State<'_, Arc<unity_index::UnityIndexes>>,
+    root: String,
+    guid: String,
+) -> CmdResult<Vec<unity_index::AssetUsage>> {
+    let indexes = indexes.inner().clone();
+    blocking(move || Ok(indexes.guid_usages(root.as_ref(), &guid))).await
+}
+
 /// Types and members of C# source, for Code Vision before (and without) a language server.
 /// Methods and their calls, for Unity's performance-critical context.
 #[tauri::command]
@@ -1415,6 +1437,8 @@ pub fn run() {
             unity_project_copies,
             unity_open_editor,
             unity_asset_usages,
+            unity_guid_path,
+            unity_guid_usages,
             unity_project_data,
             unity_warm_index,
             csharp_outline,

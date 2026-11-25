@@ -16,6 +16,7 @@ import { lineChanges, lineMapper } from "../lib/lineChanges";
 import { changedRanges, mergeEdits } from "../lib/formatChanged";
 import { withNested } from "../lib/treeRows";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
+import { guidUsages, registerGuidNavigation, unityGuidAt } from "../lib/unity/guidNav";
 import { completeStatement, mayApply, typingEdit, type BodyEdit, type TypingKey, type TypingOptions } from "../lib/csharpTyping";
 import { braceStyleFor } from "../lib/editorconfig";
 import { zedWheel } from "../lib/wheel";
@@ -195,6 +196,8 @@ function installIdeKeymap() {
   installResultLists();
   // Ctrl+Click / Ctrl+B in languages Roslyn does not cover, and in C# until it is up.
   registerTextNavigation();
+  // Ctrl+Click on a GUID in a Unity scene, prefab or `.meta` opens the asset it names.
+  registerGuidNavigation();
   registerUnityCompletion();
   registerCsharpProviders();
   // Navigating to another file (Ctrl+click, F12…) opens it in Haze's tabs.
@@ -1535,6 +1538,15 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       const model = editor.getModel();
       const pos = editor.getPosition();
       if (!model || !pos) return;
+      // A Unity GUID: the scenes, prefabs and assets referencing the asset it names.
+      const guid = unityGuidAt(model, pos);
+      if (guid) {
+        const anchor = anchorBelow(editor, { lineNumber: pos.lineNumber, column: guid.range.startColumn });
+        void guidUsages(guid.root, guid.guid)
+          .then(({ title, usages }) => showAssetUsages(project, title, usages, anchor))
+          .catch((e) => toast(errorMessage(e), "error"));
+        return;
+      }
       void showLocations(
         project,
         `Usages of ${symbolAt(editor)}`,

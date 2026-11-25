@@ -17,6 +17,9 @@ import { matches, shortcutLabel } from "../lib/keymap";
 import { forgetNavPaths } from "../lib/navHistory";
 import { buildRows, isUnityProject, resolveView, type Row } from "../lib/treeRows";
 import { confirmAction, openMenu, prompt, toast, type MenuItem } from "./Overlays";
+import { showAssetUsages } from "./UsagesPopup";
+import { assetGuid, guidUsages } from "../lib/unity/guidNav";
+import { unityRootFor } from "../lib/unity/scripts";
 
 const ROW_H = 24;
 const OVERSCAN = 12;
@@ -280,10 +283,23 @@ export function FileTree({ project }: { project: Project }) {
   const openInRightSplit = (path: string) => useWorkspace.getState().editors(project.id, (e) => openBeside(e, path, e.mainGroup));
   const openInWindow = (path: string) => useWorkspace.getState().editors(project.id, (e) => openInNewWindow(e, path));
 
+  // Unity references assets by the GUID in their `.meta`: scenes, prefabs and assets naming it.
+  const findAssetUsages = async (root: string, path: string) => {
+    try {
+      const guid = await assetGuid(path);
+      if (!guid) return toast(`${basename(path)} has no .meta: Unity has not imported it.`, "error");
+      const { title, usages } = await guidUsages(root, guid);
+      showAssetUsages(project, title, usages, null);
+    } catch (e) {
+      toast(errorMessage(e), "error");
+    }
+  };
+
   const menuFor = (entry: DirEntry): MenuItem[] => {
     const dir = targetDir(entry);
     const entries = selectedEntries(entry);
     const isRoot = entry.path === project.path;
+    const unityRoot = unity ? unityRootFor(entry.path) : null;
     return [
       { label: "New File…", shortcut: "Alt+Insert", action: () => void newFile(dir) },
       { label: "New Directory…", action: () => void newDir(dir) },
@@ -305,6 +321,9 @@ export function FileTree({ project }: { project: Project }) {
             { label: "Open in New Window", shortcut: shortcutLabel("openInNewWindow"), action: () => openInWindow(entry.path) },
             { separator: true },
           ]),
+      ...(unityRoot && !isRoot
+        ? [{ label: "Find Usages in Scenes and Assets", shortcut: "Alt+F7", action: () => void findAssetUsages(unityRoot, entry.path) }, { separator: true }]
+        : []),
       { label: "Open in Terminal", action: () => void newTerminal(project.id, dir, { title: basename(dir) }) },
       { separator: true },
       { label: "Git: Show History", action: () => showHistory(project, entry.path) },
@@ -380,6 +399,8 @@ export function FileTree({ project }: { project: Project }) {
     else if (e.key === "Enter" && row) onRowDoubleClick(row);
     else if (matches(e.nativeEvent, "delete") && row) void remove(selectedEntries(row.entry));
     else if ((e.key === "F2" || (e.shiftKey && e.key === "F6")) && row) void rename(row.entry);
+    else if (e.altKey && e.key === "F7" && row && unity && row.entry.path !== project.path && unityRootFor(row.entry.path))
+      void findAssetUsages(unityRootFor(row.entry.path)!, row.entry.path);
     else if (e.altKey && e.key === "Insert" && row) {
       const r = (e.target as HTMLElement).getBoundingClientRect();
       openMenu({ clientX: r.left + 40, clientY: r.top + (idx - Math.floor(scrollTop / ROW_H) + 1) * ROW_H }, menuFor(row.entry).slice(0, 2));

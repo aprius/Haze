@@ -352,6 +352,12 @@ export interface AssetUsage {
   fileId: string | null;
 }
 
+/** What a GUID names in a Unity project (unity_index.rs). */
+export interface GuidTarget {
+  path: string;
+  folder: boolean;
+}
+
 export interface AssetUsages {
   scripts: AssetUsage[];
   methods: Record<string, AssetUsage[]>;
@@ -767,6 +773,8 @@ export const api = {
   unitySend: (root: string, message: UnityRequest) => invoke<boolean>("unity_send", { root, message }),
   unityClasses: (root: string) => invoke<Record<string, string[]>>("unity_classes", { root }),
   unityAssetUsages: (root: string, script: string, classes: string[]) => invoke<AssetUsages>("unity_asset_usages", { root, script, classes }),
+  unityGuidPath: (root: string, guid: string) => invoke<GuidTarget | null>("unity_guid_path", { root, guid }),
+  unityGuidUsages: (root: string, guid: string) => invoke<AssetUsage[]>("unity_guid_usages", { root, guid }),
   unityWarmIndex: (root: string) => invoke<void>("unity_warm_index", { root }),
   unityProjectData: (root: string) => invoke<UnityProjectData>("unity_project_data", { root }),
   /** Adds a script no generated `.csproj` lists to its assembly's project; the project changed, or null. */

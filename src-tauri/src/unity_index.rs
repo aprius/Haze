@@ -1,8 +1,9 @@
 //! What Haze knows of a Unity project without Unity running, from the project's
 //! files: the C# classes and their base classes (to tell which derive from
 //! MonoBehaviour, through user and package code), and which scenes, prefabs
-//! and assets use a script or call a method from a UnityEvent; also what the
-//! project's settings and assets name (unity_data.rs).
+//! and assets use a script or call a method from a UnityEvent; which asset
+//! each GUID names (its `.meta`) and where each GUID is referenced; also what
+//! the project's settings and assets name (unity_data.rs).
 //!
 //! Built when the project opens (or on first use) and kept up to date from
 //! file changes: changed files are read again on the next query.
@@ -19,7 +20,7 @@ use serde::Serialize;
 use crate::unity_data::{self, DataFile, ProjectData};
 use crate::watcher::FsChange;
 
-/// Text-serialized Unity files that reference scripts.
+/// Text-serialized Unity files that reference scripts and other assets.
 const ASSET_EXTS: &[&str] = &[
     "unity",
     "prefab",
@@ -27,6 +28,26 @@ const ASSET_EXTS: &[&str] = &[
     "controller",
     "overridecontroller",
     "playable",
+    "mat",
+    "anim",
+    "mask",
+    "spriteatlas",
+    "spriteatlasv2",
+    "physicmaterial",
+    "physicsmaterial2d",
+    "lighting",
+    "terrainlayer",
+    "mixer",
+    "rendertexture",
+    "cubemap",
+    "flare",
+    "fontsettings",
+    "guiskin",
+    "brush",
+    "preset",
+    "signal",
+    "giparams",
+    "shadervariants",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -47,6 +68,13 @@ pub struct AssetUsage {
     /// The local file id of the component, to find it in Unity. Text: ids
     /// pass 2^53, beyond what JavaScript numbers hold exactly.
     pub file_id: Option<String>,
+}
+
+/// What a GUID names: an asset, or a folder (folders have `.meta`s too).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GuidTarget {
+    pub path: String,
+    pub folder: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -76,10 +104,46 @@ struct EventCall {
     file_id: Option<String>,
 }
 
+/// A reference to an asset by its GUID: a material on a renderer, a prefab
+/// instance's source, a sprite… GUIDs as numbers: big scenes hold thousands.
+#[derive(Debug, Clone, PartialEq)]
+struct GuidRef {
+    guid: u128,
+    line: u32,
+    object: Option<Arc<str>>,
+    file_id: Option<Arc<str>>,
+}
+
 #[derive(Debug, Default, PartialEq)]
 struct AssetFile {
     scripts: Vec<ScriptRef>,
     calls: Vec<EventCall>,
+    refs: Vec<GuidRef>,
+}
+
+/// A GUID's 32 hex digits as a number.
+pub fn parse_guid(s: &str) -> Option<u128> {
+    (s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| u128::from_str_radix(s, 16).ok())
+        .flatten()
+}
+
+/// The GUIDs a line references (`{fileID: 2100000, guid: <hex>, type: 2}`).
+fn guids_in(line: &str) -> impl Iterator<Item = u128> + '_ {
+    line.match_indices("guid: ")
+        .filter_map(|(i, m)| line.get(i + m.len()..i + m.len() + 32))
+        .filter_map(parse_guid)
+}
+
+fn is_meta(path: &Path) -> bool {
+    ext_of(path).as_deref() == Some("meta")
+}
+
+/// The GUID in a `.meta` file's text.
+fn meta_guid(text: &str) -> Option<u128> {
+    text.lines()
+        .find_map(|l| l.strip_prefix("guid: "))
+        .and_then(|g| parse_guid(g.trim()))
 }
 
 fn ext_of(path: &Path) -> Option<String> {
@@ -247,6 +311,8 @@ struct Index {
     scripts: Part<Vec<ClassDecl>>,
     assets: Part<AssetFile>,
     data: Part<DataFile>,
+    /// `.meta` files and the GUID each gives its asset.
+    metas: Part<u128>,
 }
 
 impl Index {
@@ -286,6 +352,22 @@ impl Index {
         })
     }
 
+    fn metas(&self, root: &Path) -> MutexGuard<'_, Files<u128>> {
+        let list = || {
+            let mut paths = Vec::new();
+            // The package cache too: scenes use its prefabs, materials and shaders.
+            for dir in source_dirs(root) {
+                walk(&dir, |p| {
+                    if is_meta(p) {
+                        paths.push(p.to_path_buf());
+                    }
+                });
+            }
+            paths
+        };
+        self.metas.current(list, |p| meta_guid(&read_text(p)?))
+    }
+
     fn data(&self, root: &Path) -> MutexGuard<'_, Files<DataFile>> {
         self.data.current(
             || unity_data::list(root, |d, f| walk(d, f)),
@@ -317,6 +399,7 @@ impl UnityIndexes {
             index.scripts.changed_all();
             index.assets.changed_all();
             index.data.changed_all();
+            index.metas.changed_all();
             return;
         }
         let root = Path::new(&change.root);
@@ -331,6 +414,8 @@ impl UnityIndexes {
                 index.scripts.changed(p);
             } else if is_asset(p) {
                 index.assets.changed(p);
+            } else if is_meta(p) {
+                index.metas.changed(p);
             }
             if unity_data::is_data_file(root, p) {
                 index.data.changed(p);
@@ -352,6 +437,55 @@ impl UnityIndexes {
         drop(index.scripts(root));
         drop(index.data(root));
         drop(index.assets(root));
+        drop(index.metas(root));
+    }
+
+    /// The asset (or folder) whose `.meta` gives it `guid`.
+    pub fn guid_path(&self, root: &Path, guid: &str) -> Option<GuidTarget> {
+        let guid = parse_guid(guid)?;
+        let index = self.index(root);
+        let metas = index.metas(root);
+        // The shortest path when two `.meta`s claim it (a copy Unity has not reimported yet).
+        let meta = metas
+            .parsed
+            .iter()
+            .filter(|(_, g)| **g == guid)
+            .map(|(p, _)| p)
+            .min_by_key(|p| (p.as_os_str().len(), p.as_os_str().to_owned()))?;
+        let path = meta.with_extension("");
+        Some(GuidTarget {
+            folder: path.is_dir(),
+            path: path.to_string_lossy().into_owned(),
+        })
+    }
+
+    /// Places in scenes, prefabs and assets that reference `guid`.
+    pub fn guid_usages(&self, root: &Path, guid: &str) -> Vec<AssetUsage> {
+        let Some(guid) = parse_guid(guid) else {
+            return Vec::new();
+        };
+        let index = self.index(root);
+        let assets = index.assets(root);
+        let mut paths: Vec<&PathBuf> = assets.parsed.keys().collect();
+        paths.sort();
+        let mut out = Vec::new();
+        for path in paths {
+            let mut last_line = 0;
+            for r in assets.parsed[path].refs.iter().filter(|r| r.guid == guid) {
+                // One per line, however often the line names it.
+                if r.line == last_line {
+                    continue;
+                }
+                last_line = r.line;
+                out.push(AssetUsage {
+                    path: path.to_string_lossy().into_owned(),
+                    line: r.line,
+                    object: r.object.as_deref().map(str::to_string),
+                    file_id: r.file_id.as_deref().map(str::to_string),
+                });
+            }
+        }
+        out
     }
 
     /// What the project's settings and assets name: tags, layers, scenes, assemblies…
@@ -497,6 +631,8 @@ fn parse_asset(text: &str) -> AssetFile {
     let mut script_owner: Vec<Option<i64>> = Vec::new();
     let mut call_owner: Vec<Option<i64>> = Vec::new();
     let mut call_type: Option<String> = None;
+    let mut doc_id_arc: Option<Arc<str>> = None;
+    let mut ref_owner: Vec<Option<i64>> = Vec::new();
 
     for (i, line) in text.lines().enumerate() {
         let n = i as u32 + 1;
@@ -505,9 +641,21 @@ fn parse_asset(text: &str) -> AssetFile {
                 doc_class = c[1].parse().unwrap_or(0);
                 doc_id = c[2].parse().ok();
                 doc_id_text = Some(c[2].to_string());
+                doc_id_arc = Some(Arc::from(&c[2]));
                 doc_object = if doc_class == 1 { doc_id } else { None };
             }
             continue;
+        }
+        if line.contains("guid: ") {
+            for guid in guids_in(line) {
+                out.refs.push(GuidRef {
+                    guid,
+                    line: n,
+                    object: None,
+                    file_id: doc_id_arc.clone(),
+                });
+                ref_owner.push(doc_object);
+            }
         }
         // Most lines are other properties: told apart by their first bytes, no regex.
         let t = line.trim_start();
@@ -567,6 +715,13 @@ fn parse_asset(text: &str) -> AssetFile {
     }
     for (c, owner) in out.calls.iter_mut().zip(call_owner) {
         c.object = owner.and_then(|id| names.get(&id).cloned());
+    }
+    let shared: HashMap<i64, Arc<str>> = names
+        .into_iter()
+        .map(|(id, n)| (id, Arc::from(n)))
+        .collect();
+    for (r, owner) in out.refs.iter_mut().zip(ref_owner) {
+        r.object = owner.and_then(|id| shared.get(&id).cloned());
     }
     out
 }
@@ -646,6 +801,115 @@ MonoBehaviour:
             (Some("Player"), "Jump", 22)
         );
         assert_eq!(call.object.as_deref(), Some("PlayButton"));
+    }
+
+    #[test]
+    fn parses_guid_refs() {
+        let mat = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let text = format!(
+            "{SCENE}--- !u!23 &500\nMeshRenderer:\n  m_GameObject: {{fileID: 100}}\n  m_Materials:\n  - {{fileID: 2100000, guid: {mat}, type: 2}}\n  - {{fileID: 2100000, guid: {mat}, type: 2}}\n  m_Bad: {{guid: 123}}\n"
+        );
+        let file = parse_asset(&text);
+        let mats: Vec<_> = file
+            .refs
+            .iter()
+            .filter(|r| r.guid == parse_guid(mat).unwrap())
+            .collect();
+        assert_eq!(mats.len(), 2);
+        assert_eq!(
+            (
+                mats[0].line,
+                mats[0].object.as_deref(),
+                mats[0].file_id.as_deref()
+            ),
+            (29, Some("Player"), Some("500"))
+        );
+        // The script references are GUID references too.
+        assert_eq!(file.refs.len(), 4);
+    }
+
+    #[test]
+    fn finds_assets_and_usages_by_guid() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("Assets/Art")).unwrap();
+        std::fs::create_dir_all(root.join("Library/PackageCache/com.x/Art")).unwrap();
+        let mat_guid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let mat = root.join("Assets").join("Art").join("Red.mat");
+        std::fs::write(
+            &mat,
+            "%YAML 1.1\n--- !u!21 &2100000\nMaterial:\n  m_Name: Red\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Assets/Art/Red.mat.meta"),
+            format!("fileFormatVersion: 2\nguid: {mat_guid}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Library/PackageCache/com.x/Art/Pkg.prefab.meta"),
+            "guid: cccccccccccccccccccccccccccccccc\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Assets/Art.meta"),
+            "guid: 99999999999999999999999999999999\nfolderAsset: yes\n",
+        )
+        .unwrap();
+        let scene = root.join("Assets").join("Main.unity");
+        std::fs::write(
+            &scene,
+            format!("%YAML 1.1\n--- !u!23 &5\nMeshRenderer:\n  m_Materials:\n  - {{fileID: 2100000, guid: {mat_guid}, type: 2}}\n"),
+        )
+        .unwrap();
+
+        let indexes = UnityIndexes::default();
+        assert_eq!(
+            indexes.guid_path(root, mat_guid).map(|t| t.path),
+            Some(mat.to_string_lossy().into_owned())
+        );
+        assert!(indexes
+            .guid_path(root, "cccccccccccccccccccccccccccccccc")
+            .is_some_and(|t| t.path.ends_with("Pkg.prefab") && !t.folder));
+        assert_eq!(
+            indexes.guid_path(root, "dddddddddddddddddddddddddddddddd"),
+            None
+        );
+        assert!(indexes
+            .guid_path(root, "99999999999999999999999999999999")
+            .is_some_and(|t| t.folder));
+        let usages = indexes.guid_usages(root, mat_guid);
+        assert_eq!(usages.len(), 1);
+        assert_eq!(
+            (usages[0].path.as_str(), usages[0].line),
+            (&*scene.to_string_lossy(), 5)
+        );
+
+        // The material gets a new GUID (deleted and made again): followed once reported.
+        let new_guid = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        std::fs::write(
+            root.join("Assets/Art/Red.mat.meta"),
+            format!("guid: {new_guid}\n"),
+        )
+        .unwrap();
+        indexes.changed(&FsChange {
+            root: root.to_string_lossy().into_owned(),
+            dirs: vec![],
+            files: vec![root
+                .join("Assets/Art/Red.mat.meta")
+                .to_string_lossy()
+                .into_owned()],
+            created: vec![],
+            removed: vec![],
+            overflow: false,
+            lost: false,
+            git: false,
+        });
+        assert_eq!(indexes.guid_path(root, mat_guid), None);
+        assert_eq!(
+            indexes.guid_path(root, new_guid).map(|t| t.path),
+            Some(mat.to_string_lossy().into_owned())
+        );
     }
 
     /// `HAZE_BENCH_UNITY=/path/to/UnityProject cargo test --release --lib bench_index -- --ignored --nocapture`
