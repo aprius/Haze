@@ -1439,6 +1439,10 @@ function DiskBanner({ path }: { path: string }) {
   );
 }
 
+/** Whether `reveal` is a line still to show in `path`, in `group`. */
+const revealPending = (reveal: { group: string; path: string } | null, group: string, path: string | null) =>
+  !!reveal && reveal.group === group && reveal.path === path;
+
 /** One editor group: its tab bar and an editor (or a diff, image, preview…) for its active tab. */
 function EditorGroupView({ project, group }: { project: Project; group: L.EditorGroup }) {
   const isActive = useWorkspace((s) => s.ui[project.id]?.activeGroup === group.id);
@@ -1492,12 +1496,21 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
         selected: model ? model.getValueLengthInRange(sel) : 0,
       });
     });
-    // Navigate Back / Forward: the caret's moves in the editor the user works in.
+    // Navigate Back / Forward: the caret's moves in the editor the user types in,
+    // not each match the Find widget jumps to while its query is typed: the
+    // match the caret is left on is noted when the text has focus again.
     // A tab shown (a model set, its view state restored) is noted by the effect below.
+    const note = (pos: monaco.IPosition | null) => {
+      const path = shownPath.current;
+      if (path && pos) notePlace(project.id, { path, line: pos.lineNumber, column: pos.column, group: group.id });
+    };
     editor.onDidChangeCursorPosition((e) => {
       if (e.source === "modelChange" || e.source === "restoreState" || e.reason === monaco.editor.CursorChangeReason.ContentFlush) return;
-      const path = shownPath.current;
-      if (path && editor.hasWidgetFocus()) notePlace(project.id, { path, line: e.position.lineNumber, column: e.position.column, group: group.id });
+      if (editor.hasTextFocus()) note(e.position);
+    });
+    // Not when focus comes with a tab shown for a line to reveal: the line is the place, not the caret restored.
+    editor.onDidFocusEditorText(() => {
+      if (!revealPending(useWorkspace.getState().reveal, group.id, shownPath.current)) note(editor.getPosition());
     });
     editor.onDidChangeModelContent(() => {
       // Editing a preview tab keeps it; an agent changing the file on disk does not.
@@ -1750,8 +1763,7 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       if (model && vs) editor.restoreViewState(vs);
       // A tab shown in the active group is a place, unless a line in it is about to be revealed (that is the place).
       const pos = editor.getPosition();
-      const r = useWorkspace.getState().reveal;
-      const revealing = r?.group === group.id && r.path === active;
+      const revealing = revealPending(useWorkspace.getState().reveal, group.id, active);
       if (model && pos && !revealing && useWorkspace.getState().ui[project.id]?.activeGroup === group.id) {
         notePlace(project.id, { path: active!, line: pos.lineNumber, column: pos.column, group: group.id });
       }

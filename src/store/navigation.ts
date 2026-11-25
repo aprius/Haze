@@ -27,7 +27,8 @@ export function navigate(projectId: string, delta: -1 | 1): boolean {
   navHistories.set(projectId, step.history);
   const { path, line, column, group } = step.place;
   going = { projectId, place: step.place, until: Date.now() + 1500 };
-  // A group closed since opens it in the active one.
-  ws.openFile(projectId, path, { line, column, group });
+  // A group closed since opens it in the active one. A file no longer open
+  // comes back as the preview tab, so going back does not pile up tabs.
+  ws.openFile(projectId, path, { line, column, group, preview: true });
   return true;
 }

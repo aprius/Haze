@@ -116,7 +116,8 @@ function selectedTreeDir(project: Project): string | null {
   return st ? sel : null;
 }
 
-const inTerminal = (e: KeyboardEvent) => e.target instanceof Element && e.target.closest(".xterm") != null;
+// Not `instanceof Element`: a detached window's elements are another window's Elements.
+const inTerminal = (e: KeyboardEvent) => (e.target as Partial<Element> | null)?.closest?.(".xterm") != null;
 
 /** Each window with app-wide shortcuts, and the project it shows: where the mouse's back and forward buttons navigate. */
 const navWindows = new Map<Window, () => Project | null>();
