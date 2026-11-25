@@ -139,11 +139,51 @@ fn is_meta(path: &Path) -> bool {
     ext_of(path).as_deref() == Some("meta")
 }
 
-/// The GUID in a `.meta` file's text.
-fn meta_guid(text: &str) -> Option<u128> {
-    text.lines()
-        .find_map(|l| l.strip_prefix("guid: "))
-        .and_then(|g| parse_guid(g.trim()))
+/// A `.meta` file: the GUID it gives its asset, and the assets its import
+/// settings reference (a script's default references, a shader's default
+/// textures, a model's remapped materials).
+#[derive(Debug, Default, PartialEq)]
+struct MetaFile {
+    guid: Option<u128>,
+    refs: Vec<GuidRef>,
+}
+
+fn parse_meta(text: &str) -> MetaFile {
+    let mut out = MetaFile::default();
+    for (i, line) in text.lines().enumerate() {
+        if let Some(g) = line.strip_prefix("guid: ") {
+            out.guid = out.guid.or(parse_guid(g.trim()));
+        } else if line.contains("guid: ") {
+            out.refs.extend(guids_in(line).map(|guid| GuidRef {
+                guid,
+                line: i as u32 + 1,
+                object: None,
+                file_id: None,
+            }));
+        }
+    }
+    out
+}
+
+/// The assemblies an assembly definition or reference names by GUID.
+fn parse_assembly_refs(text: &str) -> AssetFile {
+    let mut out = AssetFile::default();
+    for (i, line) in text.lines().enumerate() {
+        for (at, m) in line.match_indices("GUID:") {
+            if let Some(guid) = line
+                .get(at + m.len()..at + m.len() + 32)
+                .and_then(parse_guid)
+            {
+                out.refs.push(GuidRef {
+                    guid,
+                    line: i as u32 + 1,
+                    object: None,
+                    file_id: None,
+                });
+            }
+        }
+    }
+    out
 }
 
 fn ext_of(path: &Path) -> Option<String> {
@@ -152,8 +192,12 @@ fn ext_of(path: &Path) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+/// Assembly definitions and references: JSON, referencing assemblies by `"GUID:…"`.
+const ASSEMBLY_EXTS: &[&str] = &["asmdef", "asmref"];
+
 fn is_asset(path: &Path) -> bool {
-    ext_of(path).is_some_and(|e| ASSET_EXTS.contains(&e.as_str()))
+    ext_of(path)
+        .is_some_and(|e| ASSET_EXTS.contains(&e.as_str()) || ASSEMBLY_EXTS.contains(&e.as_str()))
 }
 
 fn is_script(path: &Path) -> bool {
@@ -311,8 +355,8 @@ struct Index {
     scripts: Part<Vec<ClassDecl>>,
     assets: Part<AssetFile>,
     data: Part<DataFile>,
-    /// `.meta` files and the GUID each gives its asset.
-    metas: Part<u128>,
+    /// `.meta` files, the GUID each gives its asset and the assets it references.
+    metas: Part<MetaFile>,
 }
 
 impl Index {
@@ -347,12 +391,15 @@ impl Index {
         };
         self.assets.current(list, |p| {
             let text = read_text(p)?;
+            if ext_of(p).is_some_and(|e| ASSEMBLY_EXTS.contains(&e.as_str())) {
+                return Some(parse_assembly_refs(&text));
+            }
             // A binary-serialized asset (Force Binary) holds nothing readable.
             text.starts_with("%YAML").then(|| parse_asset(&text))
         })
     }
 
-    fn metas(&self, root: &Path) -> MutexGuard<'_, Files<u128>> {
+    fn metas(&self, root: &Path) -> MutexGuard<'_, Files<MetaFile>> {
         let list = || {
             let mut paths = Vec::new();
             // The package cache too: scenes use its prefabs, materials and shaders.
@@ -365,7 +412,8 @@ impl Index {
             }
             paths
         };
-        self.metas.current(list, |p| meta_guid(&read_text(p)?))
+        self.metas
+            .current(list, |p| Some(parse_meta(&read_text(p)?)))
     }
 
     fn data(&self, root: &Path) -> MutexGuard<'_, Files<DataFile>> {
@@ -449,8 +497,9 @@ impl UnityIndexes {
         let meta = metas
             .parsed
             .iter()
-            .filter(|(_, g)| **g == guid)
+            .filter(|(p, m)| m.guid == Some(guid) && p.exists())
             .map(|(p, _)| p)
+            // Changes in the package cache are not watched: a package updated since may have moved it.
             .min_by_key(|p| (p.as_os_str().len(), p.as_os_str().to_owned()))?;
         let path = meta.with_extension("");
         Some(GuidTarget {
@@ -466,12 +515,24 @@ impl UnityIndexes {
         };
         let index = self.index(root);
         let assets = index.assets(root);
-        let mut paths: Vec<&PathBuf> = assets.parsed.keys().collect();
-        paths.sort();
+        let metas = index.metas(root);
+        let mut files: Vec<(&PathBuf, &[GuidRef])> = assets
+            .parsed
+            .iter()
+            .map(|(p, f)| (p, f.refs.as_slice()))
+            .chain(
+                metas
+                    .parsed
+                    .iter()
+                    .filter(|(_, m)| !m.refs.is_empty())
+                    .map(|(p, m)| (p, m.refs.as_slice())),
+            )
+            .collect();
+        files.sort_by_key(|(p, _)| *p);
         let mut out = Vec::new();
-        for path in paths {
+        for (path, refs) in files {
             let mut last_line = 0;
-            for r in assets.parsed[path].refs.iter().filter(|r| r.guid == guid) {
+            for r in refs.iter().filter(|r| r.guid == guid) {
                 // One per line, however often the line names it.
                 if r.line == last_line {
                     continue;
@@ -863,7 +924,37 @@ MonoBehaviour:
         )
         .unwrap();
 
+        // A script's default reference, in its `.meta`; an assembly referenced by GUID.
+        std::fs::write(
+            root.join("Assets/Art/Paint.cs.meta"),
+            format!("fileFormatVersion: 2\nguid: 11111111111111111111111111111111\nMonoImporter:\n  defaultReferences:\n  - red: {{fileID: 2100000, guid: {mat_guid}, type: 2}}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Assets/Game.asmdef"),
+            "{\n  \"name\": \"Game\"\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Assets/Game.asmdef.meta"),
+            "guid: 22222222222222222222222222222222\n",
+        )
+        .unwrap();
+        let tests = root.join("Assets").join("Tests.asmdef");
+        std::fs::write(
+            &tests,
+            "{\n  \"name\": \"Tests\",\n  \"references\": [\"GUID:22222222222222222222222222222222\"]\n}\n",
+        )
+        .unwrap();
+
         let indexes = UnityIndexes::default();
+        let asm = indexes.guid_usages(root, "22222222222222222222222222222222");
+        assert_eq!(
+            asm.iter()
+                .map(|u| (u.path.as_str(), u.line))
+                .collect::<Vec<_>>(),
+            vec![(&*tests.to_string_lossy(), 3)]
+        );
         assert_eq!(
             indexes.guid_path(root, mat_guid).map(|t| t.path),
             Some(mat.to_string_lossy().into_owned())
@@ -879,10 +970,16 @@ MonoBehaviour:
             .guid_path(root, "99999999999999999999999999999999")
             .is_some_and(|t| t.folder));
         let usages = indexes.guid_usages(root, mat_guid);
-        assert_eq!(usages.len(), 1);
+        let meta = root.join("Assets").join("Art").join("Paint.cs.meta");
         assert_eq!(
-            (usages[0].path.as_str(), usages[0].line),
-            (&*scene.to_string_lossy(), 5)
+            usages
+                .iter()
+                .map(|u| (u.path.as_str(), u.line))
+                .collect::<Vec<_>>(),
+            vec![
+                (&*meta.to_string_lossy(), 5),
+                (&*scene.to_string_lossy(), 5)
+            ]
         );
 
         // The material gets a new GUID (deleted and made again): followed once reported.
@@ -938,6 +1035,58 @@ MonoBehaviour:
         println!(
             "{n_scripts} scripts ({} classes) in {scripts:?}, {n_assets} assets in {assets:?}, query in {:?}",
             classes.len(),
+            started.elapsed()
+        );
+        // GUIDs: every referenced GUID resolved, the most used one's usages listed.
+        let started = std::time::Instant::now();
+        let _ = indexes.guid_path(root, "00000000000000000000000000000000");
+        let metas_took = started.elapsed();
+        let n_metas = index.metas.files.lock().parsed.len();
+        let mut counts: HashMap<u128, usize> = HashMap::new();
+        for f in index.assets.files.lock().parsed.values() {
+            for r in &f.refs {
+                *counts.entry(r.guid).or_default() += 1;
+            }
+        }
+        let known: HashSet<u128> = index
+            .metas
+            .files
+            .lock()
+            .parsed
+            .values()
+            .filter_map(|m| m.guid)
+            .collect();
+        let resolved = counts.keys().filter(|g| known.contains(g)).count();
+        let top = counts
+            .iter()
+            .max_by_key(|(_, n)| **n)
+            .map(|(g, _)| format!("{g:032x}"));
+        let meta_refs: usize = index
+            .metas
+            .files
+            .lock()
+            .parsed
+            .values()
+            .map(|m| m.refs.len())
+            .sum();
+        let asm_refs: usize = index
+            .assets
+            .files
+            .lock()
+            .parsed
+            .iter()
+            .filter(|(p, _)| ext_of(p).is_some_and(|e| ASSEMBLY_EXTS.contains(&e.as_str())))
+            .map(|(_, f)| f.refs.len())
+            .sum();
+        println!("{meta_refs} references in .meta files, {asm_refs} in assembly definitions");
+        let started = std::time::Instant::now();
+        let top_usages = top
+            .as_ref()
+            .map_or(0, |g| indexes.guid_usages(root, g).len());
+        println!(
+            "{n_metas} metas in {metas_took:?}; {} GUIDs referenced, {resolved} resolve; top {top:?} -> {:?} in {:?}, {top_usages} usages",
+            counts.len(),
+            top.as_ref().and_then(|g| indexes.guid_path(root, g)).map(|t| t.path),
             started.elapsed()
         );
     }
