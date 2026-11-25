@@ -36,7 +36,7 @@ mod unity_worktree;
 mod updates;
 mod watcher;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -109,6 +109,12 @@ async fn create_dir(dir: String, name: String) -> CmdResult<String> {
 #[tauri::command]
 async fn rename_path(path: String, new_name: String) -> CmdResult<String> {
     blocking(move || fs_ops::rename(path.as_ref(), &new_name)).await
+}
+
+/// Which of `paths` are files, for Navigate Back / Forward to skip the places of files deleted since.
+#[tauri::command]
+async fn files_exist(paths: Vec<String>) -> CmdResult<Vec<bool>> {
+    blocking(move || Ok(paths.iter().map(|p| Path::new(p).is_file()).collect())).await
 }
 
 #[tauri::command]
@@ -1335,6 +1341,7 @@ pub fn run() {
             create_dir,
             rename_path,
             trash_paths,
+            files_exist,
             copy_paths,
             move_paths,
             resolve_paths,

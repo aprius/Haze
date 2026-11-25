@@ -1,6 +1,7 @@
 // Navigate Back / Forward (Ctrl+Alt+Left/Right, Cmd+[ / Cmd+], the mouse's
 // back and forward buttons) over the places of lib/navHistory.
-import { emptyHistory, navHistories, recordPlace, stepPlace, type Place } from "../lib/navHistory";
+import { api } from "../lib/ipc";
+import { dropPlaces, emptyHistory, navHistories, recordPlace, stepPlace, type Place } from "../lib/navHistory";
 import { useWorkspace } from "./workspace";
 
 /** The place Back or Forward is opening: other caret moves until it is shown are not places. */
@@ -18,17 +19,43 @@ export function notePlace(projectId: string, place: Place): void {
   navHistories.set(projectId, recordPlace(navHistories.get(projectId) ?? emptyHistory(), place));
 }
 
-/** Goes one place back (-1) or forward (1) in `projectId`. Returns whether there was one. */
-export function navigate(projectId: string, delta: -1 | 1): boolean {
-  const ws = useWorkspace.getState();
-  if (!ws.ui[projectId]) return false;
-  const step = stepPlace(navHistories.get(projectId) ?? emptyHistory(), delta);
-  if (!step) return false;
-  navHistories.set(projectId, step.history);
+// One at a time, so Back pressed twice quickly goes two places back.
+let queue: Promise<unknown> = Promise.resolve();
+
+/** Goes one place back (-1) or forward (1) in `projectId`. Resolves to whether there was one. */
+export function navigate(projectId: string, delta: -1 | 1): Promise<boolean> {
+  const run = queue.then(() => go(projectId, delta));
+  queue = run.catch(() => {});
+  return run;
+}
+
+async function go(projectId: string, delta: -1 | 1): Promise<boolean> {
+  if (!useWorkspace.getState().ui[projectId]) return false;
+  const missing = await missingFiles(projectId);
+  // Read again after the wait: the caret may have moved meanwhile. Places added
+  // since were not checked, and count as there.
+  const history = navHistories.get(projectId) ?? emptyHistory();
+  const step = stepPlace(history, delta, (p) => !missing.has(p.path));
+  // Files deleted since (by an agent, a checkout…) leave the history. Not on
+  // their "removed" events: a checkout removes files and creates them again.
+  if (!step) {
+    if (missing.size) navHistories.set(projectId, dropPlaces(history, (p) => missing.has(p)));
+    return false;
+  }
+  navHistories.set(projectId, missing.size ? dropPlaces(step.history, (p) => missing.has(p)) : step.history);
   const { path, line, column, group } = step.place;
   going = { projectId, place: step.place, until: Date.now() + 1500 };
   // A group closed since opens it in the active one. A file no longer open
   // comes back as the preview tab, so going back does not pile up tabs.
-  ws.openFile(projectId, path, { line, column, group, preview: true });
+  useWorkspace.getState().openFile(projectId, path, { line, column, group, preview: true });
   return true;
+}
+
+/** The files of the history's places that are gone. Decompiled and generated code (`csharp:`) is no file. */
+async function missingFiles(projectId: string): Promise<Set<string>> {
+  const paths = [...new Set((navHistories.get(projectId)?.places ?? []).map((p) => p.path))].filter((p) => !p.startsWith("csharp:"));
+  if (!paths.length) return new Set();
+  // Unknown (outside Tauri, an IPC error): as if all were there.
+  const exist = await api.filesExist(paths).catch(() => paths.map(() => true));
+  return new Set(paths.filter((_, i) => !exist[i]));
 }

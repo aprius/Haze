@@ -670,6 +670,7 @@ export const api = {
   createDir: (dir: string, name: string) => invoke<string>("create_dir", { dir, name }),
   renamePath: (path: string, newName: string) => invoke<string>("rename_path", { path, newName }),
   trashPaths: (paths: string[]) => invoke<void>("trash_paths", { paths }),
+  filesExist: (paths: string[]) => invoke<boolean[]>("files_exist", { paths }),
   copyPaths: (sources: string[], destDir: string) => invoke<string[]>("copy_paths", { sources, destDir }),
   movePaths: (sources: string[], destDir: string) => invoke<string[]>("move_paths", { sources, destDir }),
   /** Relative candidates are tried in `pid`'s current directory first, then in `cwds`. */
