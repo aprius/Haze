@@ -3,7 +3,7 @@
 // thing; anything unclear is left alone.
 //   `{`  at the `=>` of an expression-bodied member → block body
 //   `{`  in a plain string                          → interpolated string
-//   `{`  before the statement of an `if`/`else`     → wraps it in a block
+//   `{`  before the statement of `if`/`else`/`for`… → wraps it in a block
 //   Enter at the braces of a one-line method        → body on its own lines
 //   Enter in a `///` comment                        → continues it
 //   Enter in a string                               → `"a " +` / `"b"`
@@ -251,7 +251,7 @@ function indentAt(t: string, i: number) {
  * The edit that turns the expression-bodied member around `offset` into a
  * block body, when `{` is typed there: just before or just after its `=>`.
  */
-export function expandExpressionBody(t: string, offset: number, indentUnit: string, eol = "\n"): BodyEdit | null {
+export function expandExpressionBody(t: string, offset: number, indentUnit: string, eol = "\n", style = DEFAULT_BRACE_STYLE): BodyEdit | null {
   let arrow: number;
   const before = skipWsBack(t, offset);
   const after = skipWsFwd(t, offset);
@@ -288,16 +288,22 @@ export function expandExpressionBody(t: string, offset: number, indentUnit: stri
   let caretInText: number;
   if (member.kind === "property") {
     const stmt = body(isThrow ? "" : "return ", inner);
-    const head = `${eol}${indent}{${eol}${inner}get { `;
+    const kind = t.slice(member.headerStart, member.headerStart + 4) === "this" ? "indexers" : "properties";
+    const head = `${openBrace(style, kind, indent, eol)}${eol}${inner}get { `;
     text = `${head}${stmt} }${eol}${indent}}`;
     caretInText = head.length + stmt.length;
   } else {
     const stmt = body(member.kind === "return" && !isThrow ? "return " : "", inner);
-    const head = `${eol}${indent}{${eol}${inner}`;
+    const head = `${openBrace(style, isAccessor(t, member.headerStart) ? "accessors" : "methods", indent, eol)}${eol}${inner}`;
     text = `${head}${stmt}${eol}${indent}}`;
     caretInText = head.length + stmt.length;
   }
   return { start: headerEnd, end: semi + 1, text, caret: headerEnd + caretInText };
+}
+
+/** Whether the member header at `i` is an accessor (`get`, `set`, ...). */
+function isAccessor(t: string, i: number) {
+  return /^(get|set|init|add|remove)\b/.test(t.slice(i, i + 6));
 }
 
 /** Statements of a block body, split on top-level `;`, or the whole body when that fails. */
@@ -317,7 +323,7 @@ function statements(t: string, start: number, end: number) {
  * The edit that lays out a one-line method body `{ ... }` on its own lines,
  * when Enter is pressed just before or after its `{`, or just before its `}`.
  */
-export function expandInlineMethod(t: string, offset: number, indentUnit: string, eol = "\n"): BodyEdit | null {
+export function expandInlineMethod(t: string, offset: number, indentUnit: string, eol = "\n", style = DEFAULT_BRACE_STYLE): BodyEdit | null {
   const lineStart = t.lastIndexOf("\n", offset - 1) + 1;
   const nl = t.indexOf("\n", offset);
   const lineEnd = nl < 0 ? t.length : nl;
@@ -346,7 +352,7 @@ export function expandInlineMethod(t: string, offset: number, indentUnit: string
   const indent = indentAt(t, member.headerStart);
   const inner = indent + indentUnit;
   const stmts = statements(t, open + 1, close).filter(Boolean);
-  const head = `${eol}${indent}{${eol}${inner}`;
+  const head = `${openBrace(style, "methods", indent, eol)}${eol}${inner}`;
   const body = stmts.join(eol + inner);
   const text = `${head}${body}${eol}${indent}}`;
   const caret = headerEnd + head.length + (atOpen && !atClose ? 0 : body.length);
@@ -663,39 +669,246 @@ export function splitStringEdit(t: string, offset: number, indentUnit: string, e
 }
 
 // ---------------------------------------------------------------------------
+// Brace layout, from the .editorconfig
+
+/** Kinds of `csharp_new_line_before_open_brace`. */
+export type BraceKind = "control_blocks" | "methods" | "local_functions" | "properties" | "indexers" | "accessors" | "types";
+
+export interface BraceStyle {
+  /** `csharp_new_line_before_open_brace`: the kinds whose `{` goes on its own line. */
+  openBraceOnNewLine: "all" | "none" | readonly string[];
+  /** `csharp_new_line_before_else`: `}` and `else` on their own lines. */
+  elseOnNewLine: boolean;
+  /** `csharp_indent_case_contents_when_block`: a case's block indented under its label. */
+  indentCaseBlock: boolean;
+}
+
+/** The .NET defaults: Allman braces. */
+export const DEFAULT_BRACE_STYLE: BraceStyle = { openBraceOnNewLine: "all", elseOnNewLine: true, indentCaseBlock: true };
+
+function braceOnNewLine(style: BraceStyle, kind: BraceKind) {
+  const v = style.openBraceOnNewLine;
+  return v === "all" || (v !== "none" && v.includes(kind));
+}
+
+/** A header's `{`: on a new line at `indent`, or after a space. */
+function openBrace(style: BraceStyle, kind: BraceKind, indent: string, eol: string) {
+  return braceOnNewLine(style, kind) ? `${eol}${indent}{` : " {";
+}
+
+// ---------------------------------------------------------------------------
 // `{` before an embedded statement
 
-const BRACE_HEADER = /(?:^|[\s}])(?:(?:else\s+)?if|while|for|foreach|using|lock|fixed)\s*$/;
-const BRACE_STARTS_BLOCK = /^(if|else|while|for|foreach|using|lock|fixed|switch|try|do|return\s*;)\b/;
+/** Skips spaces and comments from `i`. */
+function skipTrivia(t: string, i: number) {
+  for (;;) {
+    i = skipWsFwd(t, i);
+    if (t.startsWith("//", i)) {
+      const nl = t.indexOf("\n", i);
+      i = nl < 0 ? t.length : nl;
+    } else if (t.startsWith("/*", i)) {
+      const e = t.indexOf("*/", i + 2);
+      if (e < 0) return t.length;
+      i = e + 2;
+    } else return i;
+  }
+}
+
+const wordAt = (t: string, i: number) => /^@?[A-Za-z_]\w*/.exec(t.slice(i, i + 32))?.[0] ?? "";
+
+/** After the `(...)` that follows `i`, or -1. */
+function parenEnd(t: string, i: number) {
+  const p = skipTrivia(t, i);
+  if (t[p] !== "(") return -1;
+  const c = scanCode(t, p + 1, ")", "");
+  return c < 0 ? -1 : c + 1;
+}
+
+/** After the `{...}` that follows `i`, or -1. */
+function blockEnd(t: string, i: number) {
+  const p = skipTrivia(t, i);
+  if (t[p] !== "{") return -1;
+  const c = scanCode(t, p + 1, "}", "");
+  return c < 0 ? -1 : c + 1;
+}
+
+const PAREN_STATEMENT = new Set(["while", "for", "foreach", "using", "lock", "fixed"]);
+
+/** The end of the statement starting at `i`, nested ones and an `if`'s `else` included, or -1. */
+function statementEnd(t: string, i: number): number {
+  if (t[i] === "{") return blockEnd(t, i);
+  if (t[i] === "}" || t[i] === ";") return -1;
+  const w = wordAt(t, i);
+  const after = i + w.length;
+  let e: number;
+  switch (w) {
+    case "if": {
+      e = parenEnd(t, after);
+      if (e < 0) return -1;
+      e = statementEnd(t, skipTrivia(t, e));
+      if (e < 0) return -1;
+      const n = skipTrivia(t, e);
+      return wordAt(t, n) === "else" ? statementEnd(t, skipTrivia(t, n + 4)) : e;
+    }
+    case "else":
+    case "case":
+    case "default":
+      if (w !== "default" || t[skipTrivia(t, after)] === ":") return -1;
+      break;
+    case "do": {
+      e = statementEnd(t, skipTrivia(t, after));
+      if (e < 0) return -1;
+      const n = skipTrivia(t, e);
+      if (wordAt(t, n) !== "while") return -1;
+      e = parenEnd(t, n + 5);
+      if (e < 0) return -1;
+      const semi = skipTrivia(t, e);
+      return t[semi] === ";" ? semi + 1 : -1;
+    }
+    case "switch":
+      e = parenEnd(t, after);
+      return e < 0 ? -1 : blockEnd(t, e);
+    case "try": {
+      e = blockEnd(t, after);
+      for (let n = skipTrivia(t, e); e >= 0; n = skipTrivia(t, e)) {
+        const k = wordAt(t, n);
+        if (k === "finally") return blockEnd(t, n + 7);
+        if (k !== "catch") break;
+        let c = n + 5;
+        if (t[skipTrivia(t, c)] === "(") c = parenEnd(t, c);
+        if (c >= 0 && wordAt(t, skipTrivia(t, c)) === "when") c = parenEnd(t, skipTrivia(t, c) + 4);
+        e = c < 0 ? -1 : blockEnd(t, c);
+      }
+      return e;
+    }
+    case "checked":
+    case "unchecked":
+    case "unsafe":
+      if (t[skipTrivia(t, after)] === "{") return blockEnd(t, after);
+      break;
+    default:
+      if (PAREN_STATEMENT.has(w)) {
+        e = parenEnd(t, after);
+        // `using var x = ...;` declares, it has no statement.
+        if (e >= 0) return statementEnd(t, skipTrivia(t, e));
+        if (w !== "using") return -1;
+      }
+  }
+  const semi = scanCode(t, i, ";", "");
+  return semi < 0 ? -1 : semi + 1;
+}
+
+/** A switch section's statements from `i`: up to the next label or the switch's `}`. */
+function sectionEnd(t: string, i: number) {
+  let e = -1;
+  for (let n = i; n < t.length && t[n] !== "}"; n = skipTrivia(t, e)) {
+    const w = wordAt(t, n);
+    if (w === "case" || (w === "default" && t[skipTrivia(t, n + 7)] === ":")) break;
+    const s = statementEnd(t, n);
+    if (s < 0) return -1;
+    e = s;
+  }
+  return e;
+}
 
 /**
- * `{` typed between an `if (...)` or `else` and the one-line statement after
- * it wraps that statement in a block, as in Rider:
+ * The `(` matching the `)` just before `end`, across `;` (a `for` header) and
+ * lines but not braces, skipping strings and comments; -1 when unmatched.
+ */
+function parenBack(t: string, end: number) {
+  let depth = 0;
+  for (let i = end - 1; i >= 0; i--) {
+    const c = t[i];
+    if (c !== "(" && c !== ")" && c !== "{" && c !== "}") continue;
+    const lit = literalAt(t, i);
+    if (lit) {
+      i = lit.start;
+      continue;
+    }
+    if (inCommentOrString(t, i)) continue;
+    if (c === ")") depth++;
+    else if (c === "(" && --depth === 0) return i;
+    else if (c === "{" || c === "}") return -1;
+  }
+  return -1;
+}
+
+const PAREN_HEADER = /(?:^|[\s};{])(?:(?:else\s+)?if|while|for|foreach|using|lock|fixed)\s*$/;
+
+type Header = { kind: "if" | "statement" | "do" | "case"; indent: string };
+
+/** The statement header ending at `end`: `if (...)`, `else`, `do`, `case x:`, ... */
+function headerBefore(t: string, end: number): Header | null {
+  const c = t[end - 1];
+  if (c === ")") {
+    const open = parenBack(t, end);
+    if (open < 0 || inCommentOrString(t, open)) return null;
+    const { start } = lineBounds(t, open);
+    const before = t.slice(start, open);
+    if (!PAREN_HEADER.test(before)) return null;
+    // Not the `while (...)` that ends a `do`.
+    if (/}\s*while\s*$/.test(before)) return null;
+    return { kind: /\bif\s*$/.test(before) ? "if" : "statement", indent: indentAt(t, open) };
+  }
+  const { start } = lineBounds(t, end - 1);
+  const line = t.slice(start, end);
+  if (c === ":") return /^\s*(case\b.*[^:]|default\s*):$/.test(line) ? { kind: "case", indent: indentAt(t, start) } : null;
+  const w = t.slice(wordBack(t, end), end);
+  if ((w === "else" || w === "do") && /(?:^|[\s};{])\w+$/.test(line)) return { kind: w === "do" ? "do" : "statement", indent: indentAt(t, start) };
+  return null;
+}
+
+/**
+ * `{` typed between a statement header (`if (...)`, `else`, `for (...)`,
+ * `do`, `case x:` ...) and the statement after it wraps that statement in a
+ * block, as in Rider, even when it is on the next line or spans several:
  * `if (x) |Foo();` → `if (x)` / `{` / `    Foo();|` / `}`.
  */
-export function braceStatementEdit(t: string, offset: number, indentUnit: string, eol = "\n"): BodyEdit | null {
-  const { start, end } = lineBounds(t, offset);
+export function braceStatementEdit(t: string, offset: number, indentUnit: string, eol = "\n", style = DEFAULT_BRACE_STYLE): BodyEdit | null {
+  const line = lineBounds(t, offset);
   const headerEnd = skipWsBack(t, offset);
-  if (headerEnd <= start || inCommentOrString(t, offset)) return null;
-  if (t[headerEnd - 1] === ")") {
-    const open = matchBack(t, headerEnd, "(", ")");
-    if (open < start || !BRACE_HEADER.test(t.slice(start, open))) return null;
-  } else if (!(wordBack(t, headerEnd) === headerEnd - 4 && /(?:^|[\s}])else$/.test(t.slice(start, headerEnd)))) return null;
+  if (headerEnd <= line.start || inCommentOrString(t, offset)) return null;
+  const header = headerBefore(t, headerEnd);
+  if (!header) return null;
+  const { indent } = header;
 
-  const stmtStart = skipWsFwd(t, offset);
-  if (stmtStart >= end || t[stmtStart] === "{" || BRACE_STARTS_BLOCK.test(t.slice(stmtStart, end))) return null;
-  const semi = scanCode(t, stmtStart, ";", "");
-  if (semi < 0 || semi >= end) return null;
-  // Only a comment may follow the statement on its line.
-  const rest = t.slice(semi + 1, end).trim();
-  if (rest && !rest.startsWith("//") && !rest.startsWith("/*")) return null;
+  // The statement: on the caret's line, or, when nothing follows the caret, on the next line, indented under the header.
+  let stmtStart = skipWsFwd(t, offset);
+  let oldBase: string;
+  if (!t.slice(offset, line.end).trim()) {
+    if (stmtStart >= t.length) return null;
+    const stmtIndent = indentAt(t, stmtStart);
+    if (lineBounds(t, stmtStart).start !== line.end + (t[line.end] === "\r" ? 2 : 1) || stmtIndent.length <= indent.length || !stmtIndent.startsWith(indent)) return null;
+    oldBase = stmtIndent;
+  } else {
+    stmtStart = skipWsFwd(t, offset);
+    oldBase = header.kind === "case" ? indent + indentUnit : indent;
+  }
+  if (t.startsWith("//", stmtStart) || t.startsWith("/*", stmtStart)) return null;
+  const stmtEnd = header.kind === "case" ? sectionEnd(t, stmtStart) : statementEnd(t, stmtStart);
+  if (stmtEnd < 0 || t[stmtStart] === "{") return null;
 
-  const indent = /^[ \t]*/.exec(t.slice(start, end))![0];
-  const inner = indent + indentUnit;
-  const stmt = t.slice(stmtStart, semi + 1);
-  const head = `${eol}${indent}{${eol}${inner}`;
-  const tail = rest ? ` ${rest}` : "";
-  return { start: headerEnd, end, text: `${head}${stmt}${tail}${eol}${indent}}`, caret: headerEnd + head.length + stmt.length };
+  // What follows the statement on its line: a comment stays with it, an `else` or a `do`'s `while` goes after the block.
+  const lastLine = lineBounds(t, stmtEnd);
+  const rest = t.slice(stmtEnd, lastLine.end).trim();
+  let comment = "";
+  let follow = "";
+  if (rest.startsWith("//") || (rest.startsWith("/*") && rest.endsWith("*/") && rest.indexOf("*/") === rest.length - 2)) comment = ` ${rest}`;
+  else if (rest && header.kind === "if" && wordAt(rest, 0) === "else") follow = style.elseOnNewLine ? `${eol}${indent}${rest}` : ` ${rest}`;
+  else if (rest && header.kind === "do" && wordAt(rest, 0) === "while") follow = ` ${rest}`;
+  else if (rest) return null;
+
+  const newLine = braceOnNewLine(style, "control_blocks");
+  const braceIndent = header.kind === "case" && style.indentCaseBlock && newLine ? indent + indentUnit : indent;
+  const inner = braceIndent + indentUnit;
+  const body = t
+    .slice(stmtStart, stmtEnd)
+    .split("\n")
+    .map((l, i) => (i === 0 ? l : !l.trim() ? l.replace(/[ \t]+/, "") : l.startsWith(oldBase) ? inner + l.slice(oldBase.length) : l))
+    .join("\n");
+  const head = `${newLine ? `${eol}${braceIndent}{` : " {"}${eol}${inner}`;
+  const text = `${head}${body}${comment}${eol}${braceIndent}}${follow}`;
+  return { start: headerEnd, end: lastLine.end, text, caret: headerEnd + head.length + body.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -825,7 +1038,7 @@ function conditionEndsLine(s: string) {
  * closes open brackets, adds the `;` or the `{ }` block it lacks, and moves the
  * caret to where the next statement goes.
  */
-export function completeStatement(t: string, offset: number, indentUnit: string, eol = "\n"): BodyEdit | null {
+export function completeStatement(t: string, offset: number, indentUnit: string, eol = "\n", style = DEFAULT_BRACE_STYLE): BodyEdit | null {
   const { start, end } = lineBounds(t, offset);
   const line = t.slice(start, end);
   // The code of the line, without a trailing comment.
@@ -868,10 +1081,11 @@ export function completeStatement(t: string, offset: number, indentUnit: string,
   const doWhile = code.startsWith("}") && /^while\b/.test(word);
 
   const headerKind = full.endsWith(")") ? memberKind(t.slice(0, codeEnd) + closers, codeEnd + closers.length) : null;
+  const control = (BLOCK_STATEMENT.test(word) && !doWhile && conditionEndsLine(full)) || BLOCK_WORD.test(word);
+  const type = !control && TYPE_DECL.test(code);
   const isBlock =
-    (BLOCK_STATEMENT.test(word) && !doWhile && conditionEndsLine(full)) ||
-    BLOCK_WORD.test(word) ||
-    TYPE_DECL.test(code) ||
+    control ||
+    type ||
     // A method header, not a call: something (a type, a modifier) comes before its name.
     (headerKind !== null && headerKind.kind !== "property" && (headerKind.headerStart > start + indent.length || code.startsWith("~")));
   if (isBlock) {
@@ -882,7 +1096,9 @@ export function completeStatement(t: string, offset: number, indentUnit: string,
       if (t.slice(nb.start, nb.end).trim() === "{") return newLine(nb.end, "", inner);
     }
     // A trailing comment stays on the statement's line.
-    const head = `${closers}${t.slice(codeEnd, end)}${eol}${indent}{${eol}${inner}`;
+    const kind: BraceKind = control ? "control_blocks" : type ? "types" : "methods";
+    const comment = t.slice(codeEnd, end);
+    const head = braceOnNewLine(style, kind) ? `${closers}${comment}${eol}${indent}{${eol}${inner}` : `${closers} {${comment}${eol}${inner}`;
     return { start: codeEnd, end, text: `${head}${eol}${indent}}`, caret: codeEnd + head.length };
   }
   const text = `${closers};`;
@@ -899,6 +1115,8 @@ export interface TypingOptions {
   indentUnit: string;
   tabSize: number;
   eol: string;
+  /** From the .editorconfig; the .NET defaults when left out. */
+  style?: BraceStyle;
 }
 
 /** A cheap look at the caret's line: false when no assist can apply, so the whole text need not be read. */
@@ -909,7 +1127,8 @@ export function mayApply(key: TypingKey, lineBefore: string, lineAfter: string):
         lineBefore.includes("=>") ||
         lineAfter.trimStart().startsWith("=>") ||
         lineBefore.includes('"') ||
-        (/(\)|\belse)\s*$/.test(lineBefore) && lineAfter.includes(";"))
+        // A statement header: the statement may be on this line or the next.
+        /(\)|\b(else|do)|:)\s*$/.test(lineBefore)
       );
     case "Enter":
       return /\/\/\/|#region|"|\{/.test(lineBefore) || /[{}]/.test(lineAfter);
@@ -926,13 +1145,13 @@ export function mayApply(key: TypingKey, lineBefore: string, lineAfter: string):
 export function typingEdit(key: TypingKey, t: string, offset: number, o: TypingOptions): BodyEdit | null {
   switch (key) {
     case "{":
-      return expandExpressionBody(t, offset, o.indentUnit, o.eol) ?? interpolateEdit(t, offset) ?? braceStatementEdit(t, offset, o.indentUnit, o.eol);
+      return expandExpressionBody(t, offset, o.indentUnit, o.eol, o.style) ?? interpolateEdit(t, offset) ?? braceStatementEdit(t, offset, o.indentUnit, o.eol, o.style);
     case "Enter":
       return (
         docCommentEnter(t, offset, o.eol) ??
         regionEdit(t, offset, o.eol) ??
         splitStringEdit(t, offset, o.indentUnit, o.eol) ??
-        expandInlineMethod(t, offset, o.indentUnit, o.eol)
+        expandInlineMethod(t, offset, o.indentUnit, o.eol, o.style)
       );
     case "/":
       return docCommentEdit(t, offset, o.eol);

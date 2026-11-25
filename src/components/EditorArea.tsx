@@ -17,6 +17,7 @@ import { changedRanges, mergeEdits } from "../lib/formatChanged";
 import { withNested } from "../lib/treeRows";
 import { findTextUsages, registerTextNavigation } from "../lib/textNav";
 import { completeStatement, mayApply, typingEdit, type BodyEdit, type TypingKey, type TypingOptions } from "../lib/csharpTyping";
+import { braceStyleFor } from "../lib/editorconfig";
 import { zedWheel } from "../lib/wheel";
 import { applyWorkspaceEdit } from "../lib/workspaceEdit";
 import { recoveredDrafts } from "../store/persist";
@@ -1548,8 +1549,17 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
     // Rider's C# typing assists (lib/csharpTyping.ts).
     const typingOptions = (model: monaco.editor.ITextModel): TypingOptions => {
       const o = model.getOptions();
-      return { indentUnit: o.insertSpaces ? " ".repeat(o.indentSize) : "\t", tabSize: o.tabSize, eol: model.getEOL() };
+      const style = model.uri.scheme === "file" ? braceStyleFor(filePath(model.uri)) : undefined;
+      return { indentUnit: o.insertSpaces ? " ".repeat(o.indentSize) : "\t", tabSize: o.tabSize, eol: model.getEOL(), style };
     };
+    // Read the .editorconfig before the first key needs it.
+    const warmStyle = () => {
+      const model = editor.getModel();
+      if (model && isCs() && model.uri.scheme === "file") braceStyleFor(filePath(model.uri));
+    };
+    warmStyle();
+    editor.onDidChangeModel(warmStyle);
+    editor.onDidChangeModelLanguage(warmStyle);
     const applyTyping = (model: monaco.editor.ITextModel, edit: BodyEdit, source: string) => {
       const range = monaco.Range.fromPositions(model.getPositionAt(edit.start), model.getPositionAt(edit.end));
       editor.pushUndoStop();
@@ -1557,6 +1567,22 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       // The caret offset counts the new text, so it is resolved after the edit.
       editor.setPosition(model.getPositionAt(edit.caret));
       editor.pushUndoStop();
+    };
+    /**
+     * A typed character's assist, in two undo steps as in Rider: the character
+     * first, then the assist, so one Undo leaves just what was typed.
+     */
+    const applyTyped = (model: monaco.editor.ITextModel, ch: string, offset: number, text: string, edit: BodyEdit) => {
+      const at = model.getPositionAt(offset);
+      editor.pushUndoStop();
+      editor.executeEdits("haze.typed", [{ range: monaco.Range.fromPositions(at), text: ch }]);
+      editor.setPosition(model.getPositionAt(offset + ch.length));
+      editor.pushUndoStop();
+      // The edit was made for the text without the character: widen it over the character.
+      const start = Math.min(edit.start, offset);
+      const end = Math.max(edit.end, offset);
+      const replacement = text.slice(start, edit.start) + edit.text + text.slice(edit.end, end);
+      applyTyping(model, { start, end: end + ch.length, text: replacement, caret: edit.caret }, "haze.typing");
     };
     const csharpCaret = () => {
       const model = editor.getModel();
@@ -1585,11 +1611,13 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       const pos = at.model.getPositionAt(at.offset);
       const line = at.model.getLineContent(pos.lineNumber);
       if (!mayApply(key, line.slice(0, pos.column - 1), line.slice(pos.column - 1))) return;
-      const edit = typingEdit(key, at.model.getValue(), at.offset, typingOptions(at.model));
+      const text = at.model.getValue();
+      const edit = typingEdit(key, text, at.offset, typingOptions(at.model));
       if (!edit) return;
       e.preventDefault();
       e.stopPropagation();
-      applyTyping(at.model, edit, "haze.typing");
+      if (key === "{" || key === "/" || key === ";") applyTyped(at.model, key, at.offset, text, edit);
+      else applyTyping(at.model, edit, "haze.typing");
     });
     // Pasted C# gets the usings it lacks, as in Rider: those Roslyn names one namespace for.
     editor.onDidPaste((e) => {
@@ -1639,8 +1667,10 @@ function EditorGroupView({ project, group }: { project: Project; group: L.Editor
       precondition: "editorLangId == csharp && !editorReadonly",
       run: () => {
         const at = csharpCaret();
-        const edit = at && completeStatement(at.model.getValue(), at.offset, typingOptions(at.model).indentUnit, at.model.getEOL());
-        if (at && edit) applyTyping(at.model, edit, "haze.completeStatement");
+        if (!at) return;
+        const o = typingOptions(at.model);
+        const edit = completeStatement(at.model.getValue(), at.offset, o.indentUnit, o.eol, o.style);
+        if (edit) applyTyping(at.model, edit, "haze.completeStatement");
       },
     });
     const lineBlame = installLineBlame(project, editor);

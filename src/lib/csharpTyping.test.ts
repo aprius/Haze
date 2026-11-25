@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backspaceEdit, braceStatementEdit, completeStatement, mayApply, docCommentEdit, docCommentEnter, expandExpressionBody, expandInlineMethod, interpolateEdit, regionEdit, semicolonEdit, splitStringEdit } from "./csharpTyping";
+import { backspaceEdit, braceStatementEdit, DEFAULT_BRACE_STYLE, type BraceStyle, completeStatement, mayApply, docCommentEdit, docCommentEnter, expandExpressionBody, expandInlineMethod, interpolateEdit, regionEdit, semicolonEdit, splitStringEdit } from "./csharpTyping";
 
 /** Types `{` at `|` and returns the text with the caret marked, or null when nothing changes. */
 function type(src: string, expand: (t: string, offset: number, unit: string) => ReturnType<typeof expandExpressionBody> = expandExpressionBody) {
@@ -296,22 +296,98 @@ describe("regressions", () => {
 });
 
 describe("braceStatementEdit", () => {
-  const brace = (src: string) => type(src, braceStatementEdit);
+  const brace = (src: string, style?: BraceStyle) => type(src, (t, o, u) => braceStatementEdit(t, o, u, "\n", style));
+  const kr: BraceStyle = { ...DEFAULT_BRACE_STYLE, openBraceOnNewLine: "none", elseOnNewLine: false };
+
   it("wraps the statement after an if or else in a block", () => {
     expect(brace(" if (owned) |localeTextLevel.ActiveGameObject();")).toBe(" if (owned)\n {\n     localeTextLevel.ActiveGameObject();|\n }");
     expect(brace(" else |localeTextLevel.DeactiveGameObject();")).toBe(" else\n {\n     localeTextLevel.DeactiveGameObject();|\n }");
     expect(brace("} else |Foo();")).toBe("} else\n{\n    Foo();|\n}");
     expect(brace("else if (a && b(c))| Foo(); // why")).toBe("else if (a && b(c))\n{\n    Foo();| // why\n}");
     expect(brace("foreach (var x in xs) |Use(x);")).toBe("foreach (var x in xs)\n{\n    Use(x);|\n}");
+    expect(brace("for (int i = 0; i < n; i++) |Use(i);")).toBe("for (int i = 0; i < n; i++)\n{\n    Use(i);|\n}");
+    expect(brace("using (var s = Open()) |s.Read();")).toBe("using (var s = Open())\n{\n    s.Read();|\n}");
+  });
+
+  it("wraps a statement on the next line", () => {
+    expect(brace("    if (owned)|\n        Foo();\n    Bar();")).toBe("    if (owned)\n    {\n        Foo();|\n    }\n    Bar();");
+    expect(brace("    else |\n        Foo();")).toBe("    else\n    {\n        Foo();|\n    }");
+    expect(type("if (x)|\r\n    Foo();\r\nBar();", (t, o, u) => braceStatementEdit(t, o, u, "\r\n"))).toBe("if (x)\r\n{\r\n    Foo();|\r\n}\r\nBar();");
+  });
+
+  it("finds a condition over several lines, past braces and parens in its strings", () => {
+    const head = [
+      '            if (!EditorUtility.DisplayDialog("Save All Glyph Table",',
+      "                    $\"This will overwrite all {spriteAsset.spriteGlyphTable.Count} glyphs on '{spriteAsset.name}' (Scale/BX) values.\",",
+      '                    "Save All", "Cancel"))',
+    ].join("\n");
+    const want = `${head}\n            {\n                return;|\n            }\n            Next();`;
+    expect(brace(`${head}|\n                return;\n            Next();`)).toBe(want);
+    expect(brace(`${head} |return;\n            Next();`)).toBe(want);
+    expect(brace('if (Has("a)") // b(\n    && c)|\n    Go();')).toBe('if (Has("a)") // b(\n    && c)\n{\n    Go();|\n}');
+  });
+
+  it("wraps a statement over several lines, keeping its layout", () => {
+    expect(brace("if (x) |Foo(a,\n    b);")).toBe("if (x)\n{\n    Foo(a,\n        b);|\n}");
+    expect(brace("if (x)|\n    Foo(a,\n        b);")).toBe("if (x)\n{\n    Foo(a,\n        b);|\n}");
+    expect(brace("if (x) |list.ForEach(i =>\n{\n    Use(i);\n});")).toBe("if (x)\n{\n    list.ForEach(i =>\n    {\n        Use(i);\n    });|\n}");
+  });
+
+  it("wraps nested statements whole, an inner if with its else", () => {
+    expect(brace("if (a) |if (b) Foo();")).toBe("if (a)\n{\n    if (b) Foo();|\n}");
+    expect(brace("if (a) |if (b) Foo(); else Bar();")).toBe("if (a)\n{\n    if (b) Foo(); else Bar();|\n}");
+    expect(brace("else |for (;;) Step();")).toBe("else\n{\n    for (;;) Step();|\n}");
+    expect(brace("if (a) |switch (x) { case 1: break; }")).toBe("if (a)\n{\n    switch (x) { case 1: break; }|\n}");
+    expect(brace("if (a) |try { X(); } catch (E e) when (e.Bad) { } finally { Y(); }")).toBe("if (a)\n{\n    try { X(); } catch (E e) when (e.Bad) { } finally { Y(); }|\n}");
+  });
+
+  it("moves the else after the block", () => {
+    expect(brace("if (owned) |On(); else Off();")).toBe("if (owned)\n{\n    On();|\n}\nelse Off();");
+    expect(brace("if (owned) |On(); else Off();", kr)).toBe("if (owned) {\n    On();|\n} else Off();");
+  });
+
+  it("wraps a do's statement and keeps its while", () => {
+    expect(brace("do |Step(); while (x);")).toBe("do\n{\n    Step();|\n} while (x);");
+    expect(brace("do|\n    Step();\nwhile (x);")).toBe("do\n{\n    Step();|\n}\nwhile (x);");
+  });
+
+  it("wraps a case section", () => {
+    expect(brace("    case 1:|\n        Foo();\n        break;\n    case 2:")).toBe("    case 1:\n        {\n            Foo();\n            break;|\n        }\n    case 2:");
+    expect(brace("    default: |Foo(); break;\n}")).toBe("    default:\n        {\n            Foo(); break;|\n        }\n}");
+    expect(brace("case 1:|\n    Foo();\n    break;\n}", { ...DEFAULT_BRACE_STYLE, indentCaseBlock: false })).toBe("case 1:\n{\n    Foo();\n    break;|\n}\n}");
+    expect(brace("case 1:|\n    Foo();\n    break;\n}", kr)).toBe("case 1: {\n    Foo();\n    break;|\n}\n}");
+  });
+
+  it("follows the brace style", () => {
+    expect(brace("  if (x) |Foo();", kr)).toBe("  if (x) {\n      Foo();|\n  }");
+    expect(brace("if (x) |Foo();", { ...DEFAULT_BRACE_STYLE, openBraceOnNewLine: ["methods", "types"] })).toBe("if (x) {\n    Foo();|\n}");
   });
 
   it("leaves everything else to the usual `{`", () => {
     expect(brace("if (owned) |")).toBeNull();
+    expect(brace("if (owned)|\nFoo();")).toBeNull();
+    expect(brace("if (owned)|\n\n    Foo();")).toBeNull();
+    expect(brace("if (owned) |{ Foo(); }")).toBeNull();
     expect(brace("Foo(x) |Bar();")).toBeNull();
-    expect(brace("if (a) |if (b) Foo();")).toBeNull();
     expect(brace("if (a) |Foo(); Bar();")).toBeNull();
-    expect(brace("var s = \"if (a) |Foo();\";")).toBeNull();
+    expect(brace('var s = "if (a) |Foo();";')).toBeNull();
+    expect(brace("// if (a) |Foo();")).toBeNull();
     expect(brace("Something |Foo();")).toBeNull();
+    expect(brace("} while (x)| ;")).toBeNull();
+    expect(brace("var y = a ? b :| c;")).toBeNull();
+    expect(brace("label:| Foo();")).toBeNull();
+    expect(brace("if (x) |// note\n    Foo();")).toBeNull();
+  });
+});
+
+describe("brace style in the other assists", () => {
+  const kr: BraceStyle = { ...DEFAULT_BRACE_STYLE, openBraceOnNewLine: "none" };
+  it("puts the brace on the header's line", () => {
+    expect(type("void Start() => |Foo();", (t, o, u) => expandExpressionBody(t, o, u, "\n", kr))).toBe("void Start() {\n    Foo();|\n}");
+    expect(type("int Count => |_n;", (t, o, u) => expandExpressionBody(t, o, u, "\n", kr))).toBe("int Count {\n    get { return _n;| }\n}");
+    expect(type("void F() {| A(); }", (t, o, u) => expandInlineMethod(t, o, u, "\n", kr))).toBe("void F() {\n    |A();\n}");
+    expect(type("if (x)|", (t, o, u) => completeStatement(t, o, u, "\n", kr))).toBe("if (x) {\n    |\n}");
+    expect(type("class A|", (t, o, u) => completeStatement(t, o, u, "\n", { ...DEFAULT_BRACE_STYLE, openBraceOnNewLine: ["types"] }))).toBe("class A\n{\n    |\n}");
   });
 });
 
@@ -324,8 +400,11 @@ describe("mayApply", () => {
     expect(mayApply(";", "Foo(x", "))")).toBe(true);
     expect(mayApply(";", "Foo(x)", "")).toBe(false);
     expect(mayApply("{", "void F() ", "=> x;")).toBe(true);
-    expect(mayApply("{", "if (x) ", "")).toBe(false);
+    expect(mayApply("{", "var x = ", "")).toBe(false);
     expect(mayApply("{", "if (x) ", "Foo();")).toBe(true);
+    expect(mayApply("{", "    else", "")).toBe(true);
+    expect(mayApply("{", "case 1:", "")).toBe(true);
+    expect(mayApply("{", "Foo(x) + ", "")).toBe(false);
     expect(mayApply("Enter", "void F() ", "{ x(); }")).toBe(true);
     expect(mayApply("Enter", "    Foo();", "")).toBe(false);
   });

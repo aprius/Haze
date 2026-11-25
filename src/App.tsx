@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { editorconfigChanged } from "./lib/editorconfig";
 import { useEffect, useRef } from "react";
 import { EditorArea, EditorWindows, revealInTree, runEditorShortcut, saveAll, selectedText, triggerEditorAction } from "./components/EditorArea";
 import { activeTabOf, focusMain } from "./lib/editorLayout";
@@ -369,6 +370,7 @@ export default function App() {
       if (affectsGit(project.id, change)) refreshRepo(project.id, project.path, 400, true, change.git || change.overflow);
       void handleDiskChanges(change.overflow ? "all" : change.files);
       notifyFileChanges(change);
+      editorconfigChanged([...change.files, ...change.created, ...change.removed], change.overflow || change.lost);
       unityFilesChanged(project.id, change);
       unityFilesChangedForCode(change);
       invalidateTextNav(change.root);
